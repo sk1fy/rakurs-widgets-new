@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-remote/
+dist-preview/
+dist-package/
+public/widget-assets/
+public/require.js
+.env.local
+.DS_Store
