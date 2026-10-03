@@ -8,6 +8,7 @@ function environment() {
     runScripts: "outside-only",
     pretendToBeVisual: true,
   });
+  dom.window.structuredClone = structuredClone;
   let app;
   dom.window.define = (_deps, fn) => {
     app = {};
@@ -122,4 +123,219 @@ test("unbound and forbidden never request runtime or expose prior data", async (
   assert(target.shadowRoot.textContent.includes("Свяжите аккаунт"));
   app.destroy(widget);
   dom.window.close();
+});
+
+function observerFixture({
+  badLead = false,
+  badObservations = false,
+  futureDecision = false,
+} = {}) {
+  const requests = [];
+  let forbidden = false;
+  const obs = {
+    id: "observation-one",
+    ruleId: "rule-one",
+    groupId: "group-one",
+    leadId: "10",
+    executionEpoch: 1,
+    ruleRevision: 1,
+    decisionKind: futureDecision ? "future_decision" : "assign",
+    reason: "decision_ready",
+    checkedAt: new Date().toISOString(),
+    currentResponsibleUserId: "22",
+    plannedEmployeeId: "employee-one",
+    nextShiftAt: null,
+  };
+  return {
+    requests,
+    setForbidden() {
+      forbidden = true;
+    },
+    $authorizedAjax(options) {
+      const body = options.data ? JSON.parse(options.data) : null;
+      requests.push(body);
+      let done, fail;
+      const request = {
+        done(fn) {
+          done = fn;
+          return request;
+        },
+        fail(fn) {
+          fail = fn;
+          return request;
+        },
+        abort() {},
+      };
+      setTimeout(() => {
+        if (forbidden) {
+          fail?.({
+            status: 403,
+            responseJSON: { error: { message: "Нет прав" } },
+          });
+          return;
+        }
+        let data;
+        if (options.url.endsWith("/bootstrap"))
+          data = {
+            state: "active",
+            accountId: "1",
+            userId: "2",
+            canManage: true,
+            binding: { id: "binding" },
+          };
+        else if (body.kind === "lead")
+          data = badLead
+            ? {}
+            : {
+                items: [],
+                latestObservation: obs,
+                currentLead: {
+                  responsibleUserId: "33",
+                  responsibleUserName: "Ольга",
+                  observedAt: new Date().toISOString(),
+                  deleted: false,
+                  absent: false,
+                },
+                checkedAt: new Date().toISOString(),
+              };
+        else if (body.kind === "groups")
+          data = {
+            items: [
+              { id: "group-one", name: "Группа", memberIds: [], revision: 1 },
+            ],
+          };
+        else if (body.kind === "references")
+          data = {
+            employees: [{ id: "employee-one", name: "Анна" }],
+            users: [{ id: "22", name: "Иван" }],
+            pipelines: [],
+          };
+        else if (body.kind === "rules")
+          data = {
+            items: [
+              {
+                id: "rule-one",
+                groupId: "group-one",
+                pipelineId: "1",
+                statusId: "2",
+                revision: 1,
+                active: true,
+                executionMode: "observe",
+                executionEpoch: 1,
+                keepCurrentResponsible: true,
+              },
+            ],
+          };
+        else if (body.kind === "observations")
+          data = badObservations
+            ? {}
+            : {
+                items: [obs],
+                limit: 20,
+                offset: 0,
+                hasMore: false,
+                checkedAt: new Date().toISOString(),
+              };
+        else data = {};
+        done?.(data, "ok", { status: 200 });
+      }, 0);
+      return request;
+    },
+  };
+}
+async function settle() {
+  for (let i = 0; i < 8; i++) await tick();
+}
+test("observe-only lead separates fresh CRM owner, historical owner and proposed recipient without assignment controls", async () => {
+  const { dom, app, target } = environment(),
+    widget = observerFixture();
+  try {
+    app.mount({
+      widget,
+      target,
+      identity: "observe-card",
+      mode: "card",
+      leadId: "10",
+      apiUrl: "https://api.test",
+    });
+    await settle();
+    const content = target.shadowRoot.textContent;
+    assert(content.includes("Ответственный amoCRM: Ольга"));
+    assert(content.includes("Ответственный на момент наблюдения: Иван"));
+    assert(content.includes("Предлагаемый сотрудник: Анна"));
+    assert(content.includes("В этой области нет записей назначения"));
+    assert(
+      !target.shadowRoot
+        .querySelector("button")
+        ?.textContent?.includes("назначить"),
+    );
+    assert(!widget.requests.some((body) => body?.write));
+    widget.setForbidden();
+    target.shadowRoot.querySelector("button").click();
+    await settle();
+    assert(!target.shadowRoot.textContent.includes("Ольга"));
+    assert(!target.shadowRoot.textContent.includes("Иван"));
+    assert(!target.shadowRoot.textContent.includes("Анна"));
+  } finally {
+    app.destroy(widget);
+    dom.window.close();
+  }
+});
+test("malformed lead and observation envelopes show errors rather than empty success", async () => {
+  for (const mode of ["card", "settings"]) {
+    const { dom, app, target } = environment(),
+      widget = observerFixture({
+        badLead: mode === "card",
+        badObservations: mode === "settings",
+      });
+    try {
+      app.mount({
+        widget,
+        target,
+        identity: mode,
+        mode,
+        leadId: "10",
+        apiUrl: "https://api.test",
+      });
+      await settle();
+      assert(
+        target.shadowRoot.textContent.includes("неполное") ||
+          target.shadowRoot.textContent.includes("неполный"),
+      );
+      assert(
+        !target.shadowRoot.textContent.includes("Для этой сделки нет записей"),
+      );
+      assert(
+        !target.shadowRoot.textContent.includes(
+          "В доступной области записей наблюдения пока нет",
+        ),
+      );
+    } finally {
+      app.destroy(widget);
+      dom.window.close();
+    }
+  }
+});
+test("future observation decision stays unknown rather than skipped or successful", async () => {
+  const { dom, app, target } = environment(),
+    widget = observerFixture({ futureDecision: true });
+  try {
+    app.mount({
+      widget,
+      target,
+      identity: "future",
+      mode: "card",
+      leadId: "10",
+      apiUrl: "https://api.test",
+    });
+    await settle();
+    assert(
+      target.shadowRoot.textContent.includes("Тип решения не подтверждён"),
+    );
+    assert(!target.shadowRoot.textContent.includes("Наблюдение пропущено"));
+    assert(!widget.requests.some((body) => body?.write));
+  } finally {
+    app.destroy(widget);
+    dom.window.close();
+  }
 });

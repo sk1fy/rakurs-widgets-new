@@ -94,6 +94,11 @@ export function mount(context) {
     rules: [],
     groups: [],
     refs: { pipelines: [] },
+    latestObservation: null,
+    currentLead: null,
+    cardLoaded: false,
+    observationPages: new Map(),
+    observationErrors: new Map(),
     selection: null,
     draft: null,
     pending: null,
@@ -142,12 +147,60 @@ export function mount(context) {
     const result = await state.client.runtime(body);
     return result.data;
   }
+  function checkedObservation(item, ruleId) {
+    if (
+      !item ||
+      typeof item !== "object" ||
+      typeof item.id !== "string" ||
+      item.id.length === 0 ||
+      typeof item.ruleId !== "string" ||
+      item.ruleId.length === 0 ||
+      typeof item.leadId !== "string" ||
+      !/^[1-9][0-9]*$/.test(item.leadId) ||
+      typeof item.decisionKind !== "string" ||
+      typeof item.reason !== "string" ||
+      typeof item.checkedAt !== "string" ||
+      Number.isNaN(Date.parse(item.checkedAt)) ||
+      !Number.isSafeInteger(item.executionEpoch) ||
+      item.executionEpoch < 1 ||
+      (ruleId && item.ruleId !== ruleId) ||
+      (state.mode === "card" && item.leadId !== state.leadId)
+    )
+      throw new Error(
+        "Источник вернул неполное или несоответствующее наблюдение. Повторите чтение после проверки сервера.",
+      );
+    return item;
+  }
+  async function readObservations(ruleId, offset = 0) {
+    const page = await read({
+      kind: "observations",
+      id: ruleId,
+      limit: 20,
+      offset,
+    });
+    if (
+      !page ||
+      !Array.isArray(page.items) ||
+      typeof page.hasMore !== "boolean" ||
+      page.offset !== offset ||
+      page.limit !== 20 ||
+      typeof page.checkedAt !== "string" ||
+      Number.isNaN(Date.parse(page.checkedAt))
+    )
+      throw new Error(
+        "Источник вернул неполный журнал наблюдений. Повторите чтение после проверки сервера.",
+      );
+    page.items.forEach((item) => checkedObservation(item, ruleId));
+    return page;
+  }
   async function readRules() {
     const items = [];
     for (let offset = 0; offset < 1000; offset += 100) {
       const page = await read({ kind: "rules", limit: 100, offset });
-      items.push(...(page.items || []));
-      if ((page.items || []).length < 100) return { items };
+      if (!page || !Array.isArray(page.items))
+        throw new Error("Источник вернул неполный список правил.");
+      items.push(...page.items);
+      if (page.items.length < 100) return { items };
     }
     throw new Error(
       "Показаны не все правила: ограничение 1000. Обратитесь к администратору.",
@@ -185,7 +238,34 @@ export function mount(context) {
               "Состояние сделки получено; справочники сотрудников или групп временно недоступны.";
           }
           if (!state.alive) return;
-          state.items = data.items || [];
+          if (!data || !Array.isArray(data.items))
+            throw new Error("Источник вернул неполное состояние сделки.");
+          const latest =
+            data.latestObservation == null
+              ? null
+              : checkedObservation(data.latestObservation);
+          const actual = data.currentLead == null ? null : data.currentLead;
+          if (
+            actual &&
+            ((actual.leadId !== undefined && actual.leadId !== state.leadId) ||
+              typeof actual.observedAt !== "string" ||
+              Number.isNaN(Date.parse(actual.observedAt)) ||
+              typeof actual.deleted !== "boolean" ||
+              typeof actual.absent !== "boolean" ||
+              !(
+                actual.responsibleUserId === null ||
+                typeof actual.responsibleUserId === "string"
+              ) ||
+              !(
+                actual.responsibleUserName === null ||
+                typeof actual.responsibleUserName === "string"
+              ))
+          )
+            throw new Error("Источник вернул неполные факты amoCRM.");
+          state.currentLead = actual;
+          state.cardLoaded = true;
+          state.items = data.items;
+          state.latestObservation = latest;
           state.checkedAt = data.checkedAt;
         } else {
           const [rules, groups, refs] = await Promise.all([
@@ -196,6 +276,27 @@ export function mount(context) {
           if (!state.alive) return;
           if (state.draft && !state.draft.dirty) state.draft = null;
           state.rules = rules.items || [];
+          const selected =
+            state.rules.find((r) => r.id === state.selection) || state.rules[0];
+          if (
+            selected?.executionMode === "observe" ||
+            selected?.executionMode === "live"
+          ) {
+            try {
+              const page = await readObservations(
+                selected.id,
+                state.observationPages.get(selected.id)?.offset || 0,
+              );
+              if (!state.alive) return;
+              state.observationPages.set(selected.id, page);
+              state.observationErrors.delete(selected.id);
+            } catch (error) {
+              if (error.status === 401 || error.status === 403) throw error;
+              state.observationPages.delete(selected.id);
+              state.observationErrors.set(selected.id, error.message);
+            }
+          }
+
           state.groups = Array.isArray(groups)
             ? groups
             : groups.items || groups.groups || [];
@@ -211,6 +312,11 @@ export function mount(context) {
       if (e.status === 401 || e.status === 403) {
         state.bootstrap = null;
         state.items = [];
+        state.latestObservation = null;
+        state.currentLead = null;
+        state.cardLoaded = false;
+        state.observationPages.clear();
+        state.observationErrors.clear();
         state.rules = [];
         state.groups = [];
       }
@@ -427,12 +533,174 @@ export function mount(context) {
       ),
     );
   }
+  function observationCard(item) {
+    const c = node("article", null, { class: "card" });
+    const labels = {
+      assign: "Предложен получатель",
+      keep: "Предлагается оставить ответственного",
+      wait: "Предлагается ожидание",
+      requires_configuration: "Нужна настройка",
+      skipped: "Наблюдение пропущено",
+    };
+    c.append(
+      node("h3", "Наблюдение — без назначения"),
+      node("p", labels[item.decisionKind] || "Тип решения не подтверждён"),
+    );
+    c.append(
+      node(
+        "p",
+        item.decisionKind === "keep"
+          ? "Текущий ответственный подходит по правилу и графику; предлагается оставить его."
+          : text(item.reason),
+      ),
+    );
+    c.append(
+      node(
+        "p",
+        `Ответственный на момент наблюдения: ${state.refs.users?.find((u) => u.id === item.currentResponsibleUserId)?.name || (item.currentResponsibleUserId ? "Имя недоступно" : "Неизвестно")}`,
+      ),
+    );
+    c.append(
+      node(
+        "p",
+        `Предлагаемый сотрудник: ${state.refs.employees?.find((e) => e.id === item.plannedEmployeeId)?.name || (item.plannedEmployeeId ? "Имя недоступно" : "Не выбран")}`,
+      ),
+    );
+    c.append(
+      node(
+        "p",
+        `Время наблюдения: ${item.checkedAt ? new Date(item.checkedAt).toLocaleString("ru") : "—"}`,
+      ),
+    );
+    if (item.nextShiftAt)
+      c.append(
+        node(
+          "p",
+          `Следующая смена: ${new Date(item.nextShiftAt).toLocaleString("ru")}`,
+        ),
+      );
+    c.append(
+      node(
+        "small",
+        `Период ${item.executionEpoch}; версия правила ${item.ruleRevision}. Это предварительное решение, не подтверждение назначения.`,
+      ),
+    );
+    return c;
+  }
+  function renderObservations(parent, rule) {
+    const section = node("section", null, {
+      "aria-label": "Журнал наблюдений",
+    });
+    section.append(node("h3", "Журнал наблюдений"));
+    if (state.observationErrors.get(rule.id))
+      section.append(
+        node("p", state.observationErrors.get(rule.id), { class: "notice" }),
+      );
+    const page = state.observationPages.get(rule.id);
+    if (page) {
+      for (const item of page.items || [])
+        section.append(observationCard(item));
+      if (!page.items?.length)
+        section.append(
+          node("p", "В доступной области записей наблюдения пока нет."),
+        );
+    }
+    const load = async (offset = 0) => {
+      if (state.reading || state.busy) return;
+      state.reading = true;
+      try {
+        const data = await readObservations(rule.id, offset);
+        if (!state.alive) return;
+        state.observationPages.set(rule.id, data);
+        state.observationErrors.delete(rule.id);
+      } catch (error) {
+        if (!state.alive) return;
+        state.observationPages.delete(rule.id);
+        state.observationErrors.set(rule.id, error.message);
+        if (error.status === 401 || error.status === 403) {
+          state.latestObservation = null;
+          state.currentLead = null;
+          state.cardLoaded = false;
+          state.observationPages.clear();
+          state.bootstrap = null;
+          state.items = [];
+          state.rules = [];
+          state.groups = [];
+          state.error = error.message;
+        }
+      }
+      state.reading = false;
+      if (state.alive) render();
+    };
+    section.append(
+      button(
+        page ? "Обновить наблюдения" : "Загрузить наблюдения",
+        () => load(0),
+        state.busy || state.reading,
+      ),
+    );
+    if ((page?.offset || 0) > 0)
+      section.append(
+        button(
+          "Предыдущие наблюдения",
+          () => load(Math.max(0, page.offset - 20)),
+          state.busy || state.reading,
+        ),
+      );
+    if (page?.hasMore)
+      section.append(
+        button(
+          "Следующие наблюдения",
+          () => load((page.offset || 0) + 20),
+          state.busy || state.reading,
+        ),
+      );
+    parent.append(section);
+  }
   function renderCard() {
+    if (!state.cardLoaded) {
+      root.append(
+        node(
+          "p",
+          "Состояние сделки не получено. Повторите чтение после проверки источника.",
+          { class: "notice" },
+        ),
+      );
+      return;
+    }
+    if (state.currentLead) {
+      const actual = state.currentLead;
+      const c = node("article", null, { class: "card" });
+      c.append(
+        node("h3", "Факты amoCRM"),
+        node(
+          "p",
+          actual.deleted
+            ? "Сделка удалена"
+            : actual.absent
+              ? "Сделка не найдена"
+              : `Ответственный amoCRM: ${actual.responsibleUserName || (actual.responsibleUserId ? "Имя ответственного недоступно" : "Неизвестно")}`,
+        ),
+        node(
+          "small",
+          `Проверено ${new Date(actual.observedAt).toLocaleString("ru")}`,
+        ),
+      );
+      root.append(c);
+    }
+    if (state.latestObservation)
+      root.append(observationCard(state.latestObservation));
     if (!state.items?.length) {
       root.append(
-        node("p", "Для этой сделки нет записей распределения", {
-          class: "empty",
-        }),
+        node(
+          "p",
+          state.latestObservation
+            ? "В этой области нет записей назначения. Показано предварительное наблюдение."
+            : "Для этой сделки нет записей распределения",
+          {
+            class: "empty",
+          },
+        ),
       );
       return;
     }
@@ -573,7 +841,7 @@ export function mount(context) {
       const group = state.groups.find((g) => g.id === rule.groupId);
       left.append(
         button(
-          `${group?.name || "Группа"} · ${rule.active ? "работает" : "пауза"}`,
+          `${group?.name || "Группа"} · ${rule.active ? (rule.executionMode === "observe" ? "наблюдение" : rule.executionMode === "live" || rule.executionMode === undefined ? "включено" : "режим неизвестен") : "пауза"}`,
           () => {
             if (state.draft?.dirty && state.selection !== rule.id) {
               state.error =
@@ -615,6 +883,7 @@ export function mount(context) {
           statusId: "",
           active: false,
           keepCurrentResponsible: true,
+          executionMode: "observe",
         };
       const d = state.createDraft;
       function select(label, items, key) {
@@ -639,6 +908,14 @@ export function mount(context) {
       }
       select("Группа", eligibleGroups, "groupId");
       select("Воронка", state.refs.pipelines || [], "pipelineId");
+      select(
+        "Режим правила",
+        [
+          { id: "observe", name: "Наблюдение — без назначений" },
+          { id: "live", name: "Рабочий — назначение в amoCRM" },
+        ],
+        "executionMode",
+      );
       select(
         "Этап",
         state.refs.pipelines?.find((p) => p.id === d.pipelineId)?.statuses ||
@@ -711,6 +988,53 @@ export function mount(context) {
       };
     const draft = state.draft;
     right.append(node("h3", group?.name || "Настройки группы"));
+    const supportedMode =
+      rule.executionMode === "live" || rule.executionMode === "observe";
+    right.append(
+      node(
+        "p",
+        rule.executionMode === "observe"
+          ? "Наблюдение: ответственный не меняется, рабочая очередь и порядок не продвигаются."
+          : rule.executionMode === "live"
+            ? "Рабочий режим: результат назначения подтверждается отдельно."
+            : rule.executionMode === undefined
+              ? "Прежняя версия сервера: рабочий режим, наблюдение не подтверждено."
+              : "Режим не поддерживается этой версией виджета; изменение режима недоступно.",
+        { class: "notice" },
+      ),
+    );
+    const modeLabel = node("label", "Режим правила"),
+      modeSelect = node("select", null, { "aria-label": "Режим правила" });
+    if (!supportedMode)
+      modeSelect.append(
+        node("option", "Требуется совместимый сервер", { value: "" }),
+      );
+    for (const [value, label] of [
+      ["observe", "Наблюдение — без назначений"],
+      ["live", "Рабочий — назначение в amoCRM"],
+    ])
+      modeSelect.append(node("option", label, { value }));
+    modeSelect.value = supportedMode ? draft.rule.executionMode : "";
+    modeSelect.disabled =
+      !supportedMode ||
+      !state.bootstrap.canManage ||
+      state.busy ||
+      !!state.pending;
+    modeSelect.addEventListener("change", () => {
+      draft.rule.executionMode = modeSelect.value;
+      draft.dirty = true;
+      draft.ruleDirty = true;
+    });
+    modeLabel.append(modeSelect);
+    right.append(modeLabel);
+    right.append(
+      node(
+        "p",
+        "Рабочий режим начинает отдельный период. Старые наблюдения не назначаются автоматически. Новые входы после границы могут ожидать возобновления при паузе; незавершённые рабочие операции сначала нужно выяснить.",
+        { class: "hint" },
+      ),
+    );
+
     const pipelineLabel = node("label", "Воронка"),
       pipeline = node("select");
     pipeline.setAttribute("aria-label", "Воронка");
@@ -902,6 +1226,7 @@ export function mount(context) {
       );
       right.append(groupActions);
     }
+    if (supportedMode) renderObservations(right, rule);
     const actions = node("div", null, { class: "actions" });
     actions.append(
       button(
@@ -911,6 +1236,9 @@ export function mount(context) {
             kind: "rule",
             id: rule.id,
             payload: {
+              ...(supportedMode
+                ? { executionMode: draft.rule.executionMode }
+                : {}),
               expectedRevision: draft.rule.revision,
               pipelineId: draft.rule.pipelineId,
               statusId: draft.rule.statusId,
