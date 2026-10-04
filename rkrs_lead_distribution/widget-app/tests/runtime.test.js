@@ -129,9 +129,14 @@ function observerFixture({
   badLead = false,
   badObservations = false,
   futureDecision = false,
+  liveWork = false,
+  holdWrites = false,
+  missingMode = false,
 } = {}) {
   const requests = [];
   let forbidden = false;
+  let historyForbidden = false;
+  let pendingWrite;
   const obs = {
     id: "observation-one",
     ruleId: "rule-one",
@@ -148,6 +153,12 @@ function observerFixture({
   };
   return {
     requests,
+    setHistoryForbidden() {
+      historyForbidden = true;
+    },
+    rejectWrite(status) {
+      pendingWrite?.({ status });
+    },
     setForbidden() {
       forbidden = true;
     },
@@ -174,6 +185,17 @@ function observerFixture({
           });
           return;
         }
+        if (body?.write && holdWrites) {
+          pendingWrite = fail;
+          return;
+        }
+        if (body?.kind === "history" && historyForbidden) {
+          fail?.({
+            status: 403,
+            responseJSON: { error: { message: "Доступ к истории отозван" } },
+          });
+          return;
+        }
         let data;
         if (options.url.endsWith("/bootstrap"))
           data = {
@@ -187,7 +209,19 @@ function observerFixture({
           data = badLead
             ? {}
             : {
-                items: [],
+                items: liveWork
+                  ? [
+                      {
+                        id: "queue-one",
+                        groupId: "group-one",
+                        leadId: "10",
+                        state: "uncertain",
+                        reason: "outcome_unknown",
+                        actions: ["check", "cancel"],
+                        updatedAt: "2026-10-03T08:00:00Z",
+                      },
+                    ]
+                  : [],
                 latestObservation: obs,
                 currentLead: {
                   responsibleUserId: "33",
@@ -220,7 +254,7 @@ function observerFixture({
                 statusId: "2",
                 revision: 1,
                 active: true,
-                executionMode: "observe",
+                ...(missingMode ? {} : { executionMode: "observe" }),
                 executionEpoch: 1,
                 keepCurrentResponsible: true,
               },
@@ -236,6 +270,17 @@ function observerFixture({
                 hasMore: false,
                 checkedAt: new Date().toISOString(),
               };
+        else if (body.kind === "history")
+          data = {
+            items: [
+              {
+                createdAt: "2026-10-03T08:00:00Z",
+                state: "confirmed",
+                reason: "assignment_confirmed",
+              },
+            ],
+            hasMore: false,
+          };
         else data = {};
         done?.(data, "ok", { status: 200 });
       }, 0);
@@ -334,6 +379,168 @@ test("future observation decision stays unknown rather than skipped or successfu
     );
     assert(!target.shadowRoot.textContent.includes("Наблюдение пропущено"));
     assert(!widget.requests.some((body) => body?.write));
+  } finally {
+    app.destroy(widget);
+    dom.window.close();
+  }
+});
+
+function clickButton(target, title) {
+  const button = [...target.shadowRoot.querySelectorAll("button")].find(
+    (b) => b.textContent === title,
+  );
+  assert(button, `Missing button: ${title}`);
+  button.click();
+  return button;
+}
+test("history permission loss immediately removes cached history and lead data", async () => {
+  const { dom, app, target } = environment();
+  const widget = observerFixture({ liveWork: true });
+  try {
+    app.mount({
+      widget,
+      target,
+      identity: "history-revoked",
+      mode: "card",
+      leadId: "10",
+      apiUrl: "https://api.test",
+    });
+    await settle();
+    clickButton(target, "История");
+    await settle();
+    assert(
+      target.shadowRoot
+        .querySelector(".history")
+        .textContent.includes("Назначение подтверждено"),
+    );
+    widget.setHistoryForbidden();
+    clickButton(target, "История");
+    await settle();
+    assert(target.shadowRoot.textContent.includes("Доступ к истории отозван"));
+    assert(!target.shadowRoot.textContent.includes("Ольга"));
+    assert(!target.shadowRoot.textContent.includes("Анна"));
+    assert(!target.shadowRoot.querySelector(".history"));
+  } finally {
+    app.destroy(widget);
+    dom.window.close();
+  }
+});
+test("replay denied by current permissions keeps the original uncertain request identity", async () => {
+  const { dom, app, target } = environment();
+  const widget = observerFixture({ liveWork: true, holdWrites: true });
+  try {
+    app.mount({
+      widget,
+      target,
+      identity: "replay-denied",
+      mode: "card",
+      leadId: "10",
+      apiUrl: "https://api.test",
+    });
+    await settle();
+    clickButton(target, "Проверить результат");
+    await settle();
+    widget.rejectWrite(503);
+    await settle();
+    clickButton(target, "Проверить тот же запрос");
+    await settle();
+    widget.rejectWrite(403);
+    await settle();
+    assert(
+      [...target.shadowRoot.querySelectorAll("button")].some(
+        (b) => b.textContent === "Проверить тот же запрос",
+      ),
+    );
+    clickButton(target, "Проверить тот же запрос");
+    await settle();
+    const writes = widget.requests.filter((body) => body?.write);
+    assert.equal(writes.length, 3);
+    assert.deepEqual(writes[1], writes[0]);
+    assert.deepEqual(writes[2], writes[0]);
+  } finally {
+    app.destroy(widget);
+    dom.window.close();
+  }
+});
+test("polling resumes when its timer fires during an unresolved write", async () => {
+  const { dom, app, target } = environment();
+  const widget = observerFixture({ liveWork: true, holdWrites: true });
+  const timers = [];
+  const originalTimeout = dom.window.setTimeout.bind(dom.window);
+  dom.window.setTimeout = (callback, delay, ...args) => {
+    if (delay === 15000) {
+      timers.push(callback);
+      return -timers.length;
+    }
+    return originalTimeout(callback, delay, ...args);
+  };
+  try {
+    app.mount({
+      widget,
+      target,
+      identity: "poll-write",
+      mode: "card",
+      leadId: "10",
+      apiUrl: "https://api.test",
+    });
+    await settle();
+    assert.equal(timers.length, 1);
+    clickButton(target, "Проверить результат");
+    await settle();
+    timers.shift()();
+    assert.equal(timers.length, 1, "busy poll must schedule its next read");
+    widget.rejectWrite(503);
+    await settle();
+    const before = widget.requests.filter(
+      (body) => body?.kind === "lead",
+    ).length;
+    timers.shift()();
+    await settle();
+    assert.equal(
+      widget.requests.filter((body) => body?.kind === "lead").length,
+      before + 1,
+    );
+    assert.equal(
+      widget.requests.filter((body) => body?.write).length,
+      1,
+      "poll must not replay writes",
+    );
+  } finally {
+    app.destroy(widget);
+    dom.window.close();
+  }
+});
+
+test("missing execution mode never claims the rule is live", async () => {
+  const { dom, app, target } = environment();
+  const widget = observerFixture({ missingMode: true });
+  try {
+    app.mount({
+      widget,
+      target,
+      identity: "missing-mode",
+      mode: "settings",
+      apiUrl: "https://api.test",
+    });
+    await settle();
+    assert(
+      target.shadowRoot.textContent.includes(
+        "Источник не подтвердил режим правила",
+      ),
+    );
+    assert(
+      !target.shadowRoot.textContent.includes(
+        "рабочий режим, наблюдение не подтверждено",
+      ),
+    );
+    assert.equal(
+      target.shadowRoot.querySelector('[aria-label="Режим правила"]').value,
+      "",
+    );
+    assert.equal(
+      target.shadowRoot.querySelector('[aria-label="Режим правила"]').disabled,
+      true,
+    );
   } finally {
     app.destroy(widget);
     dom.window.close();

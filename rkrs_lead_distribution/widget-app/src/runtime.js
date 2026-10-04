@@ -143,6 +143,22 @@ export function mount(context) {
     parent.append(l);
     return input;
   }
+  function revokeAccess(error) {
+    if (error.status !== 401 && error.status !== 403) return false;
+    state.error = error.message;
+    state.bootstrap = null;
+    state.items = [];
+    state.latestObservation = null;
+    state.currentLead = null;
+    state.cardLoaded = false;
+    state.observationPages.clear();
+    state.observationErrors.clear();
+    state.histories.clear();
+    state.rules = [];
+    state.groups = [];
+    state.refs = { pipelines: [] };
+    return true;
+  }
   async function read(body) {
     const result = await state.client.runtime(body);
     return result.data;
@@ -207,7 +223,11 @@ export function mount(context) {
     );
   }
   async function refresh() {
-    if (!state.alive || state.busy || state.reading || doc.hidden) return;
+    if (!state.alive || doc.hidden) return;
+    if (state.busy || state.reading) {
+      schedule();
+      return;
+    }
     state.reading = true;
     state.partial = false;
     try {
@@ -309,17 +329,7 @@ export function mount(context) {
     } catch (e) {
       if (!state.alive) return;
       state.error = e.message;
-      if (e.status === 401 || e.status === 403) {
-        state.bootstrap = null;
-        state.items = [];
-        state.latestObservation = null;
-        state.currentLead = null;
-        state.cardLoaded = false;
-        state.observationPages.clear();
-        state.observationErrors.clear();
-        state.rules = [];
-        state.groups = [];
-      }
+      revokeAccess(e);
     }
     state.reading = false;
     if (state.alive) {
@@ -384,6 +394,7 @@ export function mount(context) {
     } catch (e) {
       if (!state.alive) return;
       state.error = e.message;
+      revokeAccess(e);
       if (e.unknown) state.pending.unknown = true;
       else state.pending = null;
     }
@@ -444,7 +455,9 @@ export function mount(context) {
                   "Версии обновлены. Проверьте черновик: сохранение применит ваши значения поверх текущих.";
                 render();
               } catch (e) {
+                if (!state.alive) return;
                 state.error = e.message;
+                revokeAccess(e);
                 render();
               }
             },
@@ -476,7 +489,10 @@ export function mount(context) {
                 state.error = "";
               }
             } catch (e) {
-              if (state.alive) state.error = e.message;
+              if (state.alive) {
+                state.error = e.message;
+                revokeAccess(e);
+              }
             }
             state.busy = false;
             if (state.alive) {
@@ -617,17 +633,7 @@ export function mount(context) {
         if (!state.alive) return;
         state.observationPages.delete(rule.id);
         state.observationErrors.set(rule.id, error.message);
-        if (error.status === 401 || error.status === 403) {
-          state.latestObservation = null;
-          state.currentLead = null;
-          state.cardLoaded = false;
-          state.observationPages.clear();
-          state.bootstrap = null;
-          state.items = [];
-          state.rules = [];
-          state.groups = [];
-          state.error = error.message;
-        }
+        revokeAccess(error);
       }
       state.reading = false;
       if (state.alive) render();
@@ -777,11 +783,12 @@ export function mount(context) {
           render();
         } catch (e) {
           if (!state.alive) return;
-          state.histories.set(item.id, {
-            ...existing,
-            error: e.message,
-            loading: false,
-          });
+          if (!revokeAccess(e))
+            state.histories.set(item.id, {
+              ...existing,
+              error: e.message,
+              loading: false,
+            });
           render();
         }
       }
@@ -841,7 +848,7 @@ export function mount(context) {
       const group = state.groups.find((g) => g.id === rule.groupId);
       left.append(
         button(
-          `${group?.name || "Группа"} · ${rule.active ? (rule.executionMode === "observe" ? "наблюдение" : rule.executionMode === "live" || rule.executionMode === undefined ? "включено" : "режим неизвестен") : "пауза"}`,
+          `${group?.name || "Группа"} · ${rule.active ? (rule.executionMode === "observe" ? "наблюдение" : rule.executionMode === "live" ? "включено" : "режим неизвестен") : "пауза"}`,
           () => {
             if (state.draft?.dirty && state.selection !== rule.id) {
               state.error =
@@ -998,7 +1005,7 @@ export function mount(context) {
           : rule.executionMode === "live"
             ? "Рабочий режим: результат назначения подтверждается отдельно."
             : rule.executionMode === undefined
-              ? "Прежняя версия сервера: рабочий режим, наблюдение не подтверждено."
+              ? "Источник не подтвердил режим правила. Нужны совместимые версии сервисов."
               : "Режим не поддерживается этой версией виджета; изменение режима недоступно.",
         { class: "notice" },
       ),
