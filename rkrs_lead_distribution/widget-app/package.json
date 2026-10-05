@@ -1,0 +1,21 @@
+{
+  "name": "rkrs-lead-distribution",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/release.mjs && vite --host 127.0.0.1 --port 5178 --strictPort",
+    "release": "node scripts/release.mjs",
+    "build:preview": "node scripts/release.mjs && vite build --mode preview",
+    "package:widget": "node scripts/package-widget.mjs",
+    "test": "npm run release && node --test tests/*.test.js"
+  },
+  "devDependencies": {
+    "vite": "8.3.1",
+    "requirejs": "2.3.8",
+    "jsdom": "29.1.1"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
