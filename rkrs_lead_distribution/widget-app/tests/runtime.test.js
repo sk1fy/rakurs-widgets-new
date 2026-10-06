@@ -132,6 +132,7 @@ function observerFixture({
   liveWork = false,
   holdWrites = false,
   missingMode = false,
+  noRules = false,
 } = {}) {
   const requests = [];
   let forbidden = false;
@@ -245,21 +246,23 @@ function observerFixture({
             pipelines: [],
           };
         else if (body.kind === "rules")
-          data = {
-            items: [
-              {
-                id: "rule-one",
-                groupId: "group-one",
-                pipelineId: "1",
-                statusId: "2",
-                revision: 1,
-                active: true,
-                ...(missingMode ? {} : { executionMode: "observe" }),
-                executionEpoch: 1,
-                keepCurrentResponsible: true,
-              },
-            ],
-          };
+          data = noRules
+            ? { items: [] }
+            : {
+                items: [
+                  {
+                    id: "rule-one",
+                    groupId: "group-one",
+                    pipelineId: "1",
+                    statusId: "2",
+                    revision: 1,
+                    active: true,
+                    ...(missingMode ? {} : { executionMode: "observe" }),
+                    executionEpoch: 1,
+                    keepCurrentResponsible: true,
+                  },
+                ],
+              };
         else if (body.kind === "observations")
           data = badObservations
             ? {}
@@ -511,8 +514,7 @@ test("polling resumes when its timer fires during an unresolved write", async ()
   }
 });
 
-test("missing execution mode never claims the rule is live", async () => {
-  const { dom, app, target } = environment();
+test("missing execution mode never claims the rule is live", async () => {  const { dom, app, target } = environment();
   const widget = observerFixture({ missingMode: true });
   try {
     app.mount({

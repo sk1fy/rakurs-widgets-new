@@ -1,0 +1,3 @@
+
+# Preserve the imported legacy client bytes used by the installed ZIP.
+integration-packages/amocrm-pro-service/widget/lib/backend-client.js whitespace=-blank-at-eof

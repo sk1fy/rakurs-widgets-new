@@ -3,13 +3,45 @@
     "name": "widget.name",
     "description": "widget.description",
     "short_description": "widget.short_description",
-    "version": "0.1.0",
+    "version": "0.1.2",
     "interface_version": 5,
     "init_once": false,
-    "locale": ["ru"],
+    "locale": [
+      "ru"
+    ],
     "installation": true
   },
-  "locations": ["settings", "advanced_settings", "lcard-1"],
-  "advanced": { "title": "advanced.title" },
-  "settings": {}
+  "locations": [
+    "settings",
+    "advanced_settings",
+    "lcard-1",
+    "digital_pipeline"
+  ],
+  "advanced": {
+    "title": "advanced.title"
+  },
+  "dp": {
+    "title": "dp.title",
+    "action_multiple": false,
+    "webhook_url": "https://2-26-66-187.sslip.io/api/v1/widget/distribution/dp",
+    "settings": {
+      "key": {
+        "name": "dp.key",
+        "type": "text",
+        "required": true
+      },
+      "groupId": {
+        "name": "dp.group",
+        "type": "text",
+        "required": true
+      }
+    }
+  },
+  "settings": {
+    "distribution": {
+      "name": "settings.distribution",
+      "type": "custom",
+      "required": false
+    }
+  }
 }
