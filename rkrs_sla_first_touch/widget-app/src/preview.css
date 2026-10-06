@@ -1,0 +1,192 @@
+:root {
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #38455a;
+  background: #f5f7fa;
+  font-size: 14px;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid #1890ff;
+  outline-offset: 3px;
+}
+h1, h2, p { margin-top: 0; }
+.crm-nav {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 72px;
+  background: #13273b;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 22px 0 18px;
+  z-index: 250;
+  color: #8a9caf;
+}
+.crm-logo {
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1;
+  color: #48a8e7;
+  margin-bottom: 30px;
+}
+.crm-logo > span { color: #fff; font-size: 24px; }
+.crm-nav button {
+  border: 0;
+  background: none;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 15px 2px;
+  font-size: 10px;
+  border-left: 3px solid transparent;
+}
+.crm-nav button.active {
+  color: #fff;
+  background: #223b52;
+  border-left-color: #38a8f4;
+}
+.crm-nav button:hover { color: #fff; background: #1c3348; }
+.crm-nav-spacer { flex: 1; }
+.crm-user {
+  display: grid;
+  place-items: center;
+  background: #517694;
+  color: white;
+  border-radius: 50%;
+  font-size: 11px;
+  width: 32px;
+  height: 32px;
+}
+.crm-main { margin-left: 72px; }
+.crm-header {
+  height: 70px;
+  padding: 0 32px;
+  background: #fff;
+  border-bottom: 1px solid #e5eaf0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+}
+.crm-breadcrumb { font-size: 13px; color: #8490a1; }
+.crm-breadcrumb > span { margin: 0 13px; color: #c9d0da; }
+.crm-header-right {
+  display: flex;
+  gap: 28px;
+  align-items: center;
+  color: #8995a5;
+  font-size: 12px;
+}
+.preview-tag {
+  border: 1px solid #dce6ee;
+  border-radius: 4px;
+  color: #8a9bac;
+  padding: 3px 6px;
+  font-size: 9px;
+  letter-spacing: 1px;
+}
+.crm-notifications { position: relative; }
+.crm-notifications i {
+  position: absolute;
+  right: 1px;
+  top: 2px;
+  background: #eeac4a;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px white;
+}
+.crm-account { display: flex; align-items: center; gap: 12px; }
+.crm-workspace {
+  max-width: 1640px;
+  padding: 27px 34px 38px;
+  margin: auto;
+}
+.preview-caption {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  font-size: 13px;
+  color: #58728b;
+  margin-bottom: 18px;
+}
+.rakurs-label {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.7px;
+  color: #1c3650;
+}
+.caption-divider { width: 1px; height: 21px; background: #d8e2ec; }
+.caption-sub { color: #91a1b3; font-size: 12px; }
+.panel-status,
+.panel-error {
+  margin-bottom: 12px;
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.panel-status { background: #fff; border: 1px solid #e5eaf0; color: #607086; }
+.panel-error {
+  background: #fff6f5;
+  color: #a94640;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+.panel-error button,
+.panel-status button {
+  border: 1px solid #d5e0ea;
+  border-radius: 6px;
+  padding: 7px 12px;
+  background: #fff;
+  color: #38455a;
+}
+@media (max-width: 800px) {
+  .crm-header { height: 58px; padding-inline: 15px; }
+  .crm-header-right { gap: 14px; }
+  .crm-account { display: none; }
+  .crm-workspace { padding: 18px 14px; }
+  .caption-sub { display: none; }
+}
+@media (max-width: 720px) {
+  .crm-nav {
+    position: sticky;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: auto;
+    width: 100%;
+    height: 56px;
+    flex-direction: row;
+    padding: 0 8px;
+    gap: 0;
+  }
+  .crm-logo { font-size: 22px; margin: 0 8px 0 4px; }
+  .crm-logo > span { font-size: 16px; }
+  .crm-nav button {
+    width: auto;
+    flex-direction: row;
+    padding: 8px;
+    font-size: 0;
+    border-left: 0;
+    border-bottom: 3px solid transparent;
+  }
+  .crm-nav button span { display: none; }
+  .crm-nav button.active { border-bottom-color: #38a8f4; border-left-color: transparent; }
+  .crm-nav-spacer { display: none; }
+  .crm-main { margin-left: 0; }
+  .crm-user { width: 28px; height: 28px; margin-left: auto; }
+}

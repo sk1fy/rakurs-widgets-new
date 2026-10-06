@@ -1,0 +1,28 @@
+{
+  "name": "rkrs-sla-widget-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/release.mjs && vite --host 127.0.0.1 --port 5175 --strictPort",
+    "build": "vite build --mode widget",
+    "release": "node scripts/release.mjs",
+    "build:preview": "node scripts/release.mjs && vite build --mode preview",
+    "preview": "vite preview --host 127.0.0.1 --port 4175 --strictPort --outDir dist-preview",
+    "package:widget": "node scripts/package-widget.mjs",
+    "test": "npm run release && node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "@lucide/vue": "1.48.0",
+    "vue": "3.5.43"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "6.0.9",
+    "vite": "8.3.1",
+    "requirejs": "2.3.8",
+    "jsdom": "29.1.1"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
