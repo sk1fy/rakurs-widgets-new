@@ -891,6 +891,7 @@ export function mount(context) {
           active: false,
           keepCurrentResponsible: true,
           executionMode: "observe",
+          source: "creation",
         };
       const d = state.createDraft;
       function select(label, items, key) {
@@ -914,6 +915,14 @@ export function mount(context) {
         right.append(l);
       }
       select("Группа", eligibleGroups, "groupId");
+      select(
+        "Источник запуска",
+        [
+          { id: "creation", name: "Создание сделки в воронке" },
+          { id: "digital_pipeline", name: "Триггер Digital Pipeline" },
+        ],
+        "source",
+      );
       select("Воронка", state.refs.pipelines || [], "pipelineId");
       select(
         "Режим правила",
@@ -923,12 +932,13 @@ export function mount(context) {
         ],
         "executionMode",
       );
-      select(
-        "Этап",
-        state.refs.pipelines?.find((p) => p.id === d.pipelineId)?.statuses ||
-          [],
-        "statusId",
-      );
+      if (d.source !== "creation")
+        select(
+          "Этап",
+          state.refs.pipelines?.find((p) => p.id === d.pipelineId)?.statuses ||
+            [],
+          "statusId",
+        );
       field(
         right,
         "Оставлять сделку у доступного текущего ответственного",
@@ -950,7 +960,7 @@ export function mount(context) {
           !state.bootstrap.canManage ||
             state.busy ||
             !!state.pending ||
-            !d.statusId ||
+            (d.source !== "creation" && !d.statusId) ||
             state.busy ||
             !!state.pending,
           true,

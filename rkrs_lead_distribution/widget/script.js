@@ -133,6 +133,107 @@ define([], function () {
               "Не удалось загрузить распределение. Откройте виджет повторно.";
         });
     }
+    // Compact group picker for the Digital Pipeline action settings only.
+    // Follows the documented WEB SDK contract: locate the scoped container by
+    // widget_code and write the UUID into the widget's own groupId field so that
+    // amoCRM saves it as part of the action settings (action.settings.widget.settings.groupId).
+    function mountGroupPicker(container) {
+      try {
+        var scope =
+          container && container.nodeType
+            ? container
+            : document.querySelector(
+                ".digital-pipeline__short-task_widget-style_" +
+                  (((self.get_settings && self.get_settings()) || {})
+                    .widget_code || ""),
+              );
+        if (!scope || !scope.querySelector) return;
+        var holder =
+          scope.querySelector('[data-action="send_widget_hook"]') || scope;
+        var field =
+          holder.querySelector('input[name="groupId"]') ||
+          scope.querySelector('input[name="groupId"]');
+        if (!field || scope.querySelector("[data-rkrs-dp-groups]")) return;
+        var status = document.createElement("div");
+        status.setAttribute("data-rkrs-dp-groups", "loading");
+        status.textContent = "Загружаем группы…";
+        if (field.parentNode)
+          field.parentNode.insertBefore(status, field.nextSibling);
+        if (typeof self.$authorizedAjax !== "function") {
+          status.textContent =
+            "Авторизация amoCRM недоступна — введите идентификатор группы вручную.";
+          status.setAttribute("data-rkrs-dp-groups", "fallback");
+          return;
+        }
+        var req = self.$authorizedAjax({
+          url: API + "/runtime",
+          type: "POST",
+          dataType: "json",
+          contentType: "application/json",
+          data: JSON.stringify({ kind: "groups" }),
+          timeout: 11000,
+        });
+        req.done(function (response) {
+          var groups = (response && response.items) || [];
+          if (!groups.length) {
+            status.textContent =
+              "Группы распределения не найдены — введите идентификатор вручную.";
+            status.setAttribute("data-rkrs-dp-groups", "fallback");
+            return;
+          }
+          var select = document.createElement("select");
+          select.setAttribute("aria-label", "Группа распределения");
+          select.setAttribute("data-rkrs-dp-groups", "ready");
+          var placeholder = document.createElement("option");
+          placeholder.value = "";
+          placeholder.textContent = "Выберите группу";
+          select.appendChild(placeholder);
+          for (var i = 0; i < groups.length; i += 1) {
+            var g = groups[i] || {};
+            var option = document.createElement("option");
+            option.value = String(g.id || "");
+            option.textContent = String(g.name || g.id || "Группа");
+            select.appendChild(option);
+          }
+          select.value = field.value || "";
+          select.addEventListener("change", function () {
+            field.value = select.value;
+            field.dispatchEvent(new Event("input", { bubbles: true }));
+            field.dispatchEvent(new Event("change", { bubbles: true }));
+          });
+          status.parentNode.replaceChild(select, status);
+        });
+        req.fail(function () {
+          status.textContent =
+            "Не удалось загрузить группы — введите идентификатор группы вручную.";
+          status.setAttribute("data-rkrs-dp-groups", "fallback");
+        });
+      } catch (ignored) {
+        /* the amoCRM field remains available for manual entry */
+      }
+    }
+
+    // amoCRM "custom" settings field contract (docs: /integrations/custom_settings):
+    // the widget is given <code>_custom_content (its own UI) and <code>_custom
+    // (hidden input that stores a JSON string or number). Changes are reflected in
+    // the form by triggering "change" on the hidden input. We bind our existing
+    // distribution settings UI to that field - no credentials, no extra secret.
+    function customNode(suffix) {
+      var node = document.querySelector('[id$="' + suffix + '"]');
+      return node && node.id && node.id !== suffix ? node : null;
+    }
+    function bindCustomSettings(body) {
+      var target =
+        customNode("_custom_content") ||
+        (body && (body.nodeType ? body : body[0]));
+      show("settings", target);
+      var hidden = customNode("_custom");
+      if (hidden) {
+        hidden.value = JSON.stringify({ widget: "rkrs-lead-distribution" });
+        hidden.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    }
+
     self.callbacks = {
       render: function () {
         show("card");
@@ -145,11 +246,15 @@ define([], function () {
         return true;
       },
       settings: function (body) {
-        show("settings", body && (body.nodeType ? body : body[0]));
+        bindCustomSettings(body);
         return true;
       },
       advancedSettings: function () {
         show("settings", document.getElementById("list_page_holder"));
+        return true;
+      },
+      dpSettings: function (body) {
+        mountGroupPicker(body && (body.nodeType ? body : body[0]));
         return true;
       },
       onSave: function () {

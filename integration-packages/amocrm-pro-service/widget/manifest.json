@@ -1,0 +1,73 @@
+{
+  "widget": {
+    "name": "widget.name",
+    "description": "widget.description",
+    "short_description": "widget.short_description",
+    "version": "0.6.2",
+    "interface_version": 5,
+    "init_once": false,
+    "locale": [
+      "ru",
+      "en"
+    ],
+    "installation": true,
+    "support": {
+      "link": "https://github.com/sk1fy/amocrm-pro"
+    }
+  },
+  "locations": [
+    "lcard-1",
+    "settings",
+    "advanced_settings",
+    "digital_pipeline"
+  ],
+  "tour": {
+    "is_tour": true,
+    "tour_images": {
+      "ru": [
+        "/images/logo_main.png"
+      ],
+      "en": [
+        "/images/logo_main.png"
+      ]
+    },
+    "tour_description": "widget.tour_description"
+  },
+  "settings": {
+    "backend_url": {
+      "name": "settings.backend_url",
+      "type": "text",
+      "required": true
+    },
+    "integration_code": {
+      "name": "settings.integration_code",
+      "type": "text",
+      "required": true
+    },
+    "distribution": {
+      "name": "settings.distribution",
+      "type": "custom",
+      "required": false
+    }
+  },
+  "advanced": {
+    "title": "advanced.title"
+  },
+  "dp": {
+    "title": "dp.title",
+    "action_multiple": false,
+    "webhook_url": "https://2-26-66-187.sslip.io/api/v1/widget/distribution/dp",
+    "settings": {
+      "key": {
+        "name": "dp.key",
+        "type": "text",
+        "required": true
+      },
+      "groupId": {
+        "name": "dp.group",
+        "type": "text",
+        "required": true
+      }
+    }
+  }
+}
