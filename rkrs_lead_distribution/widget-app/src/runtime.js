@@ -27,6 +27,8 @@ const labels = {
   failed: "Ошибка назначения",
   no_available_members: "Никто не доступен",
   source_time_unknown: "Неизвестно время входа сделки",
+  live_boundary_uncertain:
+    "Сделка поступила в момент включения распределения. Требуется проверка времени входа",
   rule_inactive: "Группа на паузе",
   mapping_unavailable: "Нет подтверждённой связи сотрудника с amoCRM",
   waiting: "Ожидает",
