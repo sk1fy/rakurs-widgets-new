@@ -1,0 +1,37 @@
+{
+  "widget": {
+    "name": "widget.name",
+    "description": "widget.description",
+    "short_description": "widget.short_description",
+    "version": "1.1.0",
+    "interface_version": 2,
+    "init_once": false,
+    "locale": [
+      "ru"
+    ],
+    "installation": true,
+    "support": {
+      "link": "https://rkrs.ru",
+      "email": "amo@rkrs.ru"
+    }
+  },
+  "locations": [
+    "settings",
+    "everywhere",
+    "tlist",
+    "tline",
+    "tcalendar"
+  ],
+  "settings": {
+    "runtime_config": {
+      "name": "settings.runtime_config",
+      "type": "custom",
+      "required": false
+    },
+    "teamos_enabled": {
+      "name": "settings.teamos_enabled",
+      "type": "checkbox",
+      "required": false
+    }
+  }
+}

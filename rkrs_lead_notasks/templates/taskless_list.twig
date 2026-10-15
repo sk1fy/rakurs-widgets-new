@@ -1,0 +1,11 @@
+<div class="rkrs-wt-dialog rkrs-wt-dialog_list">
+    <h2>{{ title }}</h2>
+    <div class="rkrs-wt-entities">
+        {% for entity in entities %}
+            <a class="rkrs-wt-entity" href="/{{ entity.entity_type }}/detail/{{ entity.id }}">
+                <span class="rkrs-wt-entity__name">{{ entity.name }}</span>
+                <span class="rkrs-wt-entity__meta">{{ entity.meta }}</span>
+            </a>
+        {% endfor %}
+    </div>
+</div>
