@@ -5,15 +5,18 @@ const manifest = require('../manifest.json');
 
 test('manifest settings use supported amoCRM field types', () => {
     const allowed = new Set(['text', 'pass', 'users', 'users_lp', 'custom']);
+    assert.equal(Object.values(manifest.settings).filter(field => field.type === 'custom').length, 1);
+    assert.equal(manifest.settings.runtime_config.type, 'custom');
+    assert.equal(manifest.settings.teamos_enabled.type, 'text');
     for (const [name, field] of Object.entries(manifest.settings)) {
         assert.ok(allowed.has(field.type), `Unsupported settings type for ${name}: ${field.type}`);
     }
 });
 
-test('TeamOS toggle stages both on and off in native custom field without changing saved runtime mode', () => {
+test('TeamOS toggle stages both on and off in native text field without changing saved runtime mode', () => {
     const nodes = [];
     const hidden = { length: 1, value: '0', changes: 0,
-        first() { return this; }, val(v) { this.value = v; return this; },
+        hide() { return this; }, closest() { return this; }, first() { return this; }, val(v) { this.value = v; return this; },
         trigger(event) { assert.equal(event, 'change'); this.changes++; return this; } };
     const $ = (tag) => {
         const node = { tag, props: {}, events: {},

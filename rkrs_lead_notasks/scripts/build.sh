@@ -9,6 +9,12 @@ cd "$PROJECT_DIR"
 cp -R manifest.json script.js style.css i18n images lib templates "$TEMP_DIR/"
 TASK_CONTROL_BUILD_DIR="$TEMP_DIR" node <<'JS'
 const fs = require('node:fs');
+const manifest = JSON.parse(fs.readFileSync(process.env.TASK_CONTROL_BUILD_DIR + '/manifest.json', 'utf8'));
+const fields = Object.values(manifest.settings || {});
+const allowed = new Set(['text', 'pass', 'users', 'users_lp', 'custom']);
+if (fields.some(field => !allowed.has(field.type)) || fields.filter(field => field.type === 'custom').length > 1) {
+    throw new Error('Invalid amoCRM manifest: supported setting types and at most one custom field required');
+}
 const coreOrigin = process.env.TASK_CONTROL_CORE_ORIGIN || '';
 const backendOrigin = process.env.TASK_CONTROL_BACKEND_ORIGIN || '';
 if ((!coreOrigin || !backendOrigin) && process.env.TASK_CONTROL_STANDALONE_BUILD !== '1') {

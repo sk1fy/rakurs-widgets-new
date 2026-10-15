@@ -39,9 +39,11 @@
         var self = this, $ = this.$;
         var panel = $('<div>').css({ padding: '16px' }).appendTo($body);
         $('<h3>').text('Подключение к TeamOS').appendTo(panel);
-        // manifest custom fields are persisted by amoCRM's main Save button.
+        // Native manifest fields are persisted by amoCRM's main Save button.
         // A checkbox is a rendered control, not a supported manifest field type.
         var field = $body.find('input[name="teamos_enabled"]').first();
+        field.hide();
+        field.closest('.widget_settings_block__item_field').hide();
         var toggle = $('<input>').attr({ type: 'checkbox', 'aria-label': 'Правила из TeamOS' })
             .prop('checked', this.enabled()).prop('disabled', !field.length);
         var label = $('<label>').appendTo(panel);
