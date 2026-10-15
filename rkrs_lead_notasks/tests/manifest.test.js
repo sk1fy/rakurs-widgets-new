@@ -20,7 +20,7 @@ test('TeamOS toggle stages both on and off in native text field without changing
         trigger(event) { assert.equal(event, 'change'); this.changes++; return this; } };
     const $ = (tag) => {
         const node = { tag, props: {}, events: {},
-            css() { return this; }, appendTo() { return this; }, append() { return this; },
+            insertAfter() { return this; }, css() { return this; }, appendTo() { return this; }, append() { return this; },
             text() { return this; }, attr(v) { Object.assign(this.props, v); return this; },
             prop(k,v) { if (arguments.length === 1) return this.props[k]; this.props[k] = v; return this; },
             on(event, cb) { this.events[event] = cb; return this; } };

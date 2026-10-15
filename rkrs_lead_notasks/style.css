@@ -1306,3 +1306,29 @@ html[data-color-scheme='dark'] .rkrs-wt-flags .rkrs-wt-switch:has(input:checked)
         padding-left: 12px;
     }
 }
+
+/* TeamOS settings live in the native fields wrapper, before the Save footer. */
+.rkrs-wt-teamos {
+    box-sizing: border-box;
+    margin: 20px 0;
+    padding: 20px;
+    border: 1px solid #dfe3e8;
+    border-radius: 10px;
+    background: #f8fafb;
+    color: #293a42;
+    font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+}
+.rkrs-wt-teamos h3 { margin: 0 0 8px; font-size: 16px; font-weight: 600; color: #17505b; }
+.rkrs-wt-teamos p { margin: 8px 0; }
+.rkrs-wt-teamos__intro, .rkrs-wt-teamos__status { color: #667680; }
+.rkrs-wt-teamos__toggle { display: flex; align-items: center; gap: 9px; margin: 16px 0; font-weight: 600; cursor: pointer; }
+.rkrs-wt-teamos__toggle input { appearance: auto; width: 16px; height: 16px; margin: 0; accent-color: #17505b; }
+.rkrs-wt-teamos__steps { margin: 14px 0; padding-left: 20px; list-style: decimal; }
+.rkrs-wt-teamos__steps li { margin: 8px 0; padding-left: 3px; }
+.rkrs-wt-teamos__actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0 10px; }
+.rkrs-wt-teamos .rkrs-wt-teamos__button { box-sizing: border-box; min-height: 36px; padding: 8px 14px; border: 1px solid #cbd5df; border-radius: 5px; background: #fff; color: #17505b; font: inherit; font-weight: 600; cursor: pointer; }
+.rkrs-wt-teamos .rkrs-wt-teamos__button:hover { background: #e8eeef; }
+.rkrs-wt-teamos .rkrs-wt-teamos__button:disabled { opacity: .55; cursor: wait; }
+.rkrs-wt-teamos .rkrs-wt-teamos__button:focus-visible, .rkrs-wt-teamos__code:focus { outline: 2px solid #4c8bf7; outline-offset: 2px; }
+.rkrs-wt-teamos__code { box-sizing: border-box; display: block; width: 100%; height: 90px; padding: 10px; margin-top: 10px; border: 1px solid #cbd5df; border-radius: 5px; background: #fff; color: #293a42; font: 12px/1.4 monospace; resize: vertical; word-break: break-all; }
+.rkrs-wt-teamos__code[hidden] { display: none; }
