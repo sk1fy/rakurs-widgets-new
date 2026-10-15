@@ -1,18 +1,18 @@
 define([
     'jquery',
     'lib/components/base/modal',
-    './lib/constants.js?v=1.1.0',
-    './lib/request_queue.js?v=1.1.0',
-    './lib/amo_api.js?v=1.1.0',
-    './lib/rules.js?v=1.1.0',
-    './lib/snapshot.js?v=1.1.0',
-    './lib/catalog_repository.js?v=1.1.0',
-    './lib/runtime.js?v=1.1.0',
-    './lib/settings_controller.js?v=1.1.0',
-    './lib/task_assignment.js?v=1.1.0',
-    './lib/teamos.js?v=1.1.0',
-    './lib/deployment.js?v=1.1.0',
-    './lib/teamos_controller.js?v=1.1.0'
+    './lib/constants.js?v=1.1.1',
+    './lib/request_queue.js?v=1.1.1',
+    './lib/amo_api.js?v=1.1.1',
+    './lib/rules.js?v=1.1.1',
+    './lib/snapshot.js?v=1.1.1',
+    './lib/catalog_repository.js?v=1.1.1',
+    './lib/runtime.js?v=1.1.1',
+    './lib/settings_controller.js?v=1.1.1',
+    './lib/task_assignment.js?v=1.1.1',
+    './lib/teamos.js?v=1.1.1',
+    './lib/deployment.js?v=1.1.1',
+    './lib/teamos_controller.js?v=1.1.1'
 ], function ($, Modal, Constants, QueueModule, ApiFactory, RulesFactory, SnapshotFactory, CatalogFactory, RuntimeFactory, SettingsFactory, TaskAssignmentFactory, TeamOSFactory, Deployment, TeamControllerFactory) {
     'use strict';
 
