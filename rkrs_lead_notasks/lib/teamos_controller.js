@@ -37,35 +37,51 @@
     };
     Controller.prototype.render = function ($body) {
         var self = this, $ = this.$;
-        var panel = $('<div>').css({ padding: '16px' }).appendTo($body);
-        $('<h3>').text('Подключение к TeamOS').appendTo(panel);
-        // Native manifest fields are persisted by amoCRM's main Save button.
-        // A checkbox is a rendered control, not a supported manifest field type.
+        if (this.panel) { this.panel.remove(); }
         var field = $body.find('input[name="teamos_enabled"]').first();
-        field.hide();
-        field.closest('.widget_settings_block__item_field').hide();
+        var nativeItem = field.closest('.widget_settings_block__item_field');
+        field.hide(); nativeItem.hide();
+        var panel = $('<section>').attr('class', 'rkrs-wt-teamos');
+        this.panel = panel;
+        // Keep custom controls inside the native fields area, before amoCRM Save.
+        if (nativeItem.length) { panel.insertAfter(nativeItem); }
+        else {
+            var wrapper = $body.find('#widget_settings__fields_wrapper').first();
+            panel.appendTo(wrapper.length ? wrapper : $body);
+        }
+        $('<h3>').text('Правила из TeamOS').appendTo(panel);
+        $('<p>').attr('class', 'rkrs-wt-teamos__intro').text(this.enabled()
+            ? 'Правила настраиваются в TeamOS. Проверка задач выполняется в amoCRM.'
+            : 'Сейчас используются локальные правила amoCRM. Подключите TeamOS, чтобы управлять правилами аккаунта в одном месте.').appendTo(panel);
         var toggle = $('<input>').attr({ type: 'checkbox', 'aria-label': 'Правила из TeamOS' })
             .prop('checked', this.enabled()).prop('disabled', !field.length);
-        var label = $('<label>').appendTo(panel);
-        label.append(toggle).append($('<span>').text(' Правила из TeamOS'));
+        var label = $('<label>').attr('class', 'rkrs-wt-teamos__toggle').appendTo(panel);
+        label.append(toggle).append($('<span>').text(' Использовать правила из TeamOS'));
         toggle.on('change', function () {
             field.val(toggle.prop('checked') ? '1' : '0').trigger('change');
         });
         if (!field.length) {
             $('<p>').text('Не найдено поле настроек TeamOS. Закройте и повторно откройте настройки виджета.').appendTo(panel);
         }
-        $('<p>').text('В TeamOS подключите аккаунт, опубликуйте правила и активируйте режим managed. Затем включите флажок «Правила из TeamOS» здесь и нажмите основную кнопку Сохранить. Коды действуют 60 секунд.').appendTo(panel);
-        var status = $('<p>').appendTo(panel);
-        var code = $('<textarea readonly>').css({ width: '100%', height: '70px' }).attr('aria-label', 'Одноразовое подтверждение Core').appendTo(panel);
+        var steps = $('<ol>').attr('class', 'rkrs-wt-teamos__steps').appendTo(panel);
+        ['Получите код подключения и вставьте его в разделе «Контроль задач» в TeamOS.',
+            'Создайте и опубликуйте правила в TeamOS.',
+            'Получите код смены режима, подтвердите переход в TeamOS, затем включите флажок выше и нажмите «Сохранить» в amoCRM.'
+        ].forEach(function (text) { $('<li>').text(text).appendTo(steps); });
+        var actions = $('<div>').attr('class', 'rkrs-wt-teamos__actions').appendTo(panel);
+        var status = $('<p>').attr({ 'class': 'rkrs-wt-teamos__status', role: 'status', 'aria-live': 'polite' }).text('Коды одноразовые и действуют 60 секунд.').appendTo(panel);
+        var code = $('<textarea readonly>').attr({ 'class': 'rkrs-wt-teamos__code', 'aria-label': 'Одноразовый код для TeamOS', spellcheck: 'false' }).prop('hidden', true).appendTo(panel);
         ['link', 'mode'].forEach(function (purpose) {
-            $('<button type="button">').text(purpose === 'link' ? 'Код подключения' : 'Код смены режима').appendTo(panel).on('click', function () {
-                code.val(''); status.text('Получение подтверждения…');
+            var button = $('<button type="button">').attr('class', 'button-input rkrs-wt-teamos__button').text(purpose === 'link' ? 'Код подключения' : 'Код смены режима').appendTo(actions).on('click', function () {
+                button.prop('disabled', true);
+                code.val('').prop('hidden', true); status.text('Получение подтверждения…');
                 Promise.resolve().then(function () { return self.getClient().proof(purpose); }).then(function (proof) {
-                    code.val(proof.assertion); status.text('Скопируйте код в TeamOS в течение 60 секунд.');
-                    setTimeout(function () { if (code.val() === proof.assertion) { code.val(''); } }, 60000);
-                }).catch(function () { status.text('Проверьте адреса сборки, подключение Core и права администратора amoCRM.'); });
+                    code.val(proof.assertion).prop('hidden', false); status.text('Выделите и скопируйте код в TeamOS в течение 60 секунд.');
+                    setTimeout(function () { if (code.val() === proof.assertion) { code.val('').prop('hidden', true); status.text('Код истёк. Получите новый код.'); } }, 60000);
+                }).catch(function () { status.text('Не удалось получить код. Проверьте подключение сервера и права администратора amoCRM.'); }).finally(function () { button.prop('disabled', false); });
             });
         });
+        code.on('click', function () { this.select(); });
         if (this.enabled()) { $('<p>').text('Настройки правил находятся в TeamOS. Для возврата к автономному режиму сначала переключите режим в TeamOS, затем отключите флажок и сохраните настройки amoCRM.').appendTo(panel); }
     };
     Controller.prototype.destroy = function () { this.running = false; this.generation++; clearTimeout(this.timer); this.client = null; };
