@@ -1,18 +1,18 @@
 define([
     'jquery',
     'lib/components/base/modal',
-    './lib/constants.js?v=1.1.0',
-    './lib/request_queue.js?v=1.1.0',
-    './lib/amo_api.js?v=1.1.0',
-    './lib/rules.js?v=1.1.0',
-    './lib/snapshot.js?v=1.1.0',
-    './lib/catalog_repository.js?v=1.1.0',
-    './lib/runtime.js?v=1.1.0',
-    './lib/settings_controller.js?v=1.1.0',
-    './lib/task_assignment.js?v=1.1.0',
-    './lib/teamos.js?v=1.1.0',
-    './lib/deployment.js?v=1.1.0',
-    './lib/teamos_controller.js?v=1.1.0'
+    './lib/constants.js?v=1.1.2',
+    './lib/request_queue.js?v=1.1.2',
+    './lib/amo_api.js?v=1.1.2',
+    './lib/rules.js?v=1.1.2',
+    './lib/snapshot.js?v=1.1.2',
+    './lib/catalog_repository.js?v=1.1.2',
+    './lib/runtime.js?v=1.1.2',
+    './lib/settings_controller.js?v=1.1.2',
+    './lib/task_assignment.js?v=1.1.2',
+    './lib/teamos.js?v=1.1.2',
+    './lib/deployment.js?v=1.1.2',
+    './lib/teamos_controller.js?v=1.1.2'
 ], function ($, Modal, Constants, QueueModule, ApiFactory, RulesFactory, SnapshotFactory, CatalogFactory, RuntimeFactory, SettingsFactory, TaskAssignmentFactory, TeamOSFactory, Deployment, TeamControllerFactory) {
     'use strict';
 
@@ -165,7 +165,8 @@ define([
                     settingsController.destroy();
                     settingsController = null;
                 }
-                if (team.enabled()) { team.render($body); return true; }
+                team.render($body);
+                if (team.enabled()) { return true; }
                 var api = createApi();
                 settingsController = new SettingsModule.SettingsController({
                     widget: self,
@@ -174,7 +175,7 @@ define([
                     repository: new CatalogModule.CatalogRepository(api),
                     accountId: self.accountId
                 });
-                settingsController.init($body).then(function () { team.render($body); }).catch(function (error) {
+                settingsController.init($body).catch(function (error) {
                     if (window.console && console.error) {
                         console.error('[rkrs_lead_notasks] settings init failed', error);
                     }

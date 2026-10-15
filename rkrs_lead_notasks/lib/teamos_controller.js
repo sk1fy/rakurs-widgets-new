@@ -39,6 +39,21 @@
         var self = this, $ = this.$;
         var panel = $('<div>').css({ padding: '16px' }).appendTo($body);
         $('<h3>').text('Подключение к TeamOS').appendTo(panel);
+        // Native manifest fields are persisted by amoCRM's main Save button.
+        // A checkbox is a rendered control, not a supported manifest field type.
+        var field = $body.find('input[name="teamos_enabled"]').first();
+        field.hide();
+        field.closest('.widget_settings_block__item_field').hide();
+        var toggle = $('<input>').attr({ type: 'checkbox', 'aria-label': 'Правила из TeamOS' })
+            .prop('checked', this.enabled()).prop('disabled', !field.length);
+        var label = $('<label>').appendTo(panel);
+        label.append(toggle).append($('<span>').text(' Правила из TeamOS'));
+        toggle.on('change', function () {
+            field.val(toggle.prop('checked') ? '1' : '0').trigger('change');
+        });
+        if (!field.length) {
+            $('<p>').text('Не найдено поле настроек TeamOS. Закройте и повторно откройте настройки виджета.').appendTo(panel);
+        }
         $('<p>').text('В TeamOS подключите аккаунт, опубликуйте правила и активируйте режим managed. Затем включите флажок «Правила из TeamOS» здесь и нажмите основную кнопку Сохранить. Коды действуют 60 секунд.').appendTo(panel);
         var status = $('<p>').appendTo(panel);
         var code = $('<textarea readonly>').css({ width: '100%', height: '70px' }).attr('aria-label', 'Одноразовое подтверждение Core').appendTo(panel);

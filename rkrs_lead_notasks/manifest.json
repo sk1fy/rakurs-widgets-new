@@ -3,7 +3,7 @@
     "name": "widget.name",
     "description": "widget.description",
     "short_description": "widget.short_description",
-    "version": "1.1.0",
+    "version": "1.1.2",
     "interface_version": 2,
     "init_once": false,
     "locale": [
@@ -30,7 +30,7 @@
     },
     "teamos_enabled": {
       "name": "settings.teamos_enabled",
-      "type": "checkbox",
+      "type": "text",
       "required": false
     }
   }
