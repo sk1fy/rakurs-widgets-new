@@ -30,7 +30,8 @@
         function apply() {
             if (!current()) { return; }
             var client = self.client, good = client && client.good;
-            self.changed(good);
+            var applied = self.changed(good);
+            if (good && applied !== false && client.acknowledge) { Promise.resolve().then(function () { return client.acknowledge(good); }).catch(function () { if (current() && !client.good) { apply(); } }); }
             clearTimeout(self.leaseTimer);
             if (good) { self.leaseTimer = setTimeout(apply, Math.max(1, client.leaseUntil - client.clock())); }
         }

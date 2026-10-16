@@ -33,8 +33,8 @@ function harness() {
 }
 test('minimum semver is ordered independently of protocol/package version',()=>{
     assert.equal(runtimeVersion, require('../package.json').version);
-    for (const v of ['1.0.0','1.1.0','1.1.4']) assert.equal(supports(v),true,v);
-    for (const v of ['1.1.5','1.2.0','2.0.0','1.1.4-beta','01.1.0','bad','1.1.9007199254740992']) assert.equal(supports(v),false,v);
+    for (const v of ['1.0.0','1.1.0','1.1.4','1.1.5','1.2.0']) assert.equal(supports(v),true,v);
+    for (const v of ['1.2.1','2.0.0','1.1.4-beta','01.1.0','bad','1.1.9007199254740992']) assert.equal(supports(v),false,v);
 });
 test('renewal after 285s uses fresh JWT/assertion and keeps other tabs independent',async()=>{
     const h=harness(), other=harness();
@@ -86,8 +86,8 @@ test('unknown schema, malformed lease, actor mismatch and oversized payload are 
 });
 test('dynamic envelope advances runtimeRevision at same publicationVersion and rejects equal revision hash changes',async()=>{
     const h=harness();h.schema=2;let revision=21, rules=[];
-    h.bootstrap=()=>({...h.envelope(),runtimeSchemaVersion:2,snapshotId:'snapshot',publicationId:'publication',publicationVersion:7,runtimeRevision:revision,
-        intentChecksum:'a'.repeat(64),resolvedChecksum:'b'.repeat(64),sourceRevisions:{crm:'revision',organization:1,mapping:1},resolverVersion:1,runtimeRules:rules,payloadChecksum:Snapshot.hashRules(rules)});
+    h.bootstrap=()=>({...h.envelope(),runtimeSchemaVersion:2,snapshotId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',publicationId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',publicationVersion:7,runtimeRevision:revision,
+        intentChecksum:'a'.repeat(64),resolvedChecksum:'b'.repeat(64),sourceRevisions:{crm:'sha256:'+'c'.repeat(64),organization:1,mapping:1},resolverVersion:1,runtimeRules:rules,payloadChecksum:Snapshot.hashRules(rules)});
     await h.client.refresh();assert.equal(h.client.good.version,21);
     assert.ok(h.calls.some(c=>c.url.endsWith('/api/v2/task-control/runtime/bootstrap')));
     revision=22;await h.client.refresh();assert.equal(h.client.good.version,22);
