@@ -15,7 +15,7 @@
                 request: function (url, opts) {
                     opts = opts || {};
                     return new Promise(function (resolve, reject) {
-                        self.$.ajax({ url: url, method: opts.method || 'GET', dataType: 'json', cache: false, timeout: 10000, headers: opts.headers || {}, xhrFields: { withCredentials: false }, contentType: opts.body ? 'application/json' : undefined, data: opts.body ? JSON.stringify(opts.body) : undefined }).done(resolve).fail(function (xhr) { var e = new Error('Ошибка подключения'); e.status = xhr.status; reject(e); });
+                        self.$.ajax({ url: url, method: opts.method || 'GET', dataType: 'json', cache: false, timeout: 10000, headers: opts.headers || {}, xhrFields: { withCredentials: false }, contentType: opts.body ? 'application/json' : undefined, data: opts.body ? JSON.stringify(opts.body) : undefined }).done(resolve).fail(function (xhr) { var e = new Error('Ошибка подключения'); e.status = xhr.status; var after = xhr.getResponseHeader && xhr.getResponseHeader('Retry-After'); e.retryAfterMs = /^\d+$/.test(after || '') ? Number(after) * 1000 : Math.max(0, Date.parse(after) - Date.now()) || 0; reject(e); });
                     });
                 }
             });
@@ -26,13 +26,28 @@
         if (this.running || !this.enabled()) { return; }
         this.running = true;
         var self = this, generation = ++this.generation;
-        function refresh() {
-            Promise.resolve().then(function () { return self.getClient().refresh(); }).then(function (good) {
-                if (self.running && generation === self.generation) { self.changed(good); }
-            }).catch(function () {
-                if (self.running && generation === self.generation) { self.changed(self.client && self.client.good); }
-            }).finally(function () { if (self.running && generation === self.generation) { self.timer = setTimeout(refresh, 60000); } });
+        function current() { return self.running && generation === self.generation; }
+        function apply() {
+            if (!current()) { return; }
+            var client = self.client, good = client && client.good;
+            self.changed(good);
+            clearTimeout(self.leaseTimer);
+            if (good) { self.leaseTimer = setTimeout(apply, Math.max(1, client.leaseUntil - client.clock())); }
         }
+        function refresh() {
+            clearTimeout(self.timer);
+            if (!current()) { return; }
+            if (typeof document !== 'undefined' && document.hidden) { apply(); return; }
+            if (self.refreshing) { return; }
+            self.refreshing = true;
+            Promise.resolve().then(function () { return self.getClient().refresh(); }).catch(function () {}).finally(function () {
+                self.refreshing = false;
+                if (current()) { apply(); self.timer = setTimeout(refresh, self.client.pollDelay()); }
+            });
+        }
+        this.resume = function () { apply(); refresh(); };
+        if (typeof window !== 'undefined') { window.addEventListener('online', this.resume); window.addEventListener('pageshow', this.resume); }
+        if (typeof document !== 'undefined') { document.addEventListener('visibilitychange', this.resume); }
         refresh();
     };
     Controller.prototype.render = function ($body) {
@@ -84,6 +99,9 @@
         code.on('click', function () { this.select(); });
         if (this.enabled()) { $('<p>').text('Настройки правил находятся в TeamOS. Для возврата к автономному режиму сначала переключите режим в TeamOS, затем отключите флажок и сохраните настройки amoCRM.').appendTo(panel); }
     };
-    Controller.prototype.destroy = function () { this.running = false; this.generation++; clearTimeout(this.timer); this.client = null; };
+    Controller.prototype.destroy = function () { this.running = false; this.generation++; clearTimeout(this.timer); clearTimeout(this.leaseTimer);
+        if (typeof window !== 'undefined' && this.resume) { window.removeEventListener('online', this.resume); window.removeEventListener('pageshow', this.resume); }
+        if (typeof document !== 'undefined' && this.resume) { document.removeEventListener('visibilitychange', this.resume); }
+        if (this.client) { this.client.clear(); } this.client = null; this.refreshing = false; };
     return Controller;
 }));
