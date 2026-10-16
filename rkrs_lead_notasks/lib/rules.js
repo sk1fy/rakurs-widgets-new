@@ -275,7 +275,12 @@
 
     RuleEngine.prototype.match = function (context) {
         context = context || {};
-        var currentUserId = Number(context.currentUserId || this.currentUserId);
+        var currentUserId = context.currentUserId === undefined ? this.currentUserId : Number(context.currentUserId);
+        // A runtime belongs to the actor that installed it. A changed or missing
+        // live actor must not inherit that actor's explicit or projected rules.
+        if (!Number.isSafeInteger(currentUserId) || currentUserId <= 0 || currentUserId !== this.currentUserId) {
+            return { matches: [], denyExit: false, showModal: false };
+        }
         var entityType = context.entityType;
         var matches = this.myRules().filter(function (rule) {
             if (rule.checkResponsible && Number(context.responsibleUserId) !== currentUserId) {

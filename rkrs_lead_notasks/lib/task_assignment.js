@@ -38,30 +38,92 @@
         };
     }
 
-    function OwnerTaskService(api, checker) {
+    function OwnerTaskService(api, checker, options) {
+        options = options || {};
         this.api = api;
         this.checker = checker;
         this.pending = new Map();
+        this.uncertain = new Set();
+        this.destroyed = false;
+        this.accountId = Number(options.accountId) || 0;
+        this.isCurrent = options.isCurrent || function () { return true; };
+        this.browserRequiresStorage = typeof window !== 'undefined';
+        this.storage = options.storage || null;
+        try { if (!this.storage && this.browserRequiresStorage) { this.storage = window.localStorage; } } catch (error) {}
+        this.locks = options.locks || (typeof navigator !== 'undefined' ? navigator.locks : null);
     }
 
+    OwnerTaskService.prototype.markerKey = function (context) {
+        return ['rkrs_wt_task_write_v1', this.accountId, context.entityType, context.entityId].join(':');
+    };
+
     OwnerTaskService.prototype.create = function (context, draft) {
+        context = Object.assign({}, context);
+        if (this.destroyed) { return Promise.reject(new Error('Создание задачи остановлено.')); }
         var key = context.entityType + ':' + context.entityId;
         if (this.pending.has(key)) { return this.pending.get(key); }
         var self = this;
-        var operation = (async function () {
+        var assertCurrent = function () {
+            if (self.destroyed || !self.isCurrent(context)) {
+                throw new Error('Карточка, сотрудник или вкладка изменились. Откройте создание задачи заново.');
+            }
+        };
+        var execute = async function () {
+            assertCurrent();
             var payload = taskPayload(context, draft);
+            var marker = self.markerKey(context);
             var lead = await self.api.get('/api/v4/leads/' + payload.entity_id);
+            assertCurrent();
             if (!lead || Number(lead.responsible_user_id) !== payload.responsible_user_id) {
                 throw new Error('Ответственный за сделку изменился. Откройте создание задачи заново.');
             }
             self.checker.invalidate(context);
             var state = await self.checker.check(context, { force: true, forceApi: true });
-            if (state.state === Constants.TASK_STATE.HAS_TASK) { return { alreadyExists: true }; }
+            assertCurrent();
+            if (state.state === Constants.TASK_STATE.HAS_TASK) {
+                // A visible owner task resolves a previous ambiguous attempt.
+                self.uncertain.delete(key);
+                if (self.storage) { self.storage.removeItem(marker); }
+                return { alreadyExists: true };
+            }
             if (state.state !== Constants.TASK_STATE.NO_TASK) {
                 throw new Error('Не удалось проверить задачи ответственного. Попробуйте позже.');
             }
+            if (self.destroyed) { throw new Error('Создание задачи остановлено.'); }
+            if (self.uncertain.has(key) || self.storage && self.storage.getItem(marker)) {
+                throw new Error('Результат предыдущего создания неизвестен. Проверьте ленту сделки; повторное создание отключено для защиты от дублей.');
+            }
             // POST is never retried automatically: an ambiguous response may already have created the task.
-            var response = await self.api.post('/api/v4/tasks', [payload], { retry: false });
+            // Refresh ownership after the task query, which may have waited in the queue.
+            lead = await self.api.get('/api/v4/leads/' + payload.entity_id);
+            assertCurrent();
+            if (self.destroyed || !lead || Number(lead.responsible_user_id) !== payload.responsible_user_id) {
+                throw new Error('Ответственный за сделку изменился. Откройте создание задачи заново.');
+            }
+            if (self.storage) {
+                var markerValue = JSON.stringify({ createdAt: Date.now(), responsibleUserId: payload.responsible_user_id });
+                var count = 0;
+                for (var i = 0; i < self.storage.length; i += 1) {
+                    if (String(self.storage.key(i)).indexOf('rkrs_wt_task_write_v1:') === 0) { count += 1; }
+                }
+                if (count >= 256) { throw new Error('Достигнут лимит неподтверждённых созданий задач. Используйте стандартную форму amoCRM.'); }
+                self.storage.setItem(marker, markerValue);
+                if (self.storage.getItem(marker) !== markerValue) { throw new Error('Не удалось сохранить защиту от повторного создания задачи.'); }
+            }
+            assertCurrent();
+            self.uncertain.add(key);
+            var response;
+            try {
+                response = await self.api.post('/api/v4/tasks', [payload], { retry: false });
+            } catch (error) {
+                // A definitive rejection did not execute the write. Network/5xx/abort results remain uncertain.
+                if ([400, 401, 403, 404, 405, 422, 429].indexOf(Number(error && error.status)) !== -1) {
+                    self.uncertain.delete(key);
+                    if (self.storage) { self.storage.removeItem(marker); }
+                }
+                self.checker.invalidate(context);
+                throw error;
+            }
             self.checker.invalidate(context);
             var created = response && response._embedded && response._embedded.tasks || [];
             if (!created.some(function (task) { return matchesResponsible(task, context); })) {
@@ -70,8 +132,16 @@
                     throw new Error('Сервер не подтвердил задачу. Проверьте ленту сделки перед повторным созданием.');
                 }
             }
+            // Keep the marker until the Tasks read API observes the task. A second tab may
+            // still receive an eventually consistent empty list after a successful POST.
             return { alreadyExists: false };
-        }());
+        };
+        var operation;
+        if ((this.storage || this.browserRequiresStorage) && (!this.storage || !this.accountId || !this.locks || typeof this.locks.request !== 'function')) {
+            operation = Promise.reject(new Error('Браузер не поддерживает безопасное создание отдельной задачи между вкладками. Используйте стандартную форму amoCRM.'));
+        } else {
+            operation = this.storage ? this.locks.request(this.markerKey(context), execute) : execute();
+        }
         this.pending.set(key, operation);
         return operation.finally(function () { self.pending.delete(key); });
     };
@@ -99,7 +169,20 @@
         this.ui = options.ui;
         this.onChanged = options.onChanged || function () {};
         this.isActive = options.isActive || function () { return true; };
-        this.service = new OwnerTaskService(options.api, this.checker);
+        var self = this;
+        this.service = new OwnerTaskService(options.api, this.checker, {
+            accountId: options.accountId,
+            isCurrent: function (expected) {
+                if (self.destroyed || !self.isActive()) { return false; }
+                var current = self.context();
+                return Boolean(current && current.entityType === expected.entityType &&
+                    Number(current.entityId) === Number(expected.entityId) &&
+                    Number(current.responsibleUserId) === Number(expected.responsibleUserId) &&
+                    Number(current.currentUserId || 0) === Number(expected.currentUserId || 0) &&
+                    Number(current.accountId || 0) === Number(expected.accountId || 0) &&
+                    Number(current.accountId || 0) === Number(options.accountId || 0));
+            }
+        });
         this.form = null;
         this.formKey = '';
         this.noticeKey = '';
@@ -141,12 +224,16 @@
             this.form = $form[0];
             this.formKey = key;
             this.noticeKey = '';
-            $input.val(context.responsibleUserId).trigger('change');
-            $form.find('.js-feed-users .js-multisuggest-item')
-                .attr('data-id', context.responsibleUserId)
-                .attr('data-title', this._userName(context.responsibleUserId))
-                .attr('title', this._userName(context.responsibleUserId))
-                .text(this._userName(context.responsibleUserId));
+            // A selected assignee may belong to an edited task or a user draft.
+            // Only supply a default to an empty field; never reassign native CRM content.
+            if (!String($input.val() == null ? '' : $input.val()).trim()) {
+                $input.val(context.responsibleUserId).trigger('change');
+                $form.find('.js-feed-users .js-multisuggest-item')
+                    .attr('data-id', context.responsibleUserId)
+                    .attr('data-title', this._userName(context.responsibleUserId))
+                    .attr('title', this._userName(context.responsibleUserId))
+                    .text(this._userName(context.responsibleUserId));
+            }
         }
         var mismatch = Number($input.val()) !== Number(context.responsibleUserId);
         var $warning = $form.find('.rkrs-wt-task-warning');
@@ -223,6 +310,7 @@
                         self.onChanged(context);
                         instance.destroy();
                     } catch (error) {
+                        if (self.destroyed) { return; }
                         $error.text(error.message || 'Не удалось создать задачу. Проверьте ленту перед повторной попыткой.');
                         $save.prop('disabled', false);
                         self.checker.invalidate(context);
@@ -248,6 +336,7 @@
 
     TaskAssignmentController.prototype.destroy = function () {
         this.destroyed = true;
+        this.service.destroyed = true;
         clearInterval(this.timer);
         this.timer = null;
         if (typeof document !== 'undefined') { document.removeEventListener('click', this.clickHandler, true); }

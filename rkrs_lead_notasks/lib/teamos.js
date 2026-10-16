@@ -12,7 +12,7 @@
     function sameScope(a, b) {
         return ['companyId', 'accountId', 'bindingId', 'bindingRevision', 'installationId', 'integrationId', 'modeEpoch', 'product', 'generation'].every(function (k) { return a && b && a[k] === b[k]; });
     }
-    var RUNTIME_VERSION = '1.2.2';
+    var RUNTIME_VERSION = '1.2.3';
     var MAX_PAYLOAD = 1048576;
     var LEASE_MS = 300000;
     function version(value) {

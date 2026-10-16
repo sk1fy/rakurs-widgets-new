@@ -1,19 +1,19 @@
 define([
     'jquery',
     'lib/components/base/modal',
-    './lib/constants.js?v=1.2.2',
-    './lib/request_queue.js?v=1.2.2',
-    './lib/amo_api.js?v=1.2.2',
-    './lib/rules.js?v=1.2.2',
-    './lib/snapshot.js?v=1.2.2',
-    './lib/catalog_repository.js?v=1.2.2',
-    './lib/runtime.js?v=1.2.2',
-    './lib/settings_controller.js?v=1.2.2',
-    './lib/task_assignment.js?v=1.2.2',
-    './lib/teamos.js?v=1.2.2',
-    './lib/deployment.js?v=1.2.2',
-    './lib/teamos_controller.js?v=1.2.2',
-    './lib/migration.js?v=1.2.2'
+    './lib/constants.js?v=1.2.3',
+    './lib/request_queue.js?v=1.2.3',
+    './lib/amo_api.js?v=1.2.3',
+    './lib/rules.js?v=1.2.3',
+    './lib/snapshot.js?v=1.2.3',
+    './lib/catalog_repository.js?v=1.2.3',
+    './lib/runtime.js?v=1.2.3',
+    './lib/settings_controller.js?v=1.2.3',
+    './lib/task_assignment.js?v=1.2.3',
+    './lib/teamos.js?v=1.2.3',
+    './lib/deployment.js?v=1.2.3',
+    './lib/teamos_controller.js?v=1.2.3',
+    './lib/migration.js?v=1.2.3'
 ], function ($, Modal, Constants, QueueModule, ApiFactory, RulesFactory, SnapshotFactory, CatalogFactory, RuntimeFactory, SettingsFactory, TaskAssignmentFactory, TeamOSFactory, Deployment, TeamControllerFactory, MigrationFactory) {
     'use strict';
 
