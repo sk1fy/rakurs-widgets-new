@@ -1,18 +1,18 @@
 define([
     'jquery',
     'lib/components/base/modal',
-    './lib/constants.js?v=1.1.3',
-    './lib/request_queue.js?v=1.1.3',
-    './lib/amo_api.js?v=1.1.3',
-    './lib/rules.js?v=1.1.3',
-    './lib/snapshot.js?v=1.1.3',
-    './lib/catalog_repository.js?v=1.1.3',
-    './lib/runtime.js?v=1.1.3',
-    './lib/settings_controller.js?v=1.1.3',
-    './lib/task_assignment.js?v=1.1.3',
-    './lib/teamos.js?v=1.1.3',
-    './lib/deployment.js?v=1.1.3',
-    './lib/teamos_controller.js?v=1.1.3'
+    './lib/constants.js?v=1.1.4',
+    './lib/request_queue.js?v=1.1.4',
+    './lib/amo_api.js?v=1.1.4',
+    './lib/rules.js?v=1.1.4',
+    './lib/snapshot.js?v=1.1.4',
+    './lib/catalog_repository.js?v=1.1.4',
+    './lib/runtime.js?v=1.1.4',
+    './lib/settings_controller.js?v=1.1.4',
+    './lib/task_assignment.js?v=1.1.4',
+    './lib/teamos.js?v=1.1.4',
+    './lib/deployment.js?v=1.1.4',
+    './lib/teamos_controller.js?v=1.1.4'
 ], function ($, Modal, Constants, QueueModule, ApiFactory, RulesFactory, SnapshotFactory, CatalogFactory, RuntimeFactory, SettingsFactory, TaskAssignmentFactory, TeamOSFactory, Deployment, TeamControllerFactory) {
     'use strict';
 
@@ -33,7 +33,7 @@ define([
         var managedConfig;
         var managedKey = '';
         var team = new TeamController(self, $, Deployment, function (good) {
-            var key = good ? JSON.stringify(good.scope) + ':' + good.version : '';
+            var key = good ? JSON.stringify(good.scope) + ':' + good.actorId + ':' + good.schema + ':' + good.version : '';
             if (key === managedKey) { return; }
             managedKey = key; managedConfig = good ? good.config : undefined;
             if (runtimeController) { runtimeController.destroy(); runtimeController = null; }

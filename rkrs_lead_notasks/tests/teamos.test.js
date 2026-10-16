@@ -6,12 +6,12 @@ const { Client, origin, enabled } = require('../lib/teamos')(Snapshot, Rules);
 const scope = {companyId:'company', accountId:'123', bindingId:'binding', bindingRevision:1, installationId:'install', integrationId:'integration', modeEpoch:2, product:'task-control'};
 function setup() {
     const calls = []; let error = null; let epoch = 2;
-    let bootstrap = {scope, state:'active', mode:'managed', publication:{scope, version:1,schemaVersion:1,runtimeRules:[],checksum:Snapshot.hashRules([])}};
-    const client = new Client({settings:()=>({oauth_client_uuid:'11111111-1111-1111-1111-111111111111'}),accountId:123,coreOrigin:'https://core.example',backendOrigin:'https://backend.example',uuid:()=> 'req',request: async (url,opts)=>{
+    let bootstrap = {scope, minRuntimeVersion:'1.1.0', state:'active', mode:'managed', publication:{scope, version:1,schemaVersion:1,runtimeRules:[],checksum:Snapshot.hashRules([])}};
+    const client = new Client({settings:()=>({oauth_client_uuid:'11111111-1111-1111-1111-111111111111'}),accountId:123,coreOrigin:'https://core.example',backendOrigin:'https://backend.example',uuid:()=> 'req',sleep:async()=>{},random:()=>0,request: async (url,opts)=>{
         calls.push({url,opts});
         if(url.includes('disposable_token'))return {token:'jwt'+calls.length};
         if(url.endsWith('/auth'))return {assertion:'proof'};
-        if(url.endsWith('/sessions'))return {accessToken:'a'.repeat(43),expiresAt:new Date(Date.now()+300000).toISOString(),scope:{...scope,modeEpoch:epoch}};
+        if(url.endsWith('/sessions'))return {accessToken:'a'.repeat(43),expiresAt:new Date(Date.now()+300000).toISOString(),actorId:'7',scope:{...scope,modeEpoch:epoch}};
         if(error)throw Object.assign(new Error('failure'), {status:error});
         return bootstrap;
     }});
