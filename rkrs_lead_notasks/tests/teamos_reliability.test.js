@@ -33,8 +33,8 @@ function harness() {
 }
 test('minimum semver is ordered independently of protocol/package version',()=>{
     assert.equal(runtimeVersion, require('../package.json').version);
-    for (const v of ['1.0.0','1.1.0','1.1.4','1.1.5','1.2.0','1.2.1']) assert.equal(supports(v),true,v);
-    for (const v of ['1.2.2','2.0.0','1.1.4-beta','01.1.0','bad','1.1.9007199254740992']) assert.equal(supports(v),false,v);
+    for (const v of ['1.0.0','1.1.0','1.1.4','1.1.5','1.2.0','1.2.1','1.2.2','1.2.3']) assert.equal(supports(v),true,v);
+    for (const v of ['1.2.4','2.0.0','1.1.4-beta','01.1.0','bad','1.1.9007199254740992']) assert.equal(supports(v),false,v);
 });
 test('renewal after 285s uses fresh JWT/assertion and keeps other tabs independent',async()=>{
     const h=harness(), other=harness();

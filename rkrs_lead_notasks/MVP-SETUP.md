@@ -1,4 +1,4 @@
-# Контроль задач 1.1.0 — установка MVP
+# Контроль задач 1.2.3 — установка и проверка
 
 Пакет не содержит секретов. Core и backend TeamOS должны быть развёрнуты до включения управляемого режима; настройка ключей, миграций, grants и proxy описана в `team-os-backend/docs/integrations/task-control-connection.md` и инструкции серверного релиза. Core должен иметь установленную интеграцию с product task-control и grant для компании/аккаунта. TeamOS должен уже знать amoCRM аккаунт.
 
@@ -10,7 +10,7 @@ TASK_CONTROL_BACKEND_ORIGIN=https://YOUR_TEAM_OS_API_HOST \
 sh scripts/build.sh
 ```
 
-Подставьте публичные HTTPS origins, без `/api` и без завершающего пути. Адреса встраиваются только в архив, исходный `lib/deployment.js` остаётся пустым. Результат `../rkrs_lead_notasks.zip`, version 1.1.0. Сборка без адресов намеренно завершается ошибкой. Для автономного пакета явно задайте `TASK_CONTROL_STANDALONE_BUILD=1`. Такой пакет не предназначен для проверки интеграции.
+Подставьте публичные HTTPS origins, без `/api` и без завершающего пути. Адреса встраиваются только в архив, исходный `lib/deployment.js` остаётся пустым. Результат `../rkrs_lead_notasks.zip`, version 1.2.3. Сборка без адресов намеренно завершается ошибкой. Для автономного пакета явно задайте `TASK_CONTROL_STANDALONE_BUILD=1`. Такой пакет не предназначен для проверки интеграции.
 
 ## Подключение
 
@@ -132,3 +132,54 @@ API создаёт **отдельный** каталог, читает его о
 Переход режима на сервере имеет отдельное подтверждение: локальная подготовка сама
 не меняет режим TeamOS. При необходимости отката используйте сохранённые исходные
 настройки и соответствующий подтверждённый режим, не смешивая эпохи.
+
+### Runtime diagnostics (1.2.2)
+
+Managed runtime sends bounded diagnostic events to
+`POST /api/v1/task-control/runtime/telemetry` with its existing runtime session.
+`received` confirms validation and download; events use an ordered background queue
+that cannot delay runtime installation. `applied` follows installation into the
+local engine. Only `applied` confirms execution by that specific tab. Later successful
+applications of the same revision produce heartbeat evidence at most once per 60 seconds.
+Heartbeat and diagnostic responses never extend the bootstrap lease.
+
+Each tab creates a new random `runtimeInstanceId` in memory. A refreshed page is a new
+instance. Events carry the exact scope, actor, publication, runtime revision/checksum,
+package version, event UUID, occurrence time and bootstrap correlation UUID; v2 also
+includes snapshot ID. No rule contents, CRM objects, user messages, URLs, tokens or
+assertions are included. Error codes are restricted to a fixed allowlist. Failed or
+closed tabs are not reported as uninstall and do not invalidate another tab's evidence.
+The server determines freshness from its own receipt time and current scope.
+
+Failed engine installation emits `apply_failed` without `applied`. A failed bootstrap
+with a still-valid runtime session can emit a sanitized error scoped to that session
+without publication fields; revoked and foreign sessions emit no such evidence. A failed diagnostic
+request cannot renew a lease or initiate authentication. Confirmed 403/404 revocation
+clears the cached managed config; a transport outage leaves it usable until its original
+lease expires. Hidden tabs do not send applied/heartbeat from visibility callbacks.
+Destroy removes timers/listeners and clears this instance's session. Autonomous mode
+still starts no TeamOS transport unless explicitly connected through the admin bridge.
+
+## R08: релизная семантика, пакет 1.2.3
+
+Существующие explicit ID и standalone-правила не расширяются на новые отделы,
+воронки или этапы. Пересекающиеся флаги объединяются OR. Просроченная незавершённая
+задача владельцу карточки удовлетворяет guard; задача другому сотруднику — нет.
+Штатная форма сохраняет выбранного исполнителя при создании/редактировании;
+владелец подставляется только в пустое поле.
+
+Legacy customers сохраняет первые 250 карточек на запрос и предупреждает о
+частичной выборке. В списке проверяется задача текущему пользователю, а в карточке
+— задача ответственному карточки. Это не полный мониторинг CRM.
+
+Отдельное создание задачи владельцу требует доступных Web Locks и localStorage.
+Неопределённый POST не повторяется: устойчивый маркер сохраняется между вкладками
+и переинициализацией до подтверждения задачи в Tasks API. Маркеры без TTL, предел
+256; без поддержки браузера/доступа к хранилищу используйте штатную форму amoCRM.
+Для неопределённого результата сначала вручную проверьте ленту и задачи; не
+удаляйте маркер для слепого повтора. Граница этой защиты — helper виджета одного
+origin; native/mobile/API и другие устройства не блокируются.
+
+Полная матрица, ограничения и порядок диагностики —
+`docs/integrations/task-control-r08-semantics.md` в team-os-backend. Core миграция
+30 и backend должны поддерживать 1.2.3 до подтверждения пакета оператором.

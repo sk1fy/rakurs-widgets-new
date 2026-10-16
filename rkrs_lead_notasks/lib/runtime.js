@@ -161,6 +161,7 @@
             entityId = match ? safeNumber(match[1]) : null;
         }
         return {
+            accountId: safeNumber((readConstant('account') || {}).id),
             entityType: entityType,
             entityId: entityId,
             pipelineId: pipelineId,
@@ -177,6 +178,7 @@
         this.ttl = Number(options.ttl) || Constants.TASK_CACHE_TTL_MS;
         this.cache = new Map();
         this.generation = 0;
+        this.destroyed = false;
     }
 
     TaskChecker.prototype.key = function (context) {
@@ -225,6 +227,7 @@
 
     TaskChecker.prototype.check = async function (context, options) {
         options = options || {};
+        if (this.destroyed) { return { state: Constants.TASK_STATE.UNKNOWN, source: 'destroyed' }; }
         if (!context || !context.entityId || !context.entityType) {
             return { state: Constants.TASK_STATE.UNKNOWN, source: 'context' };
         }
@@ -249,6 +252,7 @@
             if (response && !Array.isArray(tasks)) {
                 return { state: Constants.TASK_STATE.UNKNOWN, source: 'api-response' };
             }
+            if (this.destroyed) { return { state: Constants.TASK_STATE.UNKNOWN, source: 'destroyed' }; }
             if (generation !== this.generation) { return this.check(context, { force: true, forceApi: true }); }
             return this.setCached(key, {
                 state: Array.isArray(tasks) && tasks.some(function (task) {
@@ -274,6 +278,11 @@
     TaskChecker.prototype.clear = function () {
         this.generation += 1;
         this.cache.clear();
+    };
+
+    TaskChecker.prototype.destroy = function () {
+        this.destroyed = true;
+        this.clear();
     };
 
     function AmoUiAdapter(widget, $, Modal) {
@@ -494,6 +503,8 @@
         this.clickHandler = this._onClick.bind(this);
         this.beforeUnloadHandler = this._onBeforeUnload.bind(this);
         this.beforeUnloadBound = false;
+        this.lifecycle = 0;
+        this.destroyed = false;
         this.navigationSelector = [
             '.js-back-button',
             '#left_menu a',
@@ -537,6 +548,7 @@
         if (this.bound || typeof document === 'undefined') {
             return;
         }
+        this.destroyed = false;
         document.addEventListener('click', this.clickHandler, true);
         this.bound = true;
         if (this.isActive()) { this.primeCurrent(); }
@@ -558,7 +570,7 @@
     };
 
     CardGuard.prototype._onBeforeUnload = function (event) {
-        if (this.bypassOnce) { return undefined; }
+        if (this.destroyed || !this.isActive() || this.bypassOnce) { return undefined; }
         var context = this.resolver.resolve();
         if (!context || !context.entityId || !this.engine.match(context).denyExit) {
             this._setUnloadBlocked(false);
@@ -575,7 +587,7 @@
     };
 
     CardGuard.prototype.primeCurrent = async function () {
-        if (!this.isActive()) {
+        if (this.destroyed || !this.isActive()) {
             this._setUnloadBlocked(false);
             return null;
         }
@@ -585,7 +597,9 @@
             return null;
         }
         var key = this.taskChecker.key(context);
+        var lifecycle = this.lifecycle;
         var result = await this.taskChecker.check(context, { force: true, forceApi: true });
+        if (this.destroyed || lifecycle !== this.lifecycle || !this.isActive()) { return result; }
         var current = this.resolver.resolve();
         if (!current || this.taskChecker.key(current) !== key || !this.engine.match(current).denyExit) {
             return result;
@@ -595,6 +609,8 @@
     };
 
     CardGuard.prototype.unbind = function () {
+        this.destroyed = true;
+        this.lifecycle += 1;
         if (this.bound && typeof document !== 'undefined') {
             document.removeEventListener('click', this.clickHandler, true);
         }
@@ -617,7 +633,7 @@
     };
 
     CardGuard.prototype._onClick = function (event) {
-        if (this.bypassOnce || event.defaultPrevented || event.button > 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+        if (this.destroyed || !this.isActive() || this.bypassOnce || event.defaultPrevented || event.button > 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
             return;
         }
         var target = this._navigationTarget(event);
@@ -645,10 +661,14 @@
 
     CardGuard.prototype._checkAndContinue = async function (context) {
         this.checking = true;
-        var result = await this.taskChecker.check(context);
+        var lifecycle = this.lifecycle;
+        var result = await this.taskChecker.check(context, { force: true, forceApi: true });
+        if (this.destroyed || lifecycle !== this.lifecycle) { return; }
         this.checking = false;
+        if (!this.isActive()) { this.pendingNavigation = null; this._setUnloadBlocked(false); return; }
         var current = this.resolver.resolve();
-        if (!current || !this.engine.match(current).denyExit) { this.replayPending(); return; }
+        if (!current) { this.pendingNavigation = null; this._setUnloadBlocked(false); return; }
+        if (!this.engine.match(current).denyExit) { this.replayPending(); return; }
         if (this.taskChecker.key(current) !== this.taskChecker.key(context)) {
             return this._checkAndContinue(current);
         }
@@ -677,14 +697,16 @@
     };
 
     CardGuard.prototype.recheckPending = async function () {
-        if (!this.pendingNavigation) {
+        if (this.destroyed || !this.isActive() || !this.pendingNavigation) {
             return;
         }
         var context = this.resolver.resolve();
         if (!context) {
             return;
         }
+        var lifecycle = this.lifecycle;
         var result = await this.taskChecker.check(context, { force: true, forceApi: true });
+        if (this.destroyed || lifecycle !== this.lifecycle || !this.isActive()) { return; }
         var current = this.resolver.resolve();
         if (!current || this.taskChecker.key(current) !== this.taskChecker.key(context)) { return; }
         this._setUnloadBlocked(result.state === Constants.TASK_STATE.NO_TASK);
@@ -703,7 +725,7 @@
             try { this.blockModal.destroy(); } catch (error) {}
         }
         this.blockModal = null;
-        if (!pending) {
+        if (this.destroyed || !this.isActive() || !pending) {
             return;
         }
         this.bypassOnce = true;
@@ -731,15 +753,23 @@
         this.lastChecks = {};
         this.emptyRetryMs = Number(options.emptyRetryMs) || 30000;
         this.taskBatchSize = Number(options.taskBatchSize) || 50;
-        this.isActive = options.isActive || function () {
+        var activeTab = options.isActive || function () {
             return typeof document === 'undefined' || document.visibilityState !== 'hidden';
         };
+        this.destroyed = false;
+        var self = this;
+        this.isActive = function () { return !self.destroyed && activeTab(); };
         this.generation = 0;
     }
 
     ListModalService.prototype.resetThrottle = function () {
         this.lastChecks = {};
         this.generation += 1;
+    };
+
+    ListModalService.prototype.destroy = function () {
+        this.destroyed = true;
+        this.resetThrottle();
     };
 
     ListModalService.prototype._sessionKey = function (entityType) {
@@ -786,7 +816,9 @@
             if (!this.isActive()) { return []; }
             var path = '/api/v4/leads?' + queryString + '&page=' + page;
             var response = await this.api.get(path, null, 'LEAD_CANDIDATES:' + path);
-            var candidates = response && response._embedded && response._embedded.leads || [];
+            var candidates = response && response._embedded && response._embedded.leads;
+            if (response && !Array.isArray(candidates)) { throw new Error('Некорректный список сделок'); }
+            candidates = candidates || [];
             entities = entities.concat(candidates.filter(function (entity) {
                 return Number(entity.responsible_user_id) === this.userId;
             }, this));
@@ -877,6 +909,13 @@
         if (group.responsibleOnly) { query['filter[responsible_user_id]'] = this.userId; }
         var key = 'CUSTOMER_CANDIDATES:' + JSON.stringify(query);
         var response = await this.api.get('/api/v4/customers', query, key);
+        if (this.isActive() && response && response._links && response._links.next) {
+            if (!this.customerLimitNotified) {
+                this.customerLimitNotified = true;
+                this.ui.notify('Список покупателей ограничен первыми 250 карточками для каждого набора условий. Запрет выхода проверяется отдельно в карточке, если он включён.');
+            }
+        }
+        if (response && (!response._embedded || !Array.isArray(response._embedded.customers))) { throw new Error('Некорректный список покупателей'); }
         return response && response._embedded && response._embedded.customers || [];
     };
 
@@ -954,6 +993,7 @@
             }
             return entities;
         } catch (error) {
+            if (!this.isActive() || generation !== this.generation) { return []; }
             this.ui.notify('Не удалось сформировать список карточек без задач.');
             return [];
         }
@@ -1034,7 +1074,7 @@
             isActive: this._isActiveTab.bind(this)
         });
         this.assignment = new TaskAssignment.TaskAssignmentController({
-            $: this.$, Modal: this.Modal, api: this.api, resolver: this.resolver,
+            $: this.$, Modal: this.Modal, api: this.api, accountId: this.accountId, resolver: this.resolver,
             engine: this.engine, taskChecker: this.taskChecker, ui: this.ui,
             isActive: this._isActiveTab.bind(this), onChanged: this._onTaskChanged.bind(this)
         });
@@ -1228,13 +1268,13 @@
         clearInterval(this.refreshTimer);
         this.refreshTimer = null;
         if (this.assignment) { this.assignment.destroy(); }
-        if (this.listModal) { this.listModal.resetThrottle(); }
+        if (this.listModal) { this.listModal.destroy(); }
         if (this.guard) { this.guard.unbind(); }
         if (this.observer) { this.observer.disconnect(); }
         if (this.taskContainerObserver) { this.taskContainerObserver.disconnect(); }
         clearTimeout(this.observerTimer);
         clearTimeout(this.observerRetryTimer);
-        if (this.taskChecker) { this.taskChecker.clear(); }
+        if (this.taskChecker) { this.taskChecker.destroy(); }
         if (this.ui) { this.ui.destroy(); }
         if (this.areaEventsBound && typeof document !== 'undefined') {
             this.$(document)
