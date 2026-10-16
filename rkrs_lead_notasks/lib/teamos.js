@@ -12,7 +12,7 @@
     function sameScope(a, b) {
         return ['companyId', 'accountId', 'bindingId', 'bindingRevision', 'installationId', 'integrationId', 'modeEpoch', 'product', 'generation'].every(function (k) { return a && b && a[k] === b[k]; });
     }
-    var RUNTIME_VERSION = '1.1.4';
+    var RUNTIME_VERSION = '1.2.0';
     var MAX_PAYLOAD = 1048576;
     var LEASE_MS = 300000;
     function version(value) {
@@ -31,6 +31,9 @@
             s.product === 'task-control' && Number.isSafeInteger(s.bindingRevision) && s.bindingRevision > 0 &&
             Number.isSafeInteger(s.modeEpoch) && s.modeEpoch > 0 &&
             (s.generation === undefined || Number.isSafeInteger(s.generation) && s.generation > 0);
+    }
+    function validUUID(value) {
+        return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) && value !== '00000000-0000-0000-0000-000000000000';
     }
     function validRuntimeRule(rule) {
         function ids(values) { return Array.isArray(values) && values.every(function (id) { return Number.isSafeInteger(id) && id > 0; }); }
@@ -51,6 +54,8 @@
         this.clock = options.clock || (options.now ? options.now : function () { return performance.now(); });
         this.random = options.random || Math.random;
         this.sleep = options.sleep || function (ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); };
+        this.runtimeInstanceId = this.uuid();
+        this.protocol = null;
         this.session = null;
         this.sessionPending = null;
         this._good = null;
@@ -81,11 +86,13 @@
         var generation = this.generation;
         if (this.session && Date.parse(this.session.expiresAt) > this.now() + 15000) { return this.session; }
         var proof = await this.proof('runtime');
-        var s = await this.request(this.backend + '/api/v1/widget/task-control/sessions', { method: 'POST', body: { coreAssertion: proof.assertion } });
+        var s = await this.request(this.backend + '/api/v1/widget/task-control/sessions', { method: 'POST', body: { coreAssertion: proof.assertion, runtimeVersion: RUNTIME_VERSION, capabilities: ['dynamicRulesV2'] } });
         if (!s || !s.scope || s.scope.accountId !== this.accountId || s.scope.product !== 'task-control' || typeof s.accessToken !== 'string' || s.accessToken.length !== 43 || !(Date.parse(s.expiresAt) > this.now())) { throw invalid('Неверная сессия TeamOS', true); }
-        if (!/^[1-9][0-9]{0,15}$/.test(s.actorId || '') || s.runtimeSchemaVersion !== undefined && s.runtimeSchemaVersion !== 1 && s.runtimeSchemaVersion !== 2) { throw invalid('Неверная версия или пользователь сессии', true); }
+        if (!/^[1-9][0-9]{0,15}$/.test(s.actorId || '') || !Number.isSafeInteger(Number(s.actorId)) || s.runtimeSchemaVersion !== undefined && s.runtimeSchemaVersion !== 1 && s.runtimeSchemaVersion !== 2) { throw invalid('Неверная версия или пользователь сессии', true); }
         if (!validScope(s.scope)) { throw invalid('Неверная область сессии', true); }
         if (generation !== this.generation) { throw invalid('Сессия остановлена', true); }
+        if (this.protocol && sameScope(this.protocol.scope, s.scope) && this.protocol.schema === 2 && s.runtimeSchemaVersion !== 2) { throw invalid('Динамические правила требуют протокол v2', true); }
+        this.protocol = { scope: s.scope, schema: s.runtimeSchemaVersion || 1 };
         this.session = s;
         return s;
     };
@@ -124,15 +131,15 @@
             b = Object.assign({}, b, { runtimeSchemaVersion: 1, issuedAt: new Date(received).toISOString(), validUntil: new Date(received + LEASE_MS).toISOString() });
         }
         var issued = Date.parse(b.issuedAt), until = Date.parse(b.validUntil);
-        if (!Number.isFinite(issued) || !Number.isFinite(until) || until <= issued || until - issued > LEASE_MS || until <= this.now()) { throw invalid('Срок публикации истёк'); }
+        if (!Number.isFinite(issued) || !Number.isFinite(until) || issued > this.now() + 60000 || until <= issued || until - issued > LEASE_MS || until <= this.now()) { throw invalid('Срок публикации истёк'); }
         if (b.actorId !== undefined && b.actorId !== s.actorId) { throw invalid('Пользователь сессии изменился', true); }
         var p = b.runtimeSchemaVersion === 2 ? b : b.publication;
         var dynamic = b.runtimeSchemaVersion === 2;
         if (b.runtimeSchemaVersion !== (s.runtimeSchemaVersion || 1)) { throw invalid('Протокол не соответствует сессии'); }
         if (b.runtimeSchemaVersion !== 1 && !dynamic) { throw invalid('Неизвестная версия протокола'); }
-        if (dynamic && (s.runtimeSchemaVersion !== 2 || b.actorId !== s.actorId || !b.snapshotId || !b.publicationId ||
+        if (dynamic && (s.runtimeSchemaVersion !== 2 || b.actorId !== s.actorId || !validUUID(b.snapshotId) || !validUUID(b.publicationId) ||
             !Number.isSafeInteger(b.publicationVersion) || b.publicationVersion < 1 || !b.sourceRevisions || b.resolverVersion !== 1 ||
-            !Number.isSafeInteger(b.scope.generation) || b.scope.generation < 1 || typeof b.sourceRevisions.crm !== 'string' || !b.sourceRevisions.crm ||
+            !Number.isSafeInteger(b.scope.generation) || b.scope.generation < 1 || typeof b.sourceRevisions.crm !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(b.sourceRevisions.crm) ||
             !Number.isSafeInteger(b.sourceRevisions.organization) || b.sourceRevisions.organization < 1 || !Number.isSafeInteger(b.sourceRevisions.mapping) || b.sourceRevisions.mapping < 1 ||
             !/^[a-f0-9]{64}$/.test(b.intentChecksum) || !/^[a-f0-9]{64}$/.test(b.resolvedChecksum))) { throw invalid('Некорректный динамический снимок'); }
         var revision = p && (dynamic ? p.runtimeRevision : p.version);
@@ -145,8 +152,26 @@
             revision === accepted.version && checksum !== accepted.checksum)) { throw invalid('Устаревшая публикация TeamOS'); }
         this.accepted = { scope: b.scope, actorId: s.actorId, schema: b.runtimeSchemaVersion, version: revision, checksum: checksum };
         this.leaseUntil = this.clock() + Math.min(LEASE_MS, until - issued, until - this.now());
-        this.good = { scope: b.scope, actorId: s.actorId, schema: b.runtimeSchemaVersion, version: revision, config: { schema_version: 1, rules: p.runtimeRules, published: { hash: checksum, revision: revision } } };
+        this.good = { scope: b.scope, actorId: s.actorId, schema: b.runtimeSchemaVersion, version: revision, config: { schema_version: 1, rules: p.runtimeRules, published: { hash: checksum, revision: revision } },
+            acknowledgement: dynamic ? { scope: b.scope, runtimeInstanceId: this.runtimeInstanceId, actorId: s.actorId, snapshotId: b.snapshotId, publicationId: b.publicationId,
+                publicationVersion: b.publicationVersion, runtimeRevision: revision, payloadChecksum: checksum, runtimeVersion: RUNTIME_VERSION } : null };
         return this.good;
+    };
+    // Called only after the controller has installed this snapshot in the local engine.
+    // ACK is diagnostic; it cannot renew the source lease or start another auth exchange.
+    Client.prototype.acknowledge = async function (good) {
+        var session = this.session;
+        if (!good || good !== this.good || !good.acknowledgement || !session || !sameScope(session.scope, good.scope) || session.actorId !== good.actorId) { return; }
+        try { return await this.request(this.backend + '/api/v2/task-control/runtime/ack', {
+            method: 'POST', headers: { Authorization: 'Bearer ' + session.accessToken },
+            body: Object.assign({}, good.acknowledgement, { appliedAt: new Date(this.now()).toISOString() })
+        }); } catch (error) {
+            if (session === this.session && [401, 403, 404].indexOf(error.status) >= 0) {
+                this.session = null;
+                if (error.status !== 401) { this.good = null; this.accepted = null; }
+            }
+            throw error;
+        }
     };
     Client.prototype._retryRefresh = async function () {
         var generation = this.generation;

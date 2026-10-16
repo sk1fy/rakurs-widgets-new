@@ -1,18 +1,18 @@
 define([
     'jquery',
     'lib/components/base/modal',
-    './lib/constants.js?v=1.1.4',
-    './lib/request_queue.js?v=1.1.4',
-    './lib/amo_api.js?v=1.1.4',
-    './lib/rules.js?v=1.1.4',
-    './lib/snapshot.js?v=1.1.4',
-    './lib/catalog_repository.js?v=1.1.4',
-    './lib/runtime.js?v=1.1.4',
-    './lib/settings_controller.js?v=1.1.4',
-    './lib/task_assignment.js?v=1.1.4',
-    './lib/teamos.js?v=1.1.4',
-    './lib/deployment.js?v=1.1.4',
-    './lib/teamos_controller.js?v=1.1.4'
+    './lib/constants.js?v=1.2.0',
+    './lib/request_queue.js?v=1.2.0',
+    './lib/amo_api.js?v=1.2.0',
+    './lib/rules.js?v=1.2.0',
+    './lib/snapshot.js?v=1.2.0',
+    './lib/catalog_repository.js?v=1.2.0',
+    './lib/runtime.js?v=1.2.0',
+    './lib/settings_controller.js?v=1.2.0',
+    './lib/task_assignment.js?v=1.2.0',
+    './lib/teamos.js?v=1.2.0',
+    './lib/deployment.js?v=1.2.0',
+    './lib/teamos_controller.js?v=1.2.0'
 ], function ($, Modal, Constants, QueueModule, ApiFactory, RulesFactory, SnapshotFactory, CatalogFactory, RuntimeFactory, SettingsFactory, TaskAssignmentFactory, TeamOSFactory, Deployment, TeamControllerFactory) {
     'use strict';
 
@@ -34,10 +34,11 @@ define([
         var managedKey = '';
         var team = new TeamController(self, $, Deployment, function (good) {
             var key = good ? JSON.stringify(good.scope) + ':' + good.actorId + ':' + good.schema + ':' + good.version : '';
-            if (key === managedKey) { return; }
+            if (key === managedKey && runtimeController) { return true; }
             managedKey = key; managedConfig = good ? good.config : undefined;
             if (runtimeController) { runtimeController.destroy(); runtimeController = null; }
-            if (good) { var runtime = ensureRuntime(); if (runtime) { runtime.bind(); runtime.init(); } }
+            if (good) { var runtime = ensureRuntime(); if (runtime) { runtime.bind(); runtime.init(); return true; } }
+            return false;
         });
 
         self.appName = Constants.APP_NAME;
