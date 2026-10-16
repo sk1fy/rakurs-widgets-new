@@ -1,19 +1,20 @@
 define([
     'jquery',
     'lib/components/base/modal',
-    './lib/constants.js?v=1.2.0',
-    './lib/request_queue.js?v=1.2.0',
-    './lib/amo_api.js?v=1.2.0',
-    './lib/rules.js?v=1.2.0',
-    './lib/snapshot.js?v=1.2.0',
-    './lib/catalog_repository.js?v=1.2.0',
-    './lib/runtime.js?v=1.2.0',
-    './lib/settings_controller.js?v=1.2.0',
-    './lib/task_assignment.js?v=1.2.0',
-    './lib/teamos.js?v=1.2.0',
-    './lib/deployment.js?v=1.2.0',
-    './lib/teamos_controller.js?v=1.2.0'
-], function ($, Modal, Constants, QueueModule, ApiFactory, RulesFactory, SnapshotFactory, CatalogFactory, RuntimeFactory, SettingsFactory, TaskAssignmentFactory, TeamOSFactory, Deployment, TeamControllerFactory) {
+    './lib/constants.js?v=1.2.1',
+    './lib/request_queue.js?v=1.2.1',
+    './lib/amo_api.js?v=1.2.1',
+    './lib/rules.js?v=1.2.1',
+    './lib/snapshot.js?v=1.2.1',
+    './lib/catalog_repository.js?v=1.2.1',
+    './lib/runtime.js?v=1.2.1',
+    './lib/settings_controller.js?v=1.2.1',
+    './lib/task_assignment.js?v=1.2.1',
+    './lib/teamos.js?v=1.2.1',
+    './lib/deployment.js?v=1.2.1',
+    './lib/teamos_controller.js?v=1.2.1',
+    './lib/migration.js?v=1.2.1'
+], function ($, Modal, Constants, QueueModule, ApiFactory, RulesFactory, SnapshotFactory, CatalogFactory, RuntimeFactory, SettingsFactory, TaskAssignmentFactory, TeamOSFactory, Deployment, TeamControllerFactory, MigrationFactory) {
     'use strict';
 
     var ApiModule = ApiFactory(QueueModule);
@@ -24,6 +25,7 @@ define([
     var RuntimeModule = RuntimeFactory(Constants, RulesModule, SnapshotModule, TaskAssignmentModule);
     var TeamOS = TeamOSFactory(SnapshotModule, RulesModule);
     var TeamController = TeamControllerFactory(TeamOS);
+    var MigrationModule = MigrationFactory(Constants, RulesModule, SnapshotModule);
     var SettingsModule = SettingsFactory(Constants, RulesModule, SnapshotModule);
 
     return function () {
@@ -138,6 +140,31 @@ define([
             return runtimeController;
         }
 
+        var migrationStorage;
+        try { migrationStorage = window.localStorage; } catch (error) {}
+        team.migration = new MigrationModule.Migration({ repository: new CatalogModule.CatalogRepository(createApi()), settings: function () { return self.get_settings(); }, accountId: self.accountId, storage: migrationStorage, verifyStandalone: function (scope) { return team.getClient().verifyStandalone(scope); } });
+        var pendingStandalone = null, migrationBody = null, migrationBusy = false;
+        self.taskControlMigration = {
+            startAdminBridge: function () { return team.startAdminBridge(); },
+            prepareStandalone: async function (preview, confirmation) {
+                if (migrationBusy) { throw new Error('Перенос правил уже выполняется'); }
+                if (!migrationBody) { throw new Error('Откройте настройки виджета перед возвратом'); }
+                migrationBusy = true;
+                var targetBody = migrationBody;
+                try {
+                var prepared = await team.migration.prepareStandalone(preview, confirmation);
+                if (migrationBody !== targetBody) { throw new Error('Окно настроек изменилось; повторите перенос'); }
+                var input = migrationBody.find('input[name="runtime_config"], textarea[name="runtime_config"]').first();
+                if (!input.length) { input = $(document.getElementById((self.get_settings().widget_code || self.params.widget_code || '') + '_custom')); }
+                if (!input.length) { throw new Error('Не найдено поле runtime_config'); }
+                var previous = input.val();
+                try { input.val(JSON.stringify(prepared.config)).trigger('change'); }
+                catch (error) { input.val(previous); throw error; }
+                pendingStandalone = prepared;
+                return { backupKey: prepared.backupKey, checksum: prepared.config.published.hash, dynamicRulesFrozen: prepared.dynamicRulesFrozen, requiresNativeSave: true };
+                } finally { migrationBusy = false; }
+            }
+        };
         self.callbacks = {
             render: function () {
                 includeCss();
@@ -161,6 +188,7 @@ define([
             },
 
             settings: function ($body) {
+                migrationBody = $body; pendingStandalone = null;
                 includeCss();
                 if (settingsController) {
                     settingsController.destroy();
@@ -185,6 +213,10 @@ define([
             },
 
             onSave: function (data) {
+                if (migrationBusy) { return false; }
+                if (pendingStandalone && JSON.stringify(self.get_settings()) !== pendingStandalone.expectedSettings) { return false; }
+                if (pendingStandalone && (!migrationBody || TeamOS.enabled(migrationBody.find('input[name="teamos_enabled"]').first().val()))) { return false; }
+                if (pendingStandalone) { return team.getClient().verifyStandalone(pendingStandalone.scope).then(function () { return JSON.stringify(self.get_settings()) === pendingStandalone.expectedSettings; }, function () { return false; }); }
                 return settingsController ? settingsController.onSave(data) : true;
             },
 
@@ -201,7 +233,7 @@ define([
             },
 
             destroy: function () {
-                team.destroy(); managedConfig = undefined; managedKey = "";
+                team.destroy(); team.migration.repository.api.destroy(); pendingStandalone = null; migrationBody = null; managedConfig = undefined; managedKey = "";
                 if (runtimeController) {
                     runtimeController.destroy();
                     runtimeController = null;

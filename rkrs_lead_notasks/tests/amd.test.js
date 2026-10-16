@@ -63,7 +63,8 @@ test('script entrypoint creates callbacks.onSave with versioned .js dependency p
         (constants) => require('../lib/task_assignment'),
         require('../lib/teamos'),
         { coreOrigin: '', backendOrigin: '' },
-        require('../lib/teamos_controller')
+        require('../lib/teamos_controller'),
+        require('../lib/migration')
     );
     const widget = {
         params: { path: '/widgets/rkrs_lead_notasks', widget_code: 'rkrs_lead_notasks' },

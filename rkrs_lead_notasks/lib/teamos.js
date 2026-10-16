@@ -12,7 +12,7 @@
     function sameScope(a, b) {
         return ['companyId', 'accountId', 'bindingId', 'bindingRevision', 'installationId', 'integrationId', 'modeEpoch', 'product', 'generation'].every(function (k) { return a && b && a[k] === b[k]; });
     }
-    var RUNTIME_VERSION = '1.2.0';
+    var RUNTIME_VERSION = '1.2.1';
     var MAX_PAYLOAD = 1048576;
     var LEASE_MS = 300000;
     function version(value) {
@@ -73,14 +73,33 @@
         set: function (value) { this._good = value; }
     });
     Client.prototype.clear = function () { this.generation++; this.session = null; this.good = null; this.accepted = null; };
-    Client.prototype.proof = async function (purpose) {
+    Client.prototype.proof = async function (purpose, requestId) {
         var client = this.settings().oauth_client_uuid;
         if (!/^[0-9a-f-]{36}$/i.test(client || '')) { throw new Error('Нет OAuth UUID интеграции'); }
         var token = await this.request('/ajax/v2/integrations/' + encodeURIComponent(client) + '/disposable_token', { cache: false });
         if (!token || !token.token) { throw new Error('Не получен токен amoCRM'); }
         return this.request(this.core + '/api/v1/widget/task-control/auth', {
-            method: 'POST', headers: { 'X-Auth-Token': token.token }, body: { purpose: purpose, requestId: this.uuid() }
+            method: 'POST', headers: { 'X-Auth-Token': token.token }, body: { purpose: purpose, requestId: requestId || this.uuid() }
         });
+    };
+    Client.prototype.verifyStandalone = async function (scope) {
+        this.clear();
+        var session = await this._session();
+        var path = '/api/v1/widget/task-control/connection';
+        var bootstrap = await this.request(this.backend + path, { headers: { Authorization: 'Bearer ' + session.accessToken } });
+        if (!validScope(scope) || !sameScope(session.scope, scope) || !bootstrap || !sameScope(bootstrap.scope, scope) || bootstrap.mode !== 'standalone' || bootstrap.state && bootstrap.state !== 'active') { throw invalid('Режим подключения изменился', true); }
+        return true;
+    };
+    Client.prototype.pendingSources = async function () {
+        var proof = await this.proof('adminBridge');
+        return this.request(this.backend + '/api/v1/widget/task-control/source-requests', { headers: { Authorization: 'Bearer ' + proof.assertion } });
+    };
+    Client.prototype.submitSource = async function (requestId, result) {
+        if (!validUUID(requestId)) { throw invalid('Некорректный запрос источника'); }
+        var proof = await this.proof('adminBridge', requestId);
+        var body = Object.assign({}, result, { coreAssertion: proof.assertion });
+        if (unescape(encodeURIComponent(JSON.stringify(body))).length > MAX_PAYLOAD) { throw invalid('Источник превышает 1 MiB'); }
+        return this.request(this.backend + '/api/v1/widget/task-control/source-requests/' + requestId + '/result', { method: 'PUT', headers: { Authorization: 'Bearer ' + proof.assertion }, body: body });
     };
     Client.prototype._exchange = async function () {
         var generation = this.generation;
