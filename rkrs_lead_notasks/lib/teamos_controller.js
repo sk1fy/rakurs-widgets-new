@@ -43,13 +43,54 @@
             self.refreshing = true;
             Promise.resolve().then(function () { return self.getClient().refresh(); }).catch(function () {}).finally(function () {
                 self.refreshing = false;
-                if (current()) { apply(); self.timer = setTimeout(refresh, self.client.pollDelay()); }
+                if (current()) { apply(); self.pollSources(); self.timer = setTimeout(refresh, self.client.pollDelay()); }
             });
         }
         this.resume = function () { apply(); refresh(); };
         if (typeof window !== 'undefined') { window.addEventListener('online', this.resume); window.addEventListener('pageshow', this.resume); }
         if (typeof document !== 'undefined') { document.addEventListener('visibilitychange', this.resume); }
         refresh();
+    };
+    Controller.prototype.bridgeAllowed = function () { return !!this.bridgeAuthorized || this.running && this.enabled(); };
+    Controller.prototype.authorizeBridge = function () {
+        var self = this;
+        this.bridgeAuthorized = true;
+        function poll() {
+            if (!self.bridgeAuthorized) { return; }
+            self.pollSources();
+            self.bridgeTimer = setTimeout(poll, 30000);
+        }
+        clearTimeout(this.bridgeTimer);
+        poll();
+    };
+    Controller.prototype.startAdminBridge = async function () {
+        await this.getClient().proof('adminBridge');
+        this.authorizeBridge();
+        return { active: true };
+    };
+    Controller.prototype.pollSources = function () {
+        var self = this;
+        if (!this.migration || this.sourcePending || !this.bridgeAllowed() || typeof document !== 'undefined' && document.hidden || Date.now() < (this.nextSourcePoll || 0)) { return; }
+        this.nextSourcePoll = Date.now() + 30000;
+        this.sourcePending = true;
+        var generation = this.generation;
+        Promise.resolve().then(function () { return self.getClient().pendingSources(); }).then(async function (response) {
+            var jobs = Array.isArray(response) ? response : response && response.requests;
+            if (!Array.isArray(jobs) || jobs.length > 20) { throw new Error('Некорректный список источников'); }
+            for (var index = 0; index < jobs.length; index++) {
+                if (!self.bridgeAllowed() || generation !== self.generation) { break; }
+                var job = jobs[index];
+                if (!job.scope || String(job.scope.accountId) !== String(self.widget.accountId) || job.scope.product !== 'task-control' || job.state !== 'pending' || !Number.isFinite(Date.parse(job.expiresAt)) || Date.parse(job.expiresAt) <= Date.now()) { continue; }
+                var result;
+                try {
+                    if (!['catalog', 'runtime_config'].includes(job.kind)) { throw Object.assign(new Error('Unsupported source'), { code: 'source_kind_unsupported' }); }
+                    result = await self.migration.capture(job);
+                } catch (error) {
+                    result = { complete: false, payload: { issues: [{ path: 'source', code: error.code || 'source_read_failed', message: 'Не удалось прочитать полный источник' }] } };
+                }
+                if (self.bridgeAllowed() && generation === self.generation) { await self.getClient().submitSource(job.id, result); }
+            }
+        }).catch(function () {}).finally(function () { self.sourcePending = false; });
     };
     Controller.prototype.render = function ($body) {
         var self = this, $ = this.$;
@@ -92,6 +133,7 @@
                 button.prop('disabled', true);
                 code.val('').prop('hidden', true); status.text('Получение подтверждения…');
                 Promise.resolve().then(function () { return self.getClient().proof(purpose); }).then(function (proof) {
+                    if (purpose === 'link') { self.authorizeBridge(); }
                     code.val(proof.assertion).prop('hidden', false); status.text('Выделите и скопируйте код в TeamOS в течение 60 секунд.');
                     setTimeout(function () { if (code.val() === proof.assertion) { code.val('').prop('hidden', true); status.text('Код истёк. Получите новый код.'); } }, 60000);
                 }).catch(function () { status.text('Не удалось получить код. Проверьте подключение сервера и права администратора amoCRM.'); }).finally(function () { button.prop('disabled', false); });
@@ -100,7 +142,7 @@
         code.on('click', function () { this.select(); });
         if (this.enabled()) { $('<p>').text('Настройки правил находятся в TeamOS. Для возврата к автономному режиму сначала переключите режим в TeamOS, затем отключите флажок и сохраните настройки amoCRM.').appendTo(panel); }
     };
-    Controller.prototype.destroy = function () { this.running = false; this.generation++; clearTimeout(this.timer); clearTimeout(this.leaseTimer);
+    Controller.prototype.destroy = function () { this.running = false; this.bridgeAuthorized = false; clearTimeout(this.bridgeTimer); this.generation++; clearTimeout(this.timer); clearTimeout(this.leaseTimer);
         if (typeof window !== 'undefined' && this.resume) { window.removeEventListener('online', this.resume); window.removeEventListener('pageshow', this.resume); }
         if (typeof document !== 'undefined' && this.resume) { document.removeEventListener('visibilitychange', this.resume); }
         if (this.client) { this.client.clear(); } this.client = null; this.refreshing = false; };
