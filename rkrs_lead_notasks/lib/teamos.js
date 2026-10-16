@@ -12,7 +12,7 @@
     function sameScope(a, b) {
         return ['companyId', 'accountId', 'bindingId', 'bindingRevision', 'installationId', 'integrationId', 'modeEpoch', 'product', 'generation'].every(function (k) { return a && b && a[k] === b[k]; });
     }
-    var RUNTIME_VERSION = '1.2.1';
+    var RUNTIME_VERSION = '1.2.2';
     var MAX_PAYLOAD = 1048576;
     var LEASE_MS = 300000;
     function version(value) {
@@ -64,6 +64,7 @@
         this.generation = 0;
         this.failures = 0;
         this.pending = null;
+        this.telemetryAt = {}; this.appliedKey = null; this.telemetryPending = {}; this.telemetryQueue = Promise.resolve(); this.telemetryQueued = {};
     }
     Object.defineProperty(Client.prototype, 'good', {
         get: function () {
@@ -72,7 +73,7 @@
         },
         set: function (value) { this._good = value; }
     });
-    Client.prototype.clear = function () { this.generation++; this.session = null; this.good = null; this.accepted = null; };
+    Client.prototype.clear = function () { this.generation++; this.session = null; this.good = null; this.accepted = null; this.appliedKey = null; this.telemetryAt = {}; };
     Client.prototype.proof = async function (purpose, requestId) {
         var client = this.settings().oauth_client_uuid;
         if (!/^[0-9a-f-]{36}$/i.test(client || '')) { throw new Error('Нет OAuth UUID интеграции'); }
@@ -124,6 +125,7 @@
     };
     Client.prototype._refresh = async function () {
         var generation = this.generation;
+        this.refreshCorrelationId = this.uuid();
         var s = await this._session();
         if (this.accepted && (!sameScope(this.accepted.scope, s.scope) || this.accepted.actorId !== s.actorId)) { this.good = null; this.accepted = null; }
         var b;
@@ -172,33 +174,82 @@
         this.accepted = { scope: b.scope, actorId: s.actorId, schema: b.runtimeSchemaVersion, version: revision, checksum: checksum };
         this.leaseUntil = this.clock() + Math.min(LEASE_MS, until - issued, until - this.now());
         this.good = { scope: b.scope, actorId: s.actorId, schema: b.runtimeSchemaVersion, version: revision, config: { schema_version: 1, rules: p.runtimeRules, published: { hash: checksum, revision: revision } },
-            acknowledgement: dynamic ? { scope: b.scope, runtimeInstanceId: this.runtimeInstanceId, actorId: s.actorId, snapshotId: b.snapshotId, publicationId: b.publicationId,
-                publicationVersion: b.publicationVersion, runtimeRevision: revision, payloadChecksum: checksum, runtimeVersion: RUNTIME_VERSION } : null };
+            acknowledgement: { scope: b.scope, runtimeInstanceId: this.runtimeInstanceId, actorId: s.actorId,
+                publicationId: dynamic ? b.publicationId : b.publicationId || p.id,
+                publicationVersion: dynamic ? b.publicationVersion : p.version, runtimeRevision: revision,
+                payloadChecksum: checksum, runtimeVersion: RUNTIME_VERSION }, correlationId: this.uuid() };
+        if (dynamic) { this.good.acknowledgement.snapshotId = b.snapshotId; }
+        this.telemetry('received', this.good).catch(function () {});
         return this.good;
     };
-    // Called only after the controller has installed this snapshot in the local engine.
-    // ACK is diagnostic; it cannot renew the source lease or start another auth exchange.
-    Client.prototype.acknowledge = async function (good) {
-        var session = this.session;
-        if (!good || good !== this.good || !good.acknowledgement || !session || !sameScope(session.scope, good.scope) || session.actorId !== good.actorId) { return; }
-        try { return await this.request(this.backend + '/api/v2/task-control/runtime/ack', {
-            method: 'POST', headers: { Authorization: 'Bearer ' + session.accessToken },
-            body: Object.assign({}, good.acknowledgement, { appliedAt: new Date(this.now()).toISOString() })
-        }); } catch (error) {
+    Client.prototype.telemetryKey = function (good) {
+        return JSON.stringify([good.scope, good.actorId, good.schema, good.version, good.config.published.hash]);
+    };
+    // Only explicit bounded fields leave this tab. Messages, rules, URLs and tokens are never diagnostic data.
+    Client.prototype.telemetry = function (event, good, errorCode) {
+        var self = this, generation = this.generation, session = this.session;
+        var correlationId = good && good.correlationId || this.refreshCorrelationId || this.uuid();
+        var slot = event + ':' + (good ? this.telemetryKey(good) : JSON.stringify(session && [session.scope, session.actorId]));
+        if (this.telemetryQueued[slot]) { return this.telemetryQueued[slot]; }
+        if (Object.keys(this.telemetryQueued).length >= 32) { return Promise.resolve(); }
+        var queued = this.telemetryQueue.catch(function () {}).then(function () {
+            if (generation !== self.generation || session !== self.session) { return; }
+            return self._sendTelemetry(event, good, errorCode, correlationId);
+        });
+        this.telemetryQueue = queued; this.telemetryQueued[slot] = queued;
+        function completed() { if (self.telemetryQueued[slot] === queued) { delete self.telemetryQueued[slot]; } }
+        queued.then(completed, completed);
+        return queued;
+    };
+    Client.prototype._sendTelemetry = async function (event, good, errorCode, correlationId) {
+        var session = this.session, generation = this.generation;
+        if (!session || !validScope(session.scope)) { return; }
+        if (good && (good !== this.good || !sameScope(session.scope, good.scope) || session.actorId !== good.actorId ||
+            !good.acknowledgement || !validUUID(good.acknowledgement.publicationId))) { return; }
+        if (!good && event !== 'error') { return; }
+        var key = good ? this.telemetryKey(good) : JSON.stringify([session.scope, session.actorId]), slot = event + ':' + key, now = this.clock();
+        if (event === 'heartbeat' && this.appliedKey !== key || this.telemetryPending[slot] ||
+            this.telemetryAt[slot] !== undefined && now - this.telemetryAt[slot] < 60000) { return; }
+        var codes = ['config_invalid', 'config_fetch_failed', 'lease_expired', 'scope_mismatch', 'runtime_incompatible', 'apply_failed', 'references_unavailable', 'network_unavailable'];
+        if (event === 'error' && codes.indexOf(errorCode) < 0) { errorCode = 'config_invalid'; }
+        this.telemetryPending[slot] = true;
+        this.telemetryAt[slot] = now;
+        // Bound per-tab memory even if a long-running tab sees many revisions.
+        if (Object.keys(this.telemetryAt).length > 32) { this.telemetryAt = {}; this.telemetryAt[slot] = now; }
+        var identity = good ? good.acknowledgement : {scope: session.scope, actorId: session.actorId, runtimeInstanceId: this.runtimeInstanceId, runtimeVersion: RUNTIME_VERSION};
+        var body = Object.assign({}, identity, {event: event, eventId: this.uuid(), correlationId: correlationId,
+            occurredAt: new Date(this.now()).toISOString()});
+        if (event === 'error') { body.errorCode = errorCode; }
+        try {
+            var response = await this.request(this.backend + '/api/v1/task-control/runtime/telemetry', {
+                method: 'POST', headers: { Authorization: 'Bearer ' + session.accessToken }, body: body
+            });
+            if (event === 'applied' && generation === this.generation && good === this.good) { this.appliedKey = key; }
+            return response;
+        } catch (error) {
             if (session === this.session && [401, 403, 404].indexOf(error.status) >= 0) {
                 this.session = null;
-                if (error.status !== 401) { this.good = null; this.accepted = null; }
+                if (error.status !== 401) { this.good = null; this.accepted = null; this.appliedKey = null;
+                    if (typeof this.onInvalidated === 'function') { this.onInvalidated(); } }
             }
             throw error;
-        }
+        } finally { delete this.telemetryPending[slot]; }
     };
+    // Applied follows successful local engine installation. Diagnostic requests never renew a lease.
+    Client.prototype.acknowledge = function (good) {
+        if (!good) { return Promise.resolve(); }
+        return this.telemetry(this.appliedKey === this.telemetryKey(good) ? 'heartbeat' : 'applied', good);
+    };
+    Client.prototype.reportError = function (code, good) { return this.telemetry('error', good || this.good, code); };
     Client.prototype._retryRefresh = async function () {
         var generation = this.generation;
         for (var attempt = 0; attempt < 3; attempt++) {
             try { var result = await this._refresh(); this.failures = 0; return result; }
             catch (error) {
                 if (error.clear || [401, 403, 404].indexOf(error.status) >= 0) { this.session = null; this.good = null; this.accepted = null; }
-                if (generation !== this.generation || !transient(error) || attempt === 2) { this.failures++; throw error; }
+                if (generation !== this.generation || !transient(error) || attempt === 2) { this.failures++;
+                    if (generation === this.generation) { this.reportError(error.status === 503 ? 'references_unavailable' : transient(error) ? 'network_unavailable' : 'config_invalid').catch(function () {}); }
+                    throw error; }
                 // Restart the entire exchange after outage: an assertion/JWT may already be consumed.
                 this.session = null;
                 await this.sleep(Math.max(delay(attempt, this.random), Math.min(300000, Number(error.retryAfterMs) || 0)));

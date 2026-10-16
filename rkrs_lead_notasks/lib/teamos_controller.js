@@ -30,8 +30,12 @@
         function apply() {
             if (!current()) { return; }
             var client = self.client, good = client && client.good;
-            var applied = self.changed(good);
-            if (good && applied !== false && client.acknowledge) { Promise.resolve().then(function () { return client.acknowledge(good); }).catch(function () { if (current() && !client.good) { apply(); } }); }
+            var applied;
+            try { applied = self.changed(good); } catch (error) {
+                applied = false;
+                if (good && client.reportError) { client.reportError('apply_failed', good).catch(function () {}); }
+            }
+            if (good && applied !== false && client.acknowledge && !(typeof document !== 'undefined' && document.hidden)) { Promise.resolve().then(function () { return client.acknowledge(good); }).catch(function () { if (current() && !client.good) { apply(); } }); }
             clearTimeout(self.leaseTimer);
             if (good) { self.leaseTimer = setTimeout(apply, Math.max(1, client.leaseUntil - client.clock())); }
         }
@@ -41,7 +45,11 @@
             if (typeof document !== 'undefined' && document.hidden) { apply(); return; }
             if (self.refreshing) { return; }
             self.refreshing = true;
-            Promise.resolve().then(function () { return self.getClient().refresh(); }).catch(function () {}).finally(function () {
+            Promise.resolve().then(function () {
+                var client = self.getClient();
+                client.onInvalidated = function () { if (current()) { apply(); } };
+                return client.refresh();
+            }).catch(function () {}).finally(function () {
                 self.refreshing = false;
                 if (current()) { apply(); self.pollSources(); self.timer = setTimeout(refresh, self.client.pollDelay()); }
             });
@@ -145,6 +153,6 @@
     Controller.prototype.destroy = function () { this.running = false; this.bridgeAuthorized = false; clearTimeout(this.bridgeTimer); this.generation++; clearTimeout(this.timer); clearTimeout(this.leaseTimer);
         if (typeof window !== 'undefined' && this.resume) { window.removeEventListener('online', this.resume); window.removeEventListener('pageshow', this.resume); }
         if (typeof document !== 'undefined' && this.resume) { document.removeEventListener('visibilitychange', this.resume); }
-        if (this.client) { this.client.clear(); } this.client = null; this.refreshing = false; };
+        if (this.client) { this.client.onInvalidated = null; this.client.clear(); } this.client = null; this.refreshing = false; };
     return Controller;
 }));

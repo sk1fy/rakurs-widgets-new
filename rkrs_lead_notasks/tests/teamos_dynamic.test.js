@@ -16,7 +16,9 @@ function harness() {
         if(url.includes('disposable_token')) return {token:'token'};
         if(url.endsWith('/auth')) return {assertion:'assertion'};
         if(url.endsWith('/sessions')) return {scope,actorId:'7',runtimeSchemaVersion:h.schema,accessToken:'a'.repeat(43),expiresAt:new Date(now+300000).toISOString()};
-        if(url.endsWith('/ack')) { if(h.ackError) throw h.ackError; return; }
+        if(url.endsWith('/telemetry')) {
+            if(options.body.event !== 'applied') return;
+ if(h.ackError) throw h.ackError; return; }
         if(h.bootstrapError) throw h.bootstrapError;
         const rules=[{uid:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',name:'Rule',users:[7],pipelines:[{pipeline_id:12,status_ids:[h.status]}],customer_statuses:[],show_modal:false,deny_exit:true,check_responsible:false,customers:false,enabled:true,archived:false}];
         return {scope,actorId:'7',runtimeSchemaVersion:2,minRuntimeVersion:'1.2.0',publicationId:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',publicationVersion:7,snapshotId:`dddddddd-dddd-4ddd-8ddd-${String(h.revision).padStart(12,'0')}`,runtimeRevision:h.revision,intentChecksum:'a'.repeat(64),resolvedChecksum:'b'.repeat(64),payloadChecksum:Snapshot.hashRules(rules),sourceRevisions:{crm:'sha256:'+'c'.repeat(64),organization:1,mapping:1},resolverVersion:1,runtimeRules:rules,issuedAt:new Date(now).toISOString(),validUntil:new Date(now+90000).toISOString()};
@@ -29,21 +31,21 @@ test('v2 negotiation, controller application and ACK use the same actor snapshot
     const controller=new Controller({get_settings:()=>({teamos_enabled:'1'})},{},{},good=>{
         engine=good ? new Rules.RuleEngine(good.config.rules,7) : null;
         // ACK must follow engine installation, not merely successful download.
-        assert.equal(h.calls.filter(c=>c.url.endsWith('/ack')).length, good && good.version===22 ? 1 : 0);
+        assert.equal(h.calls.filter(c=>c.url.endsWith('/telemetry') && c.options.body.event === 'applied').length, good && good.version===22 ? 1 : 0);
         return true;
     });
     controller.client=h.client;controller.start();await flush();
     const session=h.calls.find(c=>c.url.endsWith('/sessions')).options.body;
-    assert.equal(session.runtimeVersion,'1.2.1');assert.deepEqual(session.capabilities,['dynamicRulesV2']);
+    assert.equal(session.runtimeVersion,'1.2.2');assert.deepEqual(session.capabilities,['dynamicRulesV2']);
     assert.equal(engine.match({entityType:'leads',pipelineId:12,statusId:22,currentUserId:7,responsibleUserId:7}).denyExit,true);
-    let ack=h.calls.find(c=>c.url.endsWith('/ack'));
+    let ack=h.calls.find(c=>c.url.endsWith('/telemetry') && c.options.body.event === 'applied');
     assert.equal(ack.options.method,'POST');assert.equal(ack.options.headers.Authorization,'Bearer '+'a'.repeat(43));
-    assert.deepEqual(ack.options.body.scope,scope);assert.equal(ack.options.body.runtimeRevision,21);assert.equal(ack.options.body.actorId,'7');assert.equal(ack.options.body.runtimeVersion,'1.2.1');
+    assert.deepEqual(ack.options.body.scope,scope);assert.equal(ack.options.body.runtimeRevision,21);assert.equal(ack.options.body.actorId,'7');assert.equal(ack.options.body.runtimeVersion,'1.2.2');
     const instance=ack.options.body.runtimeInstanceId;
     h.revision=22;h.status=23;t.mock.timers.tick(60000);await flush();
     assert.equal(engine.match({entityType:'leads',pipelineId:12,statusId:22,currentUserId:7,responsibleUserId:7}).denyExit,false);
     assert.equal(engine.match({entityType:'leads',pipelineId:12,statusId:23,currentUserId:7,responsibleUserId:7}).denyExit,true);
-    ack=h.calls.filter(c=>c.url.endsWith('/ack')).at(-1);assert.equal(ack.options.body.runtimeRevision,22);assert.equal(ack.options.body.publicationVersion,7);assert.equal(ack.options.body.runtimeInstanceId,instance);
+    ack=h.calls.filter(c=>c.url.endsWith('/telemetry') && c.options.body.event === 'applied').at(-1);assert.equal(ack.options.body.runtimeRevision,22);assert.equal(ack.options.body.publicationVersion,7);assert.equal(ack.options.body.runtimeInstanceId,instance);
     controller.destroy();
 });
 test('ACK failure does not discard applied rules or extend lease; expiry prevents late ACK',async()=>{
@@ -59,7 +61,7 @@ test('v2 never falls back to v1 on endpoint failure or session downgrade in the 
 test('controller does not acknowledge a snapshot when no runtime engine was installed; standalone never starts transport',async t=>{
     t.mock.timers.enable({apis:['setTimeout']});const h=harness();
     const controller=new Controller({get_settings:()=>({teamos_enabled:'1'})},{},{},()=>false);controller.client=h.client;controller.start();await flush();
-    assert.equal(h.calls.filter(c=>c.url.endsWith('/ack')).length,0);controller.destroy();
+    assert.equal(h.calls.filter(c=>c.url.endsWith('/telemetry') && c.options.body.event === 'applied').length,0);controller.destroy();
     const standalone=new Controller({get_settings:()=>({teamos_enabled:'0'})},{},{},()=>{throw Error('standalone');});standalone.client=h.client;const before=h.calls.length;standalone.start();await flush();assert.equal(h.calls.length,before);standalone.destroy();
 });
 
@@ -74,7 +76,7 @@ test('v2 rejects malformed snapshot/publication IDs and CRM source revisions wit
     for (const malformed of [null,7,'snapshot','00000000-0000-0000-0000-000000000000','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaZ']) {
         for (const field of ['snapshotId','publicationId']) {
             const h=harness();const request=h.client.request;h.client.request=async(url,options)=>{const response=await request(url,options);return url.endsWith('/bootstrap') ? {...response,[field]:malformed} : response;};
-            await assert.rejects(h.client.refresh(),/динамический снимок/);assert.equal(h.client.good,null);assert.equal(h.calls.filter(c=>c.url.endsWith('/ack')).length,0);
+            await assert.rejects(h.client.refresh(),/динамический снимок/);assert.equal(h.client.good,null);assert.equal(h.calls.filter(c=>c.url.endsWith('/telemetry') && c.options.body.event === 'applied').length,0);
         }
     }
     for (const crm of ['crm','a'.repeat(64),'sha256:'+'A'.repeat(64),'sha256:'+'a'.repeat(63)]) {

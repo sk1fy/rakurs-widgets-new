@@ -33,7 +33,7 @@
 
     return {
         APP_NAME: 'rkrs_lead_notasks',
-        BUILD_VERSION: '1.2.1',
+        BUILD_VERSION: '1.2.2',
         EVENT_NAMESPACE: '.rkrs_lead_notasks',
         STYLE_ID: 'rkrs-lead-notasks-style',
         CATALOG_NAME: '_ПРАВИЛА_ЗАПРЕТ_СДЕЛОК_БЕЗ_ЗАДАЧ',

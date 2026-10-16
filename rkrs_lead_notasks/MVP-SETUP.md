@@ -132,3 +132,30 @@ API создаёт **отдельный** каталог, читает его о
 Переход режима на сервере имеет отдельное подтверждение: локальная подготовка сама
 не меняет режим TeamOS. При необходимости отката используйте сохранённые исходные
 настройки и соответствующий подтверждённый режим, не смешивая эпохи.
+
+### Runtime diagnostics (1.2.2)
+
+Managed runtime sends bounded diagnostic events to
+`POST /api/v1/task-control/runtime/telemetry` with its existing runtime session.
+`received` confirms validation and download; events use an ordered background queue
+that cannot delay runtime installation. `applied` follows installation into the
+local engine. Only `applied` confirms execution by that specific tab. Later successful
+applications of the same revision produce heartbeat evidence at most once per 60 seconds.
+Heartbeat and diagnostic responses never extend the bootstrap lease.
+
+Each tab creates a new random `runtimeInstanceId` in memory. A refreshed page is a new
+instance. Events carry the exact scope, actor, publication, runtime revision/checksum,
+package version, event UUID, occurrence time and bootstrap correlation UUID; v2 also
+includes snapshot ID. No rule contents, CRM objects, user messages, URLs, tokens or
+assertions are included. Error codes are restricted to a fixed allowlist. Failed or
+closed tabs are not reported as uninstall and do not invalidate another tab's evidence.
+The server determines freshness from its own receipt time and current scope.
+
+Failed engine installation emits `apply_failed` without `applied`. A failed bootstrap
+with a still-valid runtime session can emit a sanitized error scoped to that session
+without publication fields; revoked and foreign sessions emit no such evidence. A failed diagnostic
+request cannot renew a lease or initiate authentication. Confirmed 403/404 revocation
+clears the cached managed config; a transport outage leaves it usable until its original
+lease expires. Hidden tabs do not send applied/heartbeat from visibility callbacks.
+Destroy removes timers/listeners and clears this instance's session. Autonomous mode
+still starts no TeamOS transport unless explicitly connected through the admin bridge.
