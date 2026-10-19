@@ -36,11 +36,11 @@ test('v2 negotiation, controller application and ACK use the same actor snapshot
     });
     controller.client=h.client;controller.start();await flush();
     const session=h.calls.find(c=>c.url.endsWith('/sessions')).options.body;
-    assert.equal(session.runtimeVersion,'1.2.3');assert.deepEqual(session.capabilities,['dynamicRulesV2']);
+    assert.equal(session.runtimeVersion,require('../package.json').version);assert.deepEqual(session.capabilities,['dynamicRulesV2']);
     assert.equal(engine.match({entityType:'leads',pipelineId:12,statusId:22,currentUserId:7,responsibleUserId:7}).denyExit,true);
     let ack=h.calls.find(c=>c.url.endsWith('/telemetry') && c.options.body.event === 'applied');
     assert.equal(ack.options.method,'POST');assert.equal(ack.options.headers.Authorization,'Bearer '+'a'.repeat(43));
-    assert.deepEqual(ack.options.body.scope,scope);assert.equal(ack.options.body.runtimeRevision,21);assert.equal(ack.options.body.actorId,'7');assert.equal(ack.options.body.runtimeVersion,'1.2.3');
+    assert.deepEqual(ack.options.body.scope,scope);assert.equal(ack.options.body.runtimeRevision,21);assert.equal(ack.options.body.actorId,'7');assert.equal(ack.options.body.runtimeVersion,require('../package.json').version);
     const instance=ack.options.body.runtimeInstanceId;
     h.revision=22;h.status=23;t.mock.timers.tick(60000);await flush();
     assert.equal(engine.match({entityType:'leads',pipelineId:12,statusId:22,currentUserId:7,responsibleUserId:7}).denyExit,false);
