@@ -16,7 +16,7 @@ test('actual AMD v1 received is distinct from applied; repeated apply becomes bo
 const h=harness(),good=await h.client.refresh();assert.deepEqual(h.events.map(e=>e.event),['received']);const lease=h.client.leaseUntil;
 await h.client.acknowledge(good);await h.client.acknowledge(good);await h.client.acknowledge(good);
 assert.deepEqual(h.events.map(e=>e.event),['received','applied','heartbeat']);h.advance(60000);await h.client.acknowledge(good);assert.equal(h.events.at(-1).event,'heartbeat');assert.equal(h.client.leaseUntil,lease);
-for(const event of h.events){assert.equal(event.runtimeRevision,1);assert.equal(event.publicationVersion,1);assert.equal(event.runtimeVersion,'1.2.3');assert.equal(event.correlationId,good.correlationId);assert.ok(event.eventId);assert.ok(event.occurredAt);assert.equal(event.snapshotId,undefined);}
+for(const event of h.events){assert.equal(event.runtimeRevision,1);assert.equal(event.publicationVersion,1);assert.equal(event.runtimeVersion,require('../package.json').version);assert.equal(event.correlationId,good.correlationId);assert.ok(event.eventId);assert.ok(event.occurredAt);assert.equal(event.snapshotId,undefined);}
 assert.equal(new Set(h.events.map(e=>e.eventId)).size,h.events.length);
 h.advance(180001);await h.client.acknowledge(good);assert.equal(h.events.length,4);
 });

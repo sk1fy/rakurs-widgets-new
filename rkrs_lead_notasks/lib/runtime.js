@@ -751,6 +751,7 @@
         this.snapshotHash = options.snapshotHash || 'none';
         this.storage = options.sessionStorage || (typeof sessionStorage !== 'undefined' ? sessionStorage : null);
         this.lastChecks = {};
+        this.pendingChecks = new Set();
         this.emptyRetryMs = Number(options.emptyRetryMs) || 30000;
         this.taskBatchSize = Number(options.taskBatchSize) || 50;
         var activeTab = options.isActive || function () {
@@ -954,10 +955,11 @@
             return [];
         }
         var key = this._sessionKey(entityType);
-        if (this.lastChecks[key] && Date.now() - this.lastChecks[key] < this.emptyRetryMs) {
+        if (this.pendingChecks.has(key) || this.lastChecks[key] && Date.now() - this.lastChecks[key] < this.emptyRetryMs) {
             return [];
         }
         this.lastChecks[key] = Date.now();
+        this.pendingChecks.add(key);
         var generation = this.generation;
         try {
             var entities = entityType === 'leads' ? await this._leadsWithoutTasks(rules) : await this._customersWithoutTasks(rules);
@@ -996,6 +998,8 @@
             if (!this.isActive() || generation !== this.generation) { return []; }
             this.ui.notify('Не удалось сформировать список карточек без задач.');
             return [];
+        } finally {
+            this.pendingChecks.delete(key);
         }
     };
 
@@ -1164,7 +1168,9 @@
                     self.lastTaskRefresh = Date.now();
                     self.guard.primeCurrent();
                 }
-                if (self.ui && self.ui.entitiesModal && self.listModal) {
+                // Keep reminding on the list even after the manager closes
+                // the modal. run() gates areas, rules, visibility and polling.
+                if (self.listModal && self.resolver) {
                     self.listModal.run(self.resolver.area());
                 }
             }, 1000);

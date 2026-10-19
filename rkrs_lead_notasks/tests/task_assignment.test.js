@@ -167,3 +167,46 @@ test('refresh updates an existing modal and removes resolved deals without reope
     await service.run('llist');
     assert.deepEqual(updated, []);
 });
+
+// Exercise the actual controller timer, not a manual second run of the modal.
+test('dismissed reminder returns on the same page until the owner has a task; hidden tab stays idle', async (t) => {
+    t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 1000 });
+    let active = true, missing = true, opened = 0, reads = 0;
+    const ui = { entitiesModal: null, notify() {}, showEntitiesModal() { opened++; this.entitiesModal = { entityType: 'leads', updateEntities() {} }; } };
+    const service = new Runtime.ListModalService({ userId: 42, api: {}, ui,
+        engine: { myRules: () => [{ showModal: true }], match: () => ({ showModal: true }) }, isActive: () => active });
+    service._leadsWithoutTasks = async () => { reads++; return missing ? [{ id: 15, responsible_user_id: 42 }] : []; };
+    service._leadStageNames = async () => ({});
+    const controller = new Runtime.RuntimeController({ widget: {}, $: () => ({}), api: {}, accountId: 1 });
+    controller.init = () => true;
+    controller.guard = { bind() {} };
+    controller._syncTaskObserver = () => {};
+    controller._isActiveTab = () => active;
+    controller.resolver = { resolve: () => null, area: () => 'llist' };
+    controller.ui = ui; controller.listModal = service;
+    controller.bind();
+    const tick = async (ms) => { t.mock.timers.tick(ms); await new Promise(setImmediate); };
+    await tick(1000); assert.equal(opened, 1);
+    ui.entitiesModal = null;
+    await tick(29000); assert.equal(opened, 1);
+    await tick(1000); assert.equal(opened, 2);
+    ui.entitiesModal = null; missing = false;
+    await tick(30000); assert.equal(opened, 2);
+    active = false; const previousReads = reads;
+    await tick(30000); assert.equal(reads, previousReads);
+    clearInterval(controller.refreshTimer); service.destroy();
+});
+
+test('slow reminder scan cannot overlap the next polling interval', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: 1000 });
+    let finish, reads = 0;
+    const service = new Runtime.ListModalService({ userId: 42, api: {}, ui: { notify() {} },
+        engine: { myRules: () => [{ showModal: true }] } });
+    service._leadsWithoutTasks = () => { reads++; return new Promise(resolve => { finish = resolve; }); };
+    const first = service.run('llist');
+    t.mock.timers.tick(31000);
+    await service.run('llist'); assert.equal(reads, 1);
+    finish([]); await first;
+    const second = service.run('llist'); assert.equal(reads, 2);
+    finish([]); await second;
+});
