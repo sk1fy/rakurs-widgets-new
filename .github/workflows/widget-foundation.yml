@@ -32,6 +32,7 @@ jobs:
         widget:
           - rkrs_lead_distribution
           - rkrs_activity_panel
+          - rkrs_color_leads
     defaults:
       run:
         working-directory: ${{ matrix.widget }}/widget-app

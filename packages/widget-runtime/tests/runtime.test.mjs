@@ -157,3 +157,15 @@ test("re-entrant replacement wins over the older factory", () => {
   assert.deepEqual(disposed, ["old"]);
   registry.destroy(widget);
 });
+
+test("routing expectation headers pass without exposing authority overrides", async () => {
+  const fixture = createSDKFixture({handle: () => ({data:{ok:true}})});
+  const client = createAuthorizedClient(fixture, '/fixture-api');
+  const headers = {'X-Routing-Epoch':'5','X-Installation-Generation':'2'};
+  await client.request('/settings', {headers});
+  assert.deepEqual(fixture.requests[0].options.headers,headers);
+  for (const invalid of [{Authorization:'Bearer secret'}, {'X-Account-ID':'7'}, {'X-Routing-Epoch':'0'}, {'X-Routing-Epoch':'1\r\nBad: yes'}, {'X-Routing-Epoch':'9007199254740992'}])
+    await assert.rejects(client.request('/settings', {headers:invalid}), /Unsupported routing expectation/);
+  assert.equal(fixture.requests.length,1);
+  client.destroy(); fixture.destroy();
+});
