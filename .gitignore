@@ -1,0 +1,21 @@
+# Local dependencies and generated build/package output
+node_modules/
+dist/
+dist-ssr/
+dist-preview/
+dist-remote/
+dist-package/
+artifacts/
+*.zip
+
+# OS, editor and temporary execution files
+.DS_Store
+Thumbs.db
+*.log
+.tasks/
+test-results/
+playwright-report/
+blob-report/
+.env
+.env.*
+!.env.example
