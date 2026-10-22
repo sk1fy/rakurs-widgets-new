@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rakurs · проверка загрузчика</title><style>
+body{max-width:850px;margin:56px auto;padding:0 24px;font:16px/1.55 system-ui;color:#172b36;background:#f3f6f7}h1{line-height:1.2}button,select{padding:10px 14px;margin:5px;border:1px solid #a5b6bf;border-radius:8px;background:white;font:inherit}button{cursor:pointer}#panel,pre{padding:24px;background:white;border-radius:12px;white-space:pre-wrap}label{display:inline-block;margin-right:16px}.note{color:#526975}
+</style></head><body>
+<p>RAKURS / ПВ-02 / SDK FIXTURE</p><h1>Один владелец — один интерфейс</h1>
+<p class="note">Локальный стенд. Все запросы обрабатывает фикстура SDK. Изменения владельца здесь проверяют только интерфейс; серверный протокол переключения относится к ПВ-03.</p>
+<label>Ответ Core <select id="owner"><option value="ssd">SSD</option><option value="core">Core</option><option value="frozen">Переключение приостановлено</option><option value="offline">Core недоступен</option></select></label>
+<label>Аккаунт <select id="account"><option>777</option><option>888</option></select></label>
+<p><button id="render">Открыть / render × 3</button><button id="refresh">Обновить маршрут</button><button id="destroy">Закрыть</button></p>
+<div id="panel" role="status">Виджет закрыт</div><h2>События</h2><pre id="events" aria-live="polite"></pre>
+<script type="module" src="./main.mjs"></script></body></html>

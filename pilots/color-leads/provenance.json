@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "source_repository": "https://github.com/Rakurs-Source-Code/rakurs-widgets-dev",
+  "source_commit": "d000ac7335942c18458d4baf61cc7cbed4a72f8d",
+  "source_widget": "rkrs_colorfull_lead",
+  "snapshot_date": "2026-10-22",
+  "production_baseline_verified": false,
+  "legacy_cleanup_supported": false,
+  "runtime_activation_allowed": false,
+  "files": [
+    {
+      "source": "rkrs_colorfull_lead/widget/i18n/ru.json",
+      "path": "widget/i18n/ru.json",
+      "sha256": "0996e77f522760f7e81ed649dc5c1e95d67411d9b7fdc1c8442292608b30e346"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/images/left_menu.svg",
+      "path": "widget/images/left_menu.svg",
+      "sha256": "e120f330736bf6bf2b964ff365f18e6a46bf0b7ada23cb28440fcaa568c9739c"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/images/logo.png",
+      "path": "widget/images/logo.png",
+      "sha256": "b25e0b27b6c42d4341d5bbbd2bf4e0547aca745d5172bd87f90bfaa85c632d5b"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/images/logo_dp.png",
+      "path": "widget/images/logo_dp.png",
+      "sha256": "e6c315ded5f974b466d2fd601119f171250204fbc4cab4ed9b7af50568947246"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/images/logo_main.png",
+      "path": "widget/images/logo_main.png",
+      "sha256": "e81e000d7ea47786b68618aa3d94d92c28805dacc4ea6a05dde0200e04a64dd2"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/images/logo_medium.png",
+      "path": "widget/images/logo_medium.png",
+      "sha256": "d8b1dce89da5ef6dd69116b63c9b0d3892fec08c6835561a4dae4007d32c6c30"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/images/logo_min.png",
+      "path": "widget/images/logo_min.png",
+      "sha256": "a0bba484eacd3d58c6203e49ad20d64603ac8ee317f16d09278206f120205719"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/images/logo_small.png",
+      "path": "widget/images/logo_small.png",
+      "sha256": "61f5d75a572c89754cbfac8439c7281acd848e912b3bfe164282be0d8d000af3"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/lib/app/account.js",
+      "path": "widget/lib/app/account.js",
+      "sha256": "14068c935ff0769af5b82fd082e7f7ea6be9a1857a3fb1e76436fd0cdf0ed1b0"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/lib/app/imask.js",
+      "path": "widget/lib/app/imask.js",
+      "sha256": "1942e99194a81e00bc8bd5716ef3d111bd0890b087b6691ca81b21006a829f94"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/lib/app/rakurs.js",
+      "path": "widget/lib/app/rakurs.js",
+      "sha256": "7086eab4f260a55930a2bd26cf025d13dea25e9b8ee631092e5cff8a6d471a50"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/lib/app.umd.min.js",
+      "path": "widget/lib/app.umd.min.js",
+      "sha256": "125b47a6de8984f17501f6e78239ff9160db02e5fdbc7d4ae8ef0951b54d5b4d"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/lib/inputmask.min.js",
+      "path": "widget/lib/inputmask.min.js",
+      "sha256": "d7085fd36150fbeccebe50aca07fda7ced650ce3331004217f3542d75db492fe"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/lib/rakurs-contact-footer.umd.min.js",
+      "path": "widget/lib/rakurs-contact-footer.umd.min.js",
+      "sha256": "3de432ae6d023ffcab6784c173b14cadc952a9675b0b91b741d3967e2acf33ca"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/lib/rkrs-paid-status.umd.min.js",
+      "path": "widget/lib/rkrs-paid-status.umd.min.js",
+      "sha256": "a3f0114427740084cd5ac4c6bb9f50c987b35e93aedb4beb744a3a42163aa40d"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/lib/rkrs.umd.min.js",
+      "path": "widget/lib/rkrs.umd.min.js",
+      "sha256": "07173e3b1cb982abe2403606d75e95b3357c6d2c41a23c809f293feabd941073"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/lib/style.css",
+      "path": "widget/lib/style.css",
+      "sha256": "fdff0655e9b5c529d011cf740f7320b9fffc17ee0592965062d4408d9e5b26e4"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/lib/tools.js",
+      "path": "widget/lib/tools.js",
+      "sha256": "1db0eb4178449f4332647b0f92c727c27c6ffc1feeafef98d9e30076d1d27047"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/manifest.json",
+      "path": "widget/manifest.json",
+      "sha256": "9539b6afea7b8117bfaa94f109f86c40ad307614edb0c150a328a8fd542efd61"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/script.js",
+      "path": "widget/legacy.js",
+      "sha256": "acf7862d328a23e0a4bb89ef0e611d6d5e02fafa057bce6ef2f79890b1e19b83"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/templates/amo-widget-card-footer.twig",
+      "path": "widget/templates/amo-widget-card-footer.twig",
+      "sha256": "f0a3a0c20ab9a8bcd1940493406598f4a574c8637cfae64e9cebb09caf4723e8"
+    },
+    {
+      "source": "rkrs_colorfull_lead/widget/templates/install.twig",
+      "path": "widget/templates/install.twig",
+      "sha256": "a3cedf4a5d36502d19673f11e799dba87d96bbba890716ba8e895f39bb6c7ece"
+    }
+  ],
+  "widget_version": "1.0.4"
+}

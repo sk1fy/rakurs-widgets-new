@@ -1,6 +1,15 @@
 import { createClient } from "./client.js";
+import { createInstanceRegistry } from "../../../packages/widget-runtime/index.mjs";
 import css from "./widget.css?inline";
-const instances = new Map();
+const instances = createInstanceRegistry((state) => {
+  clearTimeout(state.timer);
+  state.client.destroy();
+  state.doc.removeEventListener("visibilitychange", state.visibility);
+  // Only remove this instance's nodes: a re-entrant mount may already own
+  // the same shadow root when an abandoned factory is disposed.
+  state.root.remove();
+  state.style.remove();
+});
 const labels = {
   group_paused: "Группа на паузе",
   assignment_confirmed: "Назначение подтверждено",
@@ -57,24 +66,12 @@ const safeURL = (value) => {
   }
 };
 export function destroy(widget) {
-  const state = instances.get(widget);
-  if (!state) return;
-  state.alive = false;
-  clearTimeout(state.timer);
-  state.client.destroy();
-  state.doc.removeEventListener("visibilitychange", state.visibility);
-  state.target.shadowRoot?.replaceChildren();
-  state.target.replaceChildren();
-  instances.delete(widget);
+  instances.destroy(widget);
 }
 export function mount(context) {
-  const current = instances.get(context.widget);
-  if (
-    current?.target === context.target &&
-    current.identity === context.identity
-  )
-    return;
-  destroy(context.widget);
+  return instances.mount(context, mountInstance);
+}
+function mountInstance(context) {
   const doc = context.target.ownerDocument,
     shadow =
       context.target.shadowRoot ||
@@ -90,6 +87,7 @@ export function mount(context) {
     ...context,
     doc,
     root,
+    style,
     alive: true,
     client: createClient(context.widget, context.apiUrl),
     bootstrap: null,
@@ -109,7 +107,6 @@ export function mount(context) {
     busy: false,
     timer: null,
   };
-  instances.set(context.widget, state);
   const node = (tag, content, attrs = {}) => {
     const e = doc.createElement(tag);
     if (content != null) e.textContent = content;

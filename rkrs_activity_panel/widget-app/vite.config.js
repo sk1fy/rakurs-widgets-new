@@ -14,6 +14,9 @@ export default defineConfig(({ mode, command }) => ({
   build:
     mode === "widget"
       ? {
+          // Readable engineering package; bundled mode alone does not imply moderation approval.
+          minify: false,
+          cssMinify: false,
           lib: {
             entry: "src/runtime.js",
             name: "RkrsActivityPrototype",

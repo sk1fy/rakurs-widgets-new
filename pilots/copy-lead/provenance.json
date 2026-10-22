@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "source_repository": "https://github.com/Rakurs-Source-Code/rakurs-widgets-dev",
+  "source_commit": "d000ac7335942c18458d4baf61cc7cbed4a72f8d",
+  "source_widget": "rkrs_copylead",
+  "snapshot_date": "2026-10-22",
+  "production_baseline_verified": false,
+  "legacy_cleanup_supported": false,
+  "runtime_activation_allowed": false,
+  "files": [
+    {
+      "source": "rkrs_copylead/widget/i18n/ru.json",
+      "path": "widget/i18n/ru.json",
+      "sha256": "252dafe4a3f695d8526504f76ccb49671cc75fee71656ffc560ef81987f1d012"
+    },
+    {
+      "source": "rkrs_copylead/widget/images/logo.png",
+      "path": "widget/images/logo.png",
+      "sha256": "704f0ba17a2a51894ef0fcb3234cef285eae7c2479435ebcc412aed6ca080ada"
+    },
+    {
+      "source": "rkrs_copylead/widget/images/logo_dp.png",
+      "path": "widget/images/logo_dp.png",
+      "sha256": "fb15fe88a8638ad6db2da475de71681e1722a9506a5533db042a3b1a2bde9e1e"
+    },
+    {
+      "source": "rkrs_copylead/widget/images/logo_main.png",
+      "path": "widget/images/logo_main.png",
+      "sha256": "052cc497bf145a3c2ccb2d1f647c61df35aadd0ad4493c5a2a1d47d13a2c30fb"
+    },
+    {
+      "source": "rkrs_copylead/widget/images/logo_medium.png",
+      "path": "widget/images/logo_medium.png",
+      "sha256": "fd0086bbf6ee5626a3793bea574e2e8a695cbe556c80069bd4751177ab320b94"
+    },
+    {
+      "source": "rkrs_copylead/widget/images/logo_min.png",
+      "path": "widget/images/logo_min.png",
+      "sha256": "ccf4dcc6c8527f3b8ac2f6413a4615bf73e6d5fdcfa899896aef0baca6ae9946"
+    },
+    {
+      "source": "rkrs_copylead/widget/images/logo_small.png",
+      "path": "widget/images/logo_small.png",
+      "sha256": "cc579bf00f59bb819d264bf735f3a88df35038ea265b59497b09633241966b51"
+    },
+    {
+      "source": "rkrs_copylead/widget/images/logo_small_free.png",
+      "path": "widget/images/logo_small_free.png",
+      "sha256": "cc579bf00f59bb819d264bf735f3a88df35038ea265b59497b09633241966b51"
+    },
+    {
+      "source": "rkrs_copylead/widget/images/slide1.png",
+      "path": "widget/images/slide1.png",
+      "sha256": "44c9b16b58acfc72ed81592566172ecbed9b77aa6669d1be74e42ef66b077f6f"
+    },
+    {
+      "source": "rkrs_copylead/widget/images/slide2.png",
+      "path": "widget/images/slide2.png",
+      "sha256": "e48803e60193b0b8221765491a0c96a344225d80944808b9ae176f0f9dbdf233"
+    },
+    {
+      "source": "rkrs_copylead/widget/images/slide3.png",
+      "path": "widget/images/slide3.png",
+      "sha256": "802075070e2ab95d4bcb3a415a7c305f1dc874036d364ccbc25e7b0458e777e4"
+    },
+    {
+      "source": "rkrs_copylead/widget/images/slide4.png",
+      "path": "widget/images/slide4.png",
+      "sha256": "dacc036461855abfc3704be0a1f6cbfd480cb59b65f6a9168b801e4375e6f40c"
+    },
+    {
+      "source": "rkrs_copylead/widget/images/slide5.png",
+      "path": "widget/images/slide5.png",
+      "sha256": "81d8fcc51cbeb303971c9452e327e0bff939f0e7981d09a1be98e4ca11942f0c"
+    },
+    {
+      "source": "rkrs_copylead/widget/lib/ServiceRakursApp.umd.min.js",
+      "path": "widget/lib/ServiceRakursApp.umd.min.js",
+      "sha256": "2a029b8dd085e6e9d213a0345e7ed0afd6e64165889d1f7d2c807a19f9a5aafb"
+    },
+    {
+      "source": "rkrs_copylead/widget/lib/app/account.js",
+      "path": "widget/lib/app/account.js",
+      "sha256": "14068c935ff0769af5b82fd082e7f7ea6be9a1857a3fb1e76436fd0cdf0ed1b0"
+    },
+    {
+      "source": "rkrs_copylead/widget/lib/app/imask.js",
+      "path": "widget/lib/app/imask.js",
+      "sha256": "1942e99194a81e00bc8bd5716ef3d111bd0890b087b6691ca81b21006a829f94"
+    },
+    {
+      "source": "rkrs_copylead/widget/lib/app/rakurs.js",
+      "path": "widget/lib/app/rakurs.js",
+      "sha256": "7086eab4f260a55930a2bd26cf025d13dea25e9b8ee631092e5cff8a6d471a50"
+    },
+    {
+      "source": "rkrs_copylead/widget/lib/rkrs-copylead-settings.umd.min.js",
+      "path": "widget/lib/rkrs-copylead-settings.umd.min.js",
+      "sha256": "26f41be0cefa79c6b6b8b930e665cd5e8888236d9dd4f0181fefcac762899552"
+    },
+    {
+      "source": "rkrs_copylead/widget/lib/tools.js",
+      "path": "widget/lib/tools.js",
+      "sha256": "31d7d565233618c6f1cf0e9f53e2fdd9c339eaa76bc4b88d5bec76f86d392b8c"
+    },
+    {
+      "source": "rkrs_copylead/widget/manifest.json",
+      "path": "widget/manifest.json",
+      "sha256": "aaec7902914770090fc1d19cb2793895ea87785520fe2ddf640d6698900d43f3"
+    },
+    {
+      "source": "rkrs_copylead/widget/script.js",
+      "path": "widget/legacy.js",
+      "sha256": "898bae9960a707350644cb1589be874249cd3bf3f18300cb869113e9687f6b5f"
+    },
+    {
+      "source": "rkrs_copylead/widget/templates/amo-widget-card-footer.twig",
+      "path": "widget/templates/amo-widget-card-footer.twig",
+      "sha256": "f0a3a0c20ab9a8bcd1940493406598f4a574c8637cfae64e9cebb09caf4723e8"
+    },
+    {
+      "source": "rkrs_copylead/widget/templates/install.twig",
+      "path": "widget/templates/install.twig",
+      "sha256": "2d71fc3e878ae0d732df23bce6522bcdb96bffa78d6582999516f6b3ba1576dc"
+    },
+    {
+      "source": "rkrs_copylead/widget/tour_description.html",
+      "path": "widget/tour_description.html",
+      "sha256": "376bf046e285e753a64cac1864a26b35f87f83d80813420b101fc92c2b6ff9f7"
+    }
+  ],
+  "widget_version": "1.3.78"
+}

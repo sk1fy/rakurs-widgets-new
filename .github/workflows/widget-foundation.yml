@@ -1,0 +1,47 @@
+name: Widget foundation
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: widget-foundation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shared-packages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test shared loader, runtime and build packages
+        run: node --test packages/*/tests/*.test.mjs
+
+  widget-apps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        widget:
+          - rkrs_lead_distribution
+          - rkrs_activity_panel
+    defaults:
+      run:
+        working-directory: ${{ matrix.widget }}/widget-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: ${{ matrix.widget }}/widget-app/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build:preview
