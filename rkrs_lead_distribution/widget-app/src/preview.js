@@ -1,5 +1,6 @@
 // Explicit developer-only SDK fixture. Not imported by runtime/UMD.
 import "./preview.css";
+import { createSDKFixture } from "../../../packages/widget-runtime/testing/fixture.mjs";
 const uuid = "10000000-0000-4000-8000-000000000001",
   group = "20000000-0000-4000-8000-000000000001";
 let rule = {
@@ -63,200 +64,180 @@ window.__rs08Requests = [];
 if (import.meta.hot)
   import.meta.hot.dispose(() => {
     widget?.callbacks.destroy();
+    sdk.destroy();
     title.remove();
     target.remove();
   });
-const sdk = {
-  $authorizedAjax(options) {
-    let success,
-      failure,
-      cancel = false;
-    const deferred = {
-      done(fn) {
-        success = fn;
-        return this;
-      },
-      fail(fn) {
-        failure = fn;
-        return this;
-      },
-      abort() {
-        cancel = true;
-        failure?.({ status: 0 });
-      },
-    };
-    setTimeout(() => {
-      if (cancel) return;
-      const body = options.data ? JSON.parse(options.data) : null;
-      if (body) window.__rs08Requests.push(structuredClone(body));
-      if (
-        body &&
-        ((["history", "action"].includes(body.kind) &&
-          body.leadId !== String(card)) ||
-          (body.kind === "action" &&
-            body.payload?.requestId !== body.requestId) ||
-          Object.keys(body).some(
-            (k) =>
-              ![
-                "kind",
-                "id",
-                "leadId",
-                "limit",
-                "offset",
-                "write",
-                "requestId",
-                "payload",
-              ].includes(k),
-          ))
-      )
-        return failure?.({ status: 400 });
-      if (scenario === "outage") return failure?.({ status: 503 });
-      if (scenario === "forbidden") return failure?.({ status: 403 });
-      if (body?.write && scenario === "conflict")
-        return failure?.({ status: 409 });
-      if (body?.write && scenario === "unknown")
-        return success?.({ state: "pending" }, "success", { status: 202 });
-      let data;
-      if (options.url.endsWith("/bootstrap"))
-        data = {
-          state: scenario === "unbound" ? "not_connected" : "active",
-          accountId: "777",
-          userId: "42",
-          canManage: true,
-          teamOSUrl: "https://teamos.example.test/distribution",
-          binding: { id: uuid },
-        };
-      else if (body.kind === "rules" && !body.write)
-        data = { items: [rule, ...extraRules] };
-      else if (body.kind === "groups")
-        data = {
-          items: [
-            {
-              id: group,
-              name: "Первичные обращения",
-              revision: 1,
-              memberIds: [
-                "30000000-0000-4000-8000-000000000001",
-                "30000000-0000-4000-8000-000000000002",
-              ],
-              disabledMemberIds: [],
-              active: true,
-              algorithm: "round_robin",
-            },
-            {
-              id: "20000000-0000-4000-8000-000000000002",
-              name: "Вторая группа",
-              revision: 1,
-              memberIds: ["30000000-0000-4000-8000-000000000001"],
-              disabledMemberIds: [],
-              active: true,
-              algorithm: "round_robin",
-            },
-          ],
-        };
-      else if (body.kind === "references")
-        data = {
-          users: [
-            { id: "11", name: "Анна" },
-            { id: "22", name: "Иван" },
-          ],
-          employees: [
-            { id: "30000000-0000-4000-8000-000000000001", name: "Анна" },
-            { id: "30000000-0000-4000-8000-000000000002", name: "Иван" },
-          ],
-          pipelines: [
-            {
-              id: "100",
-              name: "Продажи",
-              statuses: [
-                { id: "101", name: "Новая заявка" },
-                { id: "102", name: "Переговоры" },
-              ],
-            },
-          ],
-        };
-      else if (body.kind === "lead")
-        data = {
-          checkedAt: new Date().toISOString(),
-          currentLead: {
-            leadId: card,
-            responsibleUserId: "22",
-            responsibleUserName: "Иван",
-            observedAt: new Date().toISOString(),
-            leadName: "Тестовая заявка",
-            leadUrl: null,
-            deleted: false,
-            absent: false,
+const sdk = createSDKFixture({
+  delayMs: 100,
+  handle({ options, body }) {
+    if (body) window.__rs08Requests.push(structuredClone(body));
+    if (
+      body &&
+      ((["history", "action"].includes(body.kind) &&
+        body.leadId !== String(card)) ||
+        (body.kind === "action" &&
+          body.payload?.requestId !== body.requestId) ||
+        Object.keys(body).some(
+          (k) =>
+            ![
+              "kind",
+              "id",
+              "leadId",
+              "limit",
+              "offset",
+              "write",
+              "requestId",
+              "payload",
+            ].includes(k),
+        ))
+    )
+      return { status: 400 };
+    if (scenario === "outage") return { status: 503 };
+    if (scenario === "forbidden") return { status: 403 };
+    if (body?.write && scenario === "conflict")
+      return { status: 409 };
+    if (body?.write && scenario === "unknown")
+      return { data: { state: "pending" }, status: 202 };
+    let data;
+    if (options.url.endsWith("/bootstrap"))
+      data = {
+        state: scenario === "unbound" ? "not_connected" : "active",
+        accountId: "777",
+        userId: "42",
+        canManage: true,
+        teamOSUrl: "https://teamos.example.test/distribution",
+        binding: { id: uuid },
+      };
+    else if (body.kind === "rules" && !body.write)
+      data = { items: [rule, ...extraRules] };
+    else if (body.kind === "groups")
+      data = {
+        items: [
+          {
+            id: group,
+            name: "Первичные обращения",
+            revision: 1,
+            memberIds: [
+              "30000000-0000-4000-8000-000000000001",
+              "30000000-0000-4000-8000-000000000002",
+            ],
+            disabledMemberIds: [],
+            active: true,
+            algorithm: "round_robin",
           },
-          latestObservation: ["observe", "observe-wait"].includes(scenario)
-            ? observed()
-            : null,
-          items: ["observe", "observe-wait"].includes(scenario)
-            ? []
-            : [
-                {
-                  id: uuid,
-                  groupId: group,
-                  leadId: card,
-                  state: "waiting",
-                  reason: "no_available_employee",
-                  nextAttemptAt: new Date(Date.now() + 3600000).toISOString(),
-                  currentEmployeeId: "30000000-0000-4000-8000-000000000002",
-                  plannedEmployeeId: null,
-                  updatedAt: new Date().toISOString(),
-                  actions: ["recalculate", "cancel"],
-                },
-              ],
+          {
+            id: "20000000-0000-4000-8000-000000000002",
+            name: "Вторая группа",
+            revision: 1,
+            memberIds: ["30000000-0000-4000-8000-000000000001"],
+            disabledMemberIds: [],
+            active: true,
+            algorithm: "round_robin",
+          },
+        ],
+      };
+    else if (body.kind === "references")
+      data = {
+        users: [
+          { id: "11", name: "Анна" },
+          { id: "22", name: "Иван" },
+        ],
+        employees: [
+          { id: "30000000-0000-4000-8000-000000000001", name: "Анна" },
+          { id: "30000000-0000-4000-8000-000000000002", name: "Иван" },
+        ],
+        pipelines: [
+          {
+            id: "100",
+            name: "Продажи",
+            statuses: [
+              { id: "101", name: "Новая заявка" },
+              { id: "102", name: "Переговоры" },
+            ],
+          },
+        ],
+      };
+    else if (body.kind === "lead")
+      data = {
+        checkedAt: new Date().toISOString(),
+        currentLead: {
+          leadId: card,
+          responsibleUserId: "22",
+          responsibleUserName: "Иван",
+          observedAt: new Date().toISOString(),
+          leadName: "Тестовая заявка",
+          leadUrl: null,
+          deleted: false,
+          absent: false,
+        },
+        latestObservation: ["observe", "observe-wait"].includes(scenario)
+          ? observed()
+          : null,
+        items: ["observe", "observe-wait"].includes(scenario)
+          ? []
+          : [
+              {
+                id: uuid,
+                groupId: group,
+                leadId: card,
+                state: "waiting",
+                reason: "no_available_employee",
+                nextAttemptAt: new Date(Date.now() + 3600000).toISOString(),
+                currentEmployeeId: "30000000-0000-4000-8000-000000000002",
+                plannedEmployeeId: null,
+                updatedAt: new Date().toISOString(),
+                actions: ["recalculate", "cancel"],
+              },
+            ],
+      };
+    else if (body.kind === "observations")
+      data = {
+        items: body.id === uuid ? [observed()] : [],
+        limit: body.limit || 20,
+        offset: body.offset || 0,
+        hasMore: false,
+        checkedAt: new Date().toISOString(),
+      };
+    else if (body.kind === "history")
+      data = {
+        items: [
+          {
+            createdAt: new Date().toISOString(),
+            state: "waiting",
+            reason: "no_available_employee",
+          },
+        ],
+      };
+    else if (body.kind === "rules" && body.write) {
+      data = {
+        ...body.payload,
+        id: "10000000-0000-4000-8000-000000000002",
+        revision: 1,
+      };
+      extraRules.push(data);
+    } else if (body.kind === "rule" && body.write) {
+      if (
+        body.payload?.executionMode &&
+        body.payload.executionMode !== rule.executionMode
+      )
+        rule = {
+          ...rule,
+          executionEpoch: rule.executionEpoch + 1,
+          liveStartedAt:
+            body.payload.executionMode === "live"
+              ? new Date().toISOString()
+              : null,
         };
-      else if (body.kind === "observations")
-        data = {
-          items: body.id === uuid ? [observed()] : [],
-          limit: body.limit || 20,
-          offset: body.offset || 0,
-          hasMore: false,
-          checkedAt: new Date().toISOString(),
-        };
-      else if (body.kind === "history")
-        data = {
-          items: [
-            {
-              createdAt: new Date().toISOString(),
-              state: "waiting",
-              reason: "no_available_employee",
-            },
-          ],
-        };
-      else if (body.kind === "rules" && body.write) {
-        data = {
-          ...body.payload,
-          id: "10000000-0000-4000-8000-000000000002",
-          revision: 1,
-        };
-        extraRules.push(data);
-      } else if (body.kind === "rule" && body.write) {
-        if (
-          body.payload?.executionMode &&
-          body.payload.executionMode !== rule.executionMode
-        )
-          rule = {
-            ...rule,
-            executionEpoch: rule.executionEpoch + 1,
-            liveStartedAt:
-              body.payload.executionMode === "live"
-                ? new Date().toISOString()
-                : null,
-          };
-        rule = { ...rule, ...body.payload, revision: rule.revision + 1 };
-        data = rule;
-      } else data = {};
-      success?.(data, "success", { status: 200 });
-    }, 100);
-    return deferred;
+      rule = { ...rule, ...body.payload, revision: rule.revision + 1 };
+      data = rule;
+    } else data = {};
+    return { data, status: 200 };
   },
-};
+});
 function open() {
   if (!widget) return;
-  window.AMOCRM.data.current_card.id = card;
+  sdk.setIdentity({ entityId: card });
   widget.callbacks.destroy();
   if (document.querySelector("#mode").value === "card")
     widget.callbacks.render();
@@ -281,15 +262,10 @@ document.getElementById("next").onclick = () => {
 };
 document.getElementById("destroy").onclick = () => widget?.callbacks.destroy();
 document.getElementById("open").onclick = open;
-window.AMOCRM = {
-  constant: (key) => ({ id: key === "account" ? "777" : "42" }),
-  data: { current_card: { id: card } },
-};
+window.AMOCRM = sdk.amoCRM;
 window.require(["/widget-assets/widget-loader.js"], (Constructor) => {
-  widget = new Constructor();
-  widget.$authorizedAjax = sdk.$authorizedAjax;
-  widget.render_template = (options) => {
-    target.innerHTML = options.render;
-  };
+  widget = sdk.createWidget(Constructor, {
+    renderTemplate: (options) => { target.innerHTML = options.render; },
+  });
   open();
 });

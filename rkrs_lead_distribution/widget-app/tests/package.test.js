@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
 test("release hash pins actual bytes and ZIP is reproducible and free of placeholders", () => {
   const release = JSON.parse(readFileSync("dist-remote/release.json")),
     bytes = readFileSync(`dist-remote/${release.js}`);
@@ -121,4 +122,32 @@ test("manifest satisfies the amoCRM contract: non-empty custom settings field an
     ),
   );
   assert.deepEqual(packaged.settings, manifest.settings);
+});
+
+test("actual bundled ZIP mounts and disposes with remote JavaScript and fetch unavailable", async () => {
+  const source = execFileSync("unzip", ["-p", "dist-package/rkrs-lead-distribution.zip", "script.js"], { encoding: "utf8" });
+  const dom = new JSDOM("<main></main>", { url: "https://demo.amocrm.ru", runScripts: "outside-only", pretendToBeVisual: true });
+  const { window } = dom;
+  window.structuredClone = structuredClone;
+  window.APP = { constant: (name) => ({ id: name === "account" ? 1 : 2 }), data: { current_card: {} } };
+  let Widget, requests = 0, aborted = 0;
+  window.define = (_deps, factory) => { Widget = factory(); };
+  window.require = () => { throw new Error("remote AMD request"); };
+  window.fetch = () => { throw new Error("remote manifest request"); };
+  try {
+    window.eval(source);
+    const widget = new Widget();
+    widget.$authorizedAjax = () => {
+      requests++;
+      const request = { done: () => request, fail: () => request, abort: () => { aborted++; } };
+      return request;
+    };
+    assert.equal(widget.callbacks.settings(window.document.querySelector("main")), true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(requests, 1, "embedded runtime reached SDK authentication");
+    assert(window.document.querySelector("main").children.length > 0);
+    widget.callbacks.destroy();
+    assert.equal(aborted, 1);
+    assert.equal(window.document.querySelector("main").children.length, 0);
+  } finally { window.close(); }
 });

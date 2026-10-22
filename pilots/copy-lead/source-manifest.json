@@ -1,0 +1,92 @@
+{
+    "widget": {
+        "name": "widget.name",
+        "description": "widget.description",
+        "short_description": "widget.short_description",
+        "version": "1.3.78",
+        "interface_version": 2,
+        "init_once": true,
+        "locale": [
+            "ru"
+        ],
+        "installation": true,
+        "support": {
+            "link": "https://web.whatsapp.com/send?phone=79214377886",
+            "email": "amo@rkrs.ru"
+        }
+    },
+    "locations": [
+        "lcard",
+        "llist",
+        "settings",
+        "digital_pipeline",
+        "advanced_settings",
+        "salesbot_designer"
+    ],
+    "tour": {
+        "is_tour": true,
+        "tour_images": {
+            "ru": [
+                "/images/slide1.png",
+                "/images/slide2.png",
+                "/images/slide3.png",
+                "/images/slide4.png",
+                "/images/slide5.png"
+            ]
+        },
+        "tour_description": "widget.tour_description"
+    },
+    "settings": {
+        "phone": {
+            "name": "settings.phone",
+            "type": "text",
+            "required": true
+        },
+        "name": {
+            "name": "settings.name",
+            "type": "text",
+            "required": true
+        },
+        "role": {
+            "name": "settings.role",
+            "type": "text",
+            "required": true
+        },
+        "noCall": {
+            "name": "settings.noCall",
+            "type": "custom",
+            "required": false
+        },
+        "countryName": {
+            "name": "settings.countryName",
+            "type": "text",
+            "required": true
+        }
+    },
+    "dp": {
+        "action_multiple": false,
+        "webhook_url": "https://ssd.rkrs.ru/widget/v1/webhook/rkrs_copylead",
+        "settings": {
+            "rule_index": {
+                "name": "dp.rule_index",
+                "type": "text",
+                "required": true
+            }
+        }
+    },
+    "advanced": {
+        "title": "advanced.title"
+    },
+    "salesbot_designer": {
+        "handler_name": {
+            "name": "widget.name",
+            "settings": {
+                "rule_index": {
+                    "name": "dp.rule_index",
+                    "type": "text",
+                    "manual": true
+                }
+            }
+        }
+    }
+}

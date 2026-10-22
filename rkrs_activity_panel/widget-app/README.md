@@ -74,12 +74,25 @@ npm run preview           # просмотр собранного стенда �
 
 ## Подготовка ZIP
 
-`../widget/script.js` содержит placeholder `__RKRS_ACTIVITY_ASSETS_URL__`: адрес сервера ещё не выбран. После размещения `dist-remote/` на своём HTTPS-хосте:
+Общий [builder](../../packages/widget-build/README.md) по умолчанию встраивает runtime
+в `script.js`; CDN не требуется:
 
 ```sh
-npm run package:widget -- --assets-url https://YOUR-HOST/widget-assets
+npm run release
+npm run package:widget
 ```
 
-Команда создаёт `dist-package/rkrs-activity-prototype.zip`, подставляя адрес только в копию загрузчика. В ZIP входят `script.js`, manifest, локализация и изображения, **без UMD**. Это по-прежнему демонстрационная версия.
+Результат — `dist-package/rkrs-activity-prototype.zip`: AMD entrypoint со встроенным UMD,
+manifest, локализация и изображения. Байты ZIP воспроизводимы; hash и версии проверяются.
+Код обновляется и откатывается вместе с ZIP. Это инженерный пакет демонстрационного прототипа,
+не подтверждение модерации или готовности к настоящему аккаунту.
 
-Сервер должен разрешать CORS для `release.json`; для него нужен `Cache-Control: no-cache`, для файлов с хешем — долгий immutable-кеш. Публикация: сначала новый бандл, затем атомарное переключение `release.json`. Старые бандлы сохраняются; откат — возврат предыдущего `release.json`. Изменения загрузчика или manifest требуют обновления ZIP. Автоматического деплоя нет.
+Удалённый диагностический режим включается явно:
+
+```sh
+npm run package:widget -- --runtime-mode remote --allow-unreviewed-remote --assets-url https://YOUR-HOST/widget-assets
+```
+
+Он также фиксирует конкретный bundle и manifest: замена удалённого `release.json` не меняет
+уже собранный ZIP. Сохранять старые bundle для отката; изменение кода требует переупаковки.
+[Политика remote-code и ограничения](../../docs/pv02-moderation.md). Автодеплоя нет.

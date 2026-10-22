@@ -20,3 +20,14 @@
 сохраняются как исходные материалы. ZIP и каталоги сборки генерируются заново
 и не хранятся в Git. Копии изображений внутри `widget/images/` нужны каждому
 самостоятельному пакету amoCRM.
+
+## Общая основа ПВ-02
+
+[Результат и границы приёмки](docs/pv02-widget-foundation.md): общие пакеты
+[loader](packages/widget-loader/README.md), [SDK runtime](packages/widget-runtime/README.md)
+и [build](packages/widget-build/README.md). Инженерная упаковка теперь по умолчанию
+включает runtime в ZIP; remote-режим требует явного диагностического флага.
+
+Проверка общих пакетов: `node --test packages/*/tests/*.test.mjs`.
+Локальный стенд маршрутизации: `python3 -m http.server 5182 --bind 127.0.0.1`,
+затем `http://127.0.0.1:5182/examples/owner-routing/`.
