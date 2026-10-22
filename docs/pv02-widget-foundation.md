@@ -6,7 +6,7 @@
 
 | Подзадача | Результат | Граница приёмки |
 | --- | --- | --- |
-| [ПВ-02.01](https://app.clickup.com/t/1amkccgbvj8) | [Owner loader](../packages/widget-loader/README.md): SDK transport, allowlist модулей, TTL/epoch, disposal | Готов к review на фикстурах; route API реализуется в ПВ-03 |
+| [ПВ-02.01](https://app.clickup.com/t/1amkccgbvj8) | [Owner loader](../packages/widget-loader/README.md): SDK transport, allowlist, фоновое продление TTL, readonly и disposal | Готов к review на фикстурах; route API реализуется в ПВ-03 |
 | [ПВ-02.02](https://app.clickup.com/t/1amkccgbvj9) | [Общая сборка](../packages/widget-build/README.md), SHA-256, детерминированный ZIP; Distribution/Activity используют её | Локальная инженерная сборка; не подтверждение публичного релиза |
 | [ПВ-02.03](https://app.clickup.com/t/1amkccgbvja) | [SDK runtime](../packages/widget-runtime/README.md), lifecycle, identity, authorizedAjax, fixture simulator; Distribution подключён | Готов к review; бизнес-логика продукта сохранена |
 | [ПВ-02.04](https://app.clickup.com/t/1amkccgbvjc) | Проверены callback-контракты, подготовлены воспроизводимые legacy snapshots | Блокируют неподтверждённый production baseline, отсутствие destroy и живая проверка demorkrs |

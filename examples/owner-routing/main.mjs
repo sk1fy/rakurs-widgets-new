@@ -14,12 +14,14 @@ const fixture = createSDKFixture({handle: ({body}) => {
 const context = () => ({account_id:$('account').value,product_code:'demo',function_code:'whole',identity:`${$('account').value}:42:list`});
 const modules = Object.fromEntries(['ssd','core'].map(owner => [owner==='ssd'?'legacy-v1':'core-v1',{
   owner,product_code:'demo',function_code:'whole',cleanupVerified:true,
-  async load({route}) {
-    let mounted=false;
-    return {invoke(name){
+  async load({route,canInvoke}) {
+    let mounted=false, status='fresh';
+    const paint=()=>{if(mounted)$('panel').textContent=`${owner.toUpperCase()} · аккаунт ${route.account_id} · epoch ${route.routing_epoch} · ${status==='fresh'?'маршрут актуален':'только чтение: '+status}. Фикстура UI.`;};
+    return {setRouteState(state){status=state.status;paint();},invoke(name){
+      if(status!=='fresh'||!canInvoke())return false;
       if (mounted) { log(`${owner}: повторный ${name}, UI уже открыт`); return true; }
       mounted=true;
-      $('panel').textContent=`${owner.toUpperCase()} · аккаунт ${route.account_id} · epoch ${route.routing_epoch}. Фикстура UI, срок маршрута 15 секунд.`;
+      paint();
       log(`${owner}: mount`);return true;
     },destroy(){mounted=false;$('panel').textContent='Виджет закрыт';log(`${owner}: destroy`);}};
   },
@@ -27,6 +29,7 @@ const modules = Object.fromEntries(['ssd','core'].map(owner => [owner==='ssd'?'l
 function getLoader(){
   return loader ||= createSDKOwnerLoader({widget:{$authorizedAjax:fixture.$authorizedAjax},
     apiUrl:'/fixture-api',routePath:'/route',modules,
+    onStateChange:({status})=>{log(`Маршрут: ${status}`);if(status==='reload-required')$('panel').textContent='Владелец или установка изменились. Требуется перезагрузка. На стенде: закройте и откройте виджет.';},
     onUnavailable:()=>{$('panel').textContent='Маршрут недоступен. Откройте виджет снова.';log('Маршрут недоступен; автоматического перехода на SSD нет');}});
 }
 $('render').onclick=()=>Promise.all(Array.from({length:3},()=>getLoader().dispatch('render',[],context()))).catch(()=>{});
