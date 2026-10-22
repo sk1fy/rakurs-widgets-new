@@ -41,12 +41,20 @@ export function createAuthorizedClient(widget, baseUrl, options = {}) {
   const requests = new Set();
   let disposed = false;
 
-  function request(path, { body, write, method = body === undefined ? "GET" : "POST" } = {}) {
+  function request(path, { body, write, headers, method = body === undefined ? "GET" : "POST" } = {}) {
     if (disposed) return Promise.reject(new APIError(0, "Экран закрыт"));
     if (!safePath(path))
       return Promise.reject(new TypeError("Expected an API-relative path"));
     if (!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method))
       return Promise.reject(new TypeError("Unsupported HTTP method"));
+    // Callers may supply only routing expectations, never SDK authorization or tenant identity.
+    const safeHeaders = {};
+    for (const [name, value] of Object.entries(headers || {})) {
+      if (!["X-Routing-Epoch", "X-Installation-Generation"].includes(name) ||
+          !/^[1-9]\d*$/.test(String(value)) || !Number.isSafeInteger(Number(value)))
+        return Promise.reject(new TypeError("Unsupported routing expectation header"));
+      safeHeaders[name] = String(value);
+    }
     // POST is conservatively a mutation; read-only POST must opt out explicitly.
     const mutation = (write !== false && method !== "GET") || write === true;
     if (typeof widget?.$authorizedAjax !== "function")
@@ -81,6 +89,7 @@ export function createAuthorizedClient(widget, baseUrl, options = {}) {
         xhr = widget.$authorizedAjax({
           url: base + path,
           type: method,
+          headers: Object.keys(safeHeaders).length ? safeHeaders : undefined,
           dataType: "json",
           contentType: "application/json",
           data,
