@@ -49,7 +49,7 @@ const activeTask = computed(
 );
 const canStart = computed(
   () =>
-    !state.value.active &&
+    !state.value.busy && state.value.enabled !== false && !state.value.active &&
     (state.value.scenario === "tasks"
       ? selectedTask.value && !selectedTask.value.completed
       : state.value.scenario === "other"
@@ -162,7 +162,7 @@ onBeforeUnmount(() => {
       <div class="rkrs-settings-heading">
         <span class="rkrs-brand">Rakurs</span>
         <h2>Настройки панели активности</h2>
-        <span class="rkrs-demo">ДЕМО</span>
+        <span v-if="!state.live" class="rkrs-demo">ДЕМО</span>
       </div>
       <WidgetSettings :controller="controller" :snapshot="state" />
     </template>
@@ -170,7 +170,7 @@ onBeforeUnmount(() => {
       <div class="rkrs-toolbar">
         <div class="rkrs-identity">
           <span class="rkrs-brand">R<span class="rkrs-brand-dot">.</span></span
-          ><span class="rkrs-demo">ДЕМО</span>
+          ><span v-if="!state.live" class="rkrs-demo">ДЕМО</span>
         </div>
         <button
           type="button"
@@ -276,7 +276,7 @@ onBeforeUnmount(() => {
             v-if="state.active"
             type="button"
             class="rkrs-button rkrs-stop"
-            @click="controller.stop()"
+            :disabled="state.busy" @click="controller.stop()"
           >
             <WidgetIcon name="stop" :size="14" />Стоп
           </button>
@@ -294,8 +294,8 @@ onBeforeUnmount(() => {
             type="button"
             class="rkrs-button rkrs-complete"
             :disabled="
-              !activeTask &&
-              (Boolean(state.active) || !selectedTask || selectedTask.completed)
+              state.busy || (!activeTask &&
+              (Boolean(state.active) || !selectedTask || selectedTask.completed))
             "
             @click="complete"
           >
@@ -303,6 +303,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <div class="rkrs-utilities">
+          <button v-if="state.live" type="button" class="rkrs-button" :disabled="state.busy || !state.enabled" @click="controller.pause()">Пауза</button>
           <button
             type="button"
             class="rkrs-icon-button"

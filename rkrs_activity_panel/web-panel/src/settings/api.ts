@@ -7,11 +7,13 @@
 //  - UnavailableSettingsBackend: production-сборка без браузерной
 //    авторизации администратора (C7) — управление закрыто.
 
+import { consumeBrowserSession } from "./browserSession";
+import { panelOptionsFromAPI, panelOptionsToAPI, type RawPanelOptions } from "../api/panelOptions";
 import { FIXTURE_EMPLOYEES, FIXTURE_OPERATORS, FIXTURE_TZ } from "../api/fixtures/generator";
 import { ApiError } from "../api/errors";
 import { requestJson } from "../api/http";
 import type { ContractId } from "../api/source";
-import type { Employee } from "../domain/types";
+import type { Employee, PipelineCatalogItem } from "../domain/types";
 import {
   defaultExtensions,
   defaultTaskPanel,
@@ -40,6 +42,7 @@ export interface SettingsBackend {
   readonly capabilities: SettingsCapabilities;
   listPanels(): Promise<PanelSettings[]>;
   listEmployees(): Promise<Employee[]>;
+  listPipelines?(): Promise<PipelineCatalogItem[]>;
   createPanel(core: PanelCore, ext: PanelExtensions | null): Promise<PanelSettings & { shareUrl: string | null }>;
   updatePanel(id: string, revision: number, core: Partial<PanelCore>, ext: PanelExtensions | null): Promise<PanelSettings>;
   rotateShareLink(id: string): Promise<{ shareUrl: string | null; panel: PanelSettings }>;
@@ -183,6 +186,7 @@ export class FixtureSettingsBackend implements SettingsBackend {
 // ---------- amocrm-pro management через dev-proxy ----------
 
 interface RawManaged {
+  options?: RawPanelOptions;
   id: string;
   name: string;
   employee_ids: number[];
@@ -205,7 +209,7 @@ const fromManaged = (p: RawManaged): PanelSettings => ({
   revision: p.revision,
   updatedAt: p.updated_at,
   shareUrlIssued: p.share_url_issued,
-  extensions: null,
+  extensions: panelOptionsFromAPI(p.options),
 });
 
 const C5 = "amocrm-pro хранит только название, сотрудников, окно и признак включения; воронки, операторы, пороги и Telegram не поддерживаются";
@@ -214,16 +218,18 @@ export class ManagementProxyBackend implements SettingsBackend {
   readonly kind = "amocrm-pro" as const;
   readonly capabilities: SettingsCapabilities = {
     managePanels: yes,
-    extensions: no("C5", C5),
+    extensions: yes,
     telegram: no("C5", "Telegram-уведомления не реализованы в amocrm-pro"),
-    taskPanel: no("C6", "Глобальные настройки панели задач не реализованы в amocrm-pro"),
+    taskPanel: yes,
   };
-  private readonly base = "/dev-management/api/v1/activity";
+  private taskRevision = 0;
+  private taskSaveQueue: Promise<unknown> = Promise.resolve();
+  constructor(private readonly base = "/dev-management/api/v1/activity", private readonly bearer?: string) {}
 
   private call<T>(path: string, method = "GET", body?: unknown): Promise<T> {
     const headers: Record<string, string> = {};
     if (method === "POST") headers["Idempotency-Key"] = crypto.randomUUID();
-    return requestJson<T>(`${this.base}${path}`, { method, body, headers });
+    return requestJson<T>(`${this.base}${path}`, { method, body, headers, bearer: this.bearer });
   }
 
   async listPanels() {
@@ -236,13 +242,19 @@ export class ManagementProxyBackend implements SettingsBackend {
     return dir.users.map((u) => ({ id: u.id, name: u.name, groupId: String(u.group_id), groupName: u.group_name || "Без отдела" }));
   }
 
-  async createPanel(core: PanelCore) {
-    const p = await this.call<RawManaged>("/panels", "POST", { name: core.name.trim(), employee_ids: core.employeeIds, display_window: core.displayWindow, enabled: core.enabled });
+  async listPipelines(): Promise<PipelineCatalogItem[]> {
+    const dir = await this.call<{ pipelines?: { id: number; name: string; statuses: { id: number; name: string }[] }[] }>("/employees");
+    return (dir.pipelines ?? []).map((p) => ({ id: String(p.id), name: p.name, statuses: (p.statuses ?? []).map((s) => ({ id: String(s.id), name: s.name })) }));
+  }
+
+  async createPanel(core: PanelCore, ext: PanelExtensions | null) {
+    const p = await this.call<RawManaged>("/panels", "POST", { name: core.name.trim(), employee_ids: core.employeeIds, display_window: core.displayWindow, enabled: core.enabled, ...(ext ? { options: panelOptionsToAPI(ext) } : {}) });
     return { ...fromManaged(p), shareUrl: p.share_url ?? null };
   }
 
-  async updatePanel(id: string, revision: number, core: Partial<PanelCore>) {
+  async updatePanel(id: string, revision: number, core: Partial<PanelCore>, ext: PanelExtensions | null) {
     const body: Record<string, unknown> = { revision };
+    if (ext) body.options = panelOptionsToAPI(ext);
     if (core.name !== undefined) body.name = core.name.trim();
     if (core.employeeIds !== undefined) body.employee_ids = core.employeeIds;
     if (core.displayWindow !== undefined) body.display_window = core.displayWindow;
@@ -255,12 +267,21 @@ export class ManagementProxyBackend implements SettingsBackend {
     return { shareUrl: p.share_url ?? null, panel: fromManaged(p) };
   }
 
-  getTaskPanel(): Promise<TaskPanelSettings> {
-    return Promise.reject(new ApiError({ code: "unavailable", message: "C6" }));
+  async getTaskPanel(): Promise<TaskPanelSettings> {
+    const raw = await this.call<RawTaskPanel>("/task-panel");
+    this.taskRevision = raw.revision;
+    return taskPanelFromAPI(raw);
   }
 
-  saveTaskPanel(): Promise<TaskPanelSettings> {
-    return Promise.reject(new ApiError({ code: "unavailable", message: "C6" }));
+  saveTaskPanel(value: TaskPanelSettings): Promise<TaskPanelSettings> {
+    const save = async () => {
+      const raw = await this.call<RawTaskPanel>("/task-panel", "PATCH", { enabled: value.enabled, employee_ids: value.enabledEmployees, consider_future_tasks: value.considerFutureTasks, include_related_deals: value.includeRelatedDeals, priority_keys: value.priorities.filter((p) => p.enabled).map((p) => p.key), revision: this.taskRevision });
+      this.taskRevision = raw.revision;
+      return taskPanelFromAPI(raw);
+    };
+    const pending = this.taskSaveQueue.then(save, save);
+    this.taskSaveQueue = pending;
+    return pending;
   }
 
   setTelegramToken(): Promise<{ botName: string }> {
@@ -297,8 +318,15 @@ export class UnavailableSettingsBackend implements SettingsBackend {
 }
 
 export function createSettingsBackend(mode: "live" | "hybrid" | "fixtures" = __DATA_MODE__): SettingsBackend {
+  const session = consumeBrowserSession();
   if (mode === "fixtures") return new FixtureSettingsBackend();
+  if (session) return new ManagementProxyBackend(`${import.meta.env.VITE_ACTIVITY_API_BASE ?? ""}/api/v1/activity`, session);
   if (__DEV_MANAGEMENT__) return new ManagementProxyBackend();
   if (mode === "hybrid") return new FixtureSettingsBackend();
   return new UnavailableSettingsBackend();
+}
+
+interface RawTaskPanel { enabled: boolean; employee_ids: number[] | null; consider_future_tasks: boolean; include_related_deals: boolean; priority_keys: string[] | null; revision: number }
+function taskPanelFromAPI(raw: RawTaskPanel): TaskPanelSettings {
+  return { ...defaultTaskPanel(), revision: raw.revision, enabled: raw.enabled, enabledEmployees: raw.employee_ids ?? [], considerFutureTasks: raw.consider_future_tasks, includeRelatedDeals: raw.include_related_deals, priorities: defaultTaskPanel().priorities.map((p) => ({ ...p, enabled: (raw.priority_keys ?? []).includes(p.key) })) };
 }

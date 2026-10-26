@@ -2,7 +2,7 @@
 // Событие без признаков воронки сохраняется; с признаками — если хотя бы
 // одна воронка входит в выбранные. Пустой выбор — без фильтра.
 
-import type { CrmEvent } from "../types";
+import type { CrmEvent, PipelineCatalogItem } from "../types";
 
 const PIPELINE_ID_KEYS = ["pipeline_id", "pipelineId", "lead_pipeline_id", "entity_pipeline_id"] as const;
 
@@ -48,4 +48,25 @@ export function filterByPipelines(events: CrmEvent[], pipelines: (string | numbe
   const selected = new Set(pipelines.map(String).filter(Boolean));
   if (!selected.size) return events;
   return events.filter((e) => !e.pipelineIds.length || e.pipelineIds.some((id) => selected.has(id)));
+}
+
+/** Этапы «Успешно реализовано» и «Закрыто и не реализовано» — одинаковые во всех воронках amoCRM. */
+const CLOSED_STATUS_IDS = new Set(["142", "143"]);
+
+/**
+ * Открытые этапы выбранных воронок для ссылки filter[pipe] (DashboardHeader.vue):
+ * без «Неразобранного», закрытых и отключённых этапов. Воронка без открытых этапов не попадает.
+ */
+export function openPipelineStatuses(catalog: PipelineCatalogItem[], pipelines: (string | number)[]): { pipelineId: string; statusIds: string[] }[] {
+  const selected = new Set(pipelines.map(String).filter(Boolean));
+  if (!selected.size) return [];
+  return catalog
+    .filter((p) => selected.has(p.id))
+    .map((p) => ({
+      pipelineId: p.id,
+      statusIds: p.statuses
+        .filter((s) => !s.disabled && s.name.trim().toLowerCase() !== "неразобранное" && !CLOSED_STATUS_IDS.has(s.id))
+        .map((s) => s.id),
+    }))
+    .filter((p) => p.statusIds.length > 0);
 }

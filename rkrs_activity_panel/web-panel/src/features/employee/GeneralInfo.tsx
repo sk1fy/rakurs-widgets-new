@@ -1,10 +1,10 @@
 import type { Sourced } from "../../api/source";
 import { isProfileActivityEvent } from "../../domain/eventCatalog";
-import { profileRatingPercent, RATING_LEGEND, ratingColor } from "../../domain/formulas/profileRating";
+import { profileRatingPercent, RATING_LEGEND, ratingColor, ratingTheme } from "../../domain/formulas/profileRating";
 import { profileSessionMetrics } from "../../domain/formulas/sessions";
 import { formatDurationShort, hhmm } from "../../domain/time";
 import type { CrmEvent, EmployeeSessions } from "../../domain/types";
-import { NotConnected } from "../../ui/primitives";
+import { HelpTip, NotConnected } from "../../ui/primitives";
 import { MetricTile } from "./parts";
 
 interface DaySide {
@@ -39,8 +39,19 @@ export function GeneralInfo({ today, yesterday, timeZone, startMinutes, endMinut
         <h2>Общая информация</h2>
       </div>
       <div className="grid-m">
-        <div className="mt" style={{ gridColumn: "span 2" }}>
-          <div className="k">Рейтинг активности</div>
+        <div className="mt rating-tile" style={{ gridColumn: "span 2", background: r === null ? undefined : ratingTheme(r).background, borderColor: r === null ? undefined : ratingTheme(r).accent }}>
+          <div className="k">
+            Рейтинг активности{" "}
+            <HelpTip label="Расшифровка рейтинга активности" align="left">
+              <b>Рейтинг активности в amo</b>
+              {RATING_LEGEND.map((l) => (
+                <span key={l.label} className="lg">
+                  <i style={{ background: l.color, width: 8, height: 8, borderRadius: 4 }} />
+                  {l.label} — {l.description}
+                </span>
+              ))}
+            </HelpTip>
+          </div>
           <div className="v" style={{ color: r === null ? undefined : ratingColor(r) }}>{r === null ? "—" : fmtPct(r)}</div>
           <div className="s">вчера: {ry === null ? "—" : fmtPct(ry)}</div>
           <div className="chips" style={{ marginTop: 8 }}>

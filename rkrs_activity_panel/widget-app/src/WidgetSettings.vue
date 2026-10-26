@@ -4,7 +4,7 @@ defineProps({ controller: Object, snapshot: Object });
 <template>
   <div class="rkrs-settings-content">
     <p class="rkrs-help">
-      Настройки этой демонстрации сохраняются в текущем браузере.
+      {{ snapshot.live ? "Личный вид панели" : "Настройки этой демонстрации сохраняются в текущем браузере." }}
     </p>
     <label class="rkrs-setting-row">
       <span
@@ -17,7 +17,7 @@ defineProps({ controller: Object, snapshot: Object });
         @change="controller.updateSettings({ compact: $event.target.checked })"
       />
     </label>
-    <div class="rkrs-setting-info">
+    <div v-if="!snapshot.live" class="rkrs-setting-info">
       <span class="rkrs-status-dot"></span
       ><span
         >Демонстрационный режим<small
@@ -25,7 +25,8 @@ defineProps({ controller: Object, snapshot: Object });
         ></span
       >
     </div>
-    <button class="rkrs-reset" type="button" @click="controller.reset()">
+    <template v-if="snapshot.live"><button type="button" class="rkrs-reset" :disabled="snapshot.busy" @click="controller.refresh()">Обновить / повторить запрос</button><button type="button" class="rkrs-reset" :disabled="snapshot.busy" @click="controller.openManagement()">Общие настройки аккаунта</button></template>
+    <button v-else class="rkrs-reset" type="button" @click="controller.reset()">
       Сбросить таймер, историю и демозадачи
     </button>
   </div>

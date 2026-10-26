@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ApiError } from "../../api/errors";
 import { useResource } from "../../app/hooks";
 import type { SettingsBackend } from "../../settings/api";
+import type { Employee } from "../../domain/types";
 import type { PanelSettings } from "../../settings/models";
 import { Icon } from "../../ui/Icon";
-import { EmptyState, ErrorState, Modal, NotConnected, Spinner } from "../../ui/primitives";
+import { Avatar, EmptyState, ErrorState, Modal, NotConnected, Spinner } from "../../ui/primitives";
 import { formatUpdatedAt } from "./draft";
 import { PanelEditorModal } from "./PanelEditorModal";
 
@@ -14,6 +15,28 @@ type EditorState = { mode: "create" } | { mode: "edit"; panel: PanelSettings } |
 interface IssuedLink {
   panelName: string;
   url: string | null;
+}
+
+/** Поиск по панелям включается с трёх символов (PanelsSection.vue). */
+const SEARCH_MIN = 3;
+const STACK_SIZE = 3;
+
+/** Первые сотрудники панели аватарами и «+N»; по клику — окно со всеми (PanelTable.vue). */
+function EmployeeStack({ ids, byId, onShowAll }: { ids: number[]; byId: Map<number, Employee>; onShowAll: () => void }) {
+  if (!ids.length) return <span className="dim">—</span>;
+  const name = (id: number) => byId.get(id)?.name ?? `#${id}`;
+  return (
+    <div className="ava-stack">
+      {ids.slice(0, STACK_SIZE).map((id) => (
+        <span key={id} title={name(id)}>
+          <Avatar id={id} name={name(id)} url={byId.get(id)?.avatarUrl} />
+        </span>
+      ))}
+      <button type="button" className="ava-more" onClick={onShowAll} title="Все сотрудники панели">
+        {ids.length > STACK_SIZE ? `+${ids.length - STACK_SIZE}` : ids.length}
+      </button>
+    </div>
+  );
 }
 
 /** «Панели»: общие настройки панелей аккаунта (management API). */
@@ -33,6 +56,11 @@ function PanelsManager({ backend, notify }: { backend: SettingsBackend; notify: 
   const [link, setLink] = useState<IssuedLink | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<unknown>(null);
+  const [query, setQuery] = useState("");
+  const [membersOf, setMembersOf] = useState<PanelSettings | null>(null);
+  const byId = useMemo(() => new Map((employees.data ?? []).map((e) => [e.id, e])), [employees.data]);
+  const q = query.trim().toLowerCase();
+  const shown = panels.data && q.length >= SEARCH_MIN ? panels.data.filter((p) => p.name.toLowerCase().includes(q)) : panels.data;
 
   const handleActionError = (e: unknown) => {
     if (e instanceof ApiError && e.code === "conflict") {
@@ -95,14 +123,27 @@ function PanelsManager({ backend, notify }: { backend: SettingsBackend; notify: 
 
         {panels.status === "error" && <ErrorState error={panels.error} onRetry={panels.reload} />}
         {(panels.status === "loading" || panels.status === "idle") && <Spinner label="Загрузка панелей…" />}
-        {panels.data && panels.data.length === 0 && <EmptyState title="Панелей пока нет" hint="Создайте первую панель и отправьте ссылку руководителям." />}
+        {panels.data && panels.data.length === 0 && <EmptyState icon="user" title="Пока нет созданных панелей" hint="Нажмите «Создать панель», чтобы создать первую, и отправьте ссылку руководителям." />}
         {panels.data && panels.data.length > 0 && (
+          <div className="srch inline-srch">
+            <Icon name="search" />
+            <input type="search" placeholder="Поиск по панелям" aria-label="Поиск по панелям" value={query} onChange={(e) => setQuery(e.target.value)} />
+            {query && (
+              <button type="button" className="srch-x" aria-label="Очистить поиск" onClick={() => setQuery("")}>
+                <Icon name="close" />
+              </button>
+            )}
+          </div>
+        )}
+        {panels.data && panels.data.length > 0 && q.length > 0 && q.length < SEARCH_MIN && <div className="dim small">Введите не меньше {SEARCH_MIN} символов</div>}
+        {shown && panels.data && panels.data.length > 0 && shown.length === 0 && <div className="dim small">Панели по запросу «{query.trim()}» не найдены</div>}
+        {shown && shown.length > 0 && (
           <div className="tbl-wrap">
             <table className="tbl">
               <thead>
                 <tr>
                   <th>Название</th>
-                  <th>Сотрудников</th>
+                  <th>Сотрудники</th>
                   <th>Окно</th>
                   <th>Часовой пояс</th>
                   <th>Статус</th>
@@ -111,13 +152,13 @@ function PanelsManager({ backend, notify }: { backend: SettingsBackend; notify: 
                 </tr>
               </thead>
               <tbody>
-                {panels.data.map((p) => (
+                {shown.map((p) => (
                   <tr key={p.id} className={p.enabled ? "" : "dim"}>
                     <td>
                       <b>{p.name}</b>
                       {!p.shareUrlIssued && <div className="dim small">ссылка не выпущена</div>}
                     </td>
-                    <td className="num">{p.employeeIds.length}</td>
+                    <td>{employeesReady ? <EmployeeStack ids={p.employeeIds} byId={byId} onShowAll={() => setMembersOf(p)} /> : <span className="num">{p.employeeIds.length}</span>}</td>
                     <td className="num">
                       {p.displayWindow.from}–{p.displayWindow.to}
                     </td>
@@ -196,12 +237,35 @@ function PanelsManager({ backend, notify }: { backend: SettingsBackend; notify: 
       )}
 
       {link && <ShareLinkModal link={link} onClose={() => setLink(null)} />}
+
+      {membersOf && (
+        <Modal title={`Сотрудники панели «${membersOf.name}» (${membersOf.employeeIds.length})`} onClose={() => setMembersOf(null)}>
+          <div className="ava-list">
+            {membersOf.employeeIds.map((id) => (
+              <div key={id} className="ava-li">
+                <Avatar id={id} name={byId.get(id)?.name ?? `#${id}`} url={byId.get(id)?.avatarUrl} />
+                <span>{byId.get(id)?.name ?? `Сотрудник #${id}`}</span>
+                {byId.get(id)?.groupName && <span className="dim small">{byId.get(id)?.groupName}</span>}
+              </div>
+            ))}
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
 
+/** Подсказка для браузеров, где clipboard API часто недоступен (PanelTable.vue). */
+function browserCopyHint(): { browser: string; keys: string } | null {
+  const ua = navigator.userAgent;
+  if (/firefox/i.test(ua)) return { browser: "Firefox", keys: "Ctrl+C" };
+  if (/iphone|ipad|ipod/i.test(ua) || (/safari/i.test(ua) && !/chrome|chromium|crios|android/i.test(ua))) return { browser: "Safari", keys: "⌘+C" };
+  return null;
+}
+
 function ShareLinkModal({ link, onClose }: { link: IssuedLink; onClose: () => void }) {
   const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
+  const hint = browserCopyHint();
   const copy = async () => {
     if (!link.url) return;
     try {
@@ -227,12 +291,16 @@ function ShareLinkModal({ link, onClose }: { link: IssuedLink; onClose: () => vo
           <>
             <div className="row-f" style={{ flexWrap: "nowrap" }}>
               <input className="inp" readOnly value={link.url} aria-label="Ссылка на панель" onFocus={(e) => e.currentTarget.select()} />
-              <button type="button" className="tool-btn" onClick={() => void copy()}>
-                <Icon name="copy" />
-                Копировать
+              <button type="button" className={`tool-btn${copied === "ok" ? " copied" : ""}`} onClick={() => void copy()}>
+                <Icon name={copied === "ok" ? "ok" : "copy"} />
+                {copied === "ok" ? "Скопировано!" : "Копировать"}
               </button>
             </div>
-            {copied === "ok" && <div className="dim small">Скопировано в буфер обмена</div>}
+            {hint && (
+              <div className="copy-hint dim small">
+                <b>Подсказка для {hint.browser}:</b> нажмите на ссылку выше, чтобы выделить её, затем нажмите <code>{hint.keys}</code>.
+              </div>
+            )}
             {copied === "fail" && <div className="small" style={{ color: "#ff8a8a" }}>Не удалось скопировать — выделите ссылку и скопируйте вручную</div>}
             <div className="dim small">Ссылка показывается только сейчас и нигде не сохраняется. Если потеряете — выпустите новую.</div>
           </>

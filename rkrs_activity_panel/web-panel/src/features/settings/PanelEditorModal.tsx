@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { useResource } from "../../app/hooks";
 import { ApiError } from "../../api/errors";
 import type { Employee } from "../../domain/types";
 import type { SettingsBackend } from "../../settings/api";
@@ -31,6 +32,7 @@ export interface PanelEditorModalProps {
 /** Создание/редактирование панели. Ядро — в core, расширения (C5) — только если доступны. */
 export function PanelEditorModal({ backend, panel, employees, onClose, onSaved, onConflictReload }: PanelEditorModalProps) {
   const { extensions, telegram } = backend.capabilities;
+  const pipelines = useResource(`settings:pipelines:${backend.kind}`, () => backend.listPipelines?.() ?? Promise.resolve([]));
   const initial = useMemo(() => draftFromPanel(panel), [panel]);
   const [draft, setDraft] = useState<PanelDraft>(initial);
   const [tab, setTab] = useState<EditorTab>("general");
@@ -79,7 +81,7 @@ export function PanelEditorModal({ backend, panel, employees, onClose, onSaved, 
     }
   };
 
-  const common = { draft, onChange: setDraft, employees, errors: shownErrors, extensions, disabled: saving };
+  const common = { pipelineCatalog: pipelines.data ?? [], draft, onChange: setDraft, employees, errors: shownErrors, extensions, disabled: saving };
 
   return (
     <Modal
@@ -99,6 +101,7 @@ export function PanelEditorModal({ backend, panel, employees, onClose, onSaved, 
       }
     >
       <div className="form">
+        {pipelines.status === "error" && <ErrorState error={pipelines.error} onRetry={pipelines.reload} compact />}
         <Tabs
           value={tab}
           onChange={setTab}

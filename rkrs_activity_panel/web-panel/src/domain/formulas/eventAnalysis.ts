@@ -198,3 +198,73 @@ export function correctnessColor(percent: number): string {
   if (percent >= 50) return "#f4a63c";
   return "#ff5a5f";
 }
+
+/** Порядок категорий в столбике снизу вверх (STACK_CATEGORY_ORDER). */
+export const STACK_ORDER: EventCategory[] = ["negative", "neutral", "context", "positive"];
+
+/** Раскладка столбика по категориям: доли от числа событий корзины. */
+export function binStack(events: CrmEvent[]): { category: EventCategory; count: number; types: Set<string> }[] {
+  return STACK_ORDER.map((category) => {
+    const inCategory = events.filter((e) => eventCategory(e.type) === category);
+    return { category, count: inCategory.length, types: new Set(inCategory.map((e) => matchEventType(e.type) ?? e.type)) };
+  }).filter((s) => s.count > 0);
+}
+
+/** Типы событий корзины для окна «События за HH:mm - HH:mm»: по убыванию количества. */
+export function binTypes(events: CrmEvent[]): { key: string; label: string; count: number; category: EventCategory }[] {
+  const map = new Map<string, { key: string; label: string; count: number; category: EventCategory }>();
+  for (const e of events) {
+    const key = matchEventType(e.type) ?? e.type;
+    const item = map.get(key);
+    if (item) item.count += 1;
+    else map.set(key, { key, label: EVENT_LABELS[key] ?? e.type, count: 1, category: eventCategory(e.type) });
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "ru"));
+}
+
+export type CallTab = "all" | "incoming" | "outgoing" | "missed";
+
+export const CALL_TABS: { value: CallTab; label: string }[] = [
+  { value: "all", label: "Все" },
+  { value: "incoming", label: "Входящие" },
+  { value: "outgoing", label: "Исходящие" },
+  { value: "missed", label: "Пропущенные" },
+];
+
+export function inCallTab(item: CallLogItem, tab: CallTab): boolean {
+  if (tab === "all") return true;
+  if (tab === "incoming") return item.direction === "incoming" || item.direction === "unknown";
+  return item.direction === tab;
+}
+
+export const CALL_LANE_COLORS: Record<CallDirection, string> = { incoming: "#4096ff", outgoing: "#52c41a", missed: "#ff4d4f", unknown: "#4096ff" };
+
+export interface CallLaneItem {
+  item: CallLogItem;
+  startMinutes: number;
+  endMinutes: number;
+  lane: number;
+}
+
+/**
+ * Дорожка звонков под графиком: отрезок от начала звонка на его длительность,
+ * обрезанный по окну и «сейчас»; пересекающиеся звонки — на следующей полосе.
+ */
+export function layoutCallLanes(calls: CallLogItem[], startMinutes: number, endMinutes: number, visibleEndMinutes: number): { items: CallLaneItem[]; lanes: number } {
+  const laneEnds: number[] = [];
+  const items: CallLaneItem[] = [];
+  const limit = Math.min(endMinutes, visibleEndMinutes);
+  for (const item of [...calls].sort((a, b) => a.event.createdAt - b.event.createdAt)) {
+    // Минута события плюс секунды внутри неё: короткие звонки не слипаются.
+    const exact = item.startMinutes + (item.event.createdAt % 60) / 60;
+    const start = Math.max(exact, startMinutes);
+    const end = Math.min(exact + item.displaySeconds / 60, limit);
+    if (start >= limit) continue;
+    const visibleEnd = Math.max(end, start);
+    let lane = laneEnds.findIndex((e) => e <= start);
+    if (lane < 0) lane = laneEnds.length;
+    laneEnds[lane] = visibleEnd + 0.5;
+    items.push({ item, startMinutes: start, endMinutes: visibleEnd, lane });
+  }
+  return { items, lanes: Math.max(1, laneEnds.length) };
+}

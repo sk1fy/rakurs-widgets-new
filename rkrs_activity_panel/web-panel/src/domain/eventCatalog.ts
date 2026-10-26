@@ -108,6 +108,22 @@ export function eventLabel(type: string): string {
   return key ? (EVENT_LABELS[key] ?? type) : type || "Событие";
 }
 
+/** Цвет точки типа события в окне отрезка (палитра TimelineActivityGroup.vue). */
+const EVENT_COLORS: Record<string, string> = {
+  incoming_call: "#006ed4", outgoing_call: "#096dd9",
+  task_added: "#52c41a", task_completed: "#73d13d", task_deleted: "#ff4d4f", task_result_added: "#389e0d",
+  incoming_chat_message: "#13c2c2", outgoing_chat_message: "#08979c", entity_direct_message: "#006d75",
+  lead_added: "#faad14", lead_status_changed: "#d48806", lead_linked: "#ad8b00",
+  contact_added: "#722ed1", contact_linked: "#531dab", company_added: "#eb2f96", company_linked: "#c41d7f",
+  common_note_added: "#d4b106", attachment_note_added: "#ad8b00",
+  incoming_sms: "#389e0d", outgoing_sms: "#5b8c00",
+  entity_tag_added: "#d46b08", custom_field_value_changed: "#874d00",
+};
+
+export function eventColor(type: string): string {
+  return EVENT_COLORS[type] ?? EVENT_COLORS[matchEventType(type) ?? ""] ?? "#d9d9d9";
+}
+
 /** isActivityTimelineEvent: whitelist профиля и анализа событий. */
 export function isProfileActivityEvent(event: Pick<CrmEvent, "type">): boolean {
   return matchEventType(event.type) !== null;

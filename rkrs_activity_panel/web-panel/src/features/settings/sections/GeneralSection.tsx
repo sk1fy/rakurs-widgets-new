@@ -5,7 +5,7 @@ import { parsePipelines, setDraftEmployees } from "../draft";
 import type { EditorSectionProps } from "./fields";
 
 /** «Общие»: ядро панели (amocrm-pro) + воронки (расширение C5). */
-export function GeneralSection({ draft, onChange, employees, errors, extensions, disabled }: EditorSectionProps) {
+export function GeneralSection({ draft, onChange, employees, errors, extensions, disabled, pipelineCatalog = [] }: EditorSectionProps) {
   const { core } = draft;
   const [pipelinesText, setPipelinesText] = useState(() => draft.ext.pipelines.join(", "));
   const setCore = (p: Partial<typeof core>) => onChange({ ...draft, core: { ...core, ...p } });
@@ -37,18 +37,18 @@ export function GeneralSection({ draft, onChange, employees, errors, extensions,
       <Switch checked={core.enabled} disabled={disabled} onChange={(v) => setCore({ enabled: v })} label="Панель включена (выключенная панель не открывается по ссылке)" />
 
       <div className="field">
-        <span>Воронки (ID через запятую; пусто — все)</span>
+        <span>Воронки (пусто — все)</span>
         {!extensions.available && <NotConnected compact contract={extensions.contract} reason={extensions.reason} />}
-        <input
+        {pipelineCatalog.length > 0 ? <div className="form">{pipelineCatalog.map((p) => <label key={p.id} className="chk"><input type="checkbox" checked={draft.ext.pipelines.includes(p.id)} disabled={disabled || !extensions.available} onChange={(e) => onChange({ ...draft, ext: { ...draft.ext, pipelines: e.target.checked ? [...draft.ext.pipelines, p.id] : draft.ext.pipelines.filter((id) => id !== p.id) } })} />{p.name}</label>)}</div> : <input
           className="inp"
-          placeholder="например: 1234567, 7654321"
+          placeholder="ID воронок через запятую"
           value={pipelinesText}
           disabled={disabled || !extensions.available}
           onChange={(e) => {
             setPipelinesText(e.target.value);
             onChange({ ...draft, ext: { ...draft.ext, pipelines: parsePipelines(e.target.value) } });
           }}
-        />
+        />}
         {draft.ext.pipelines.length > 0 && extensions.available && (
           <div className="chips">
             {draft.ext.pipelines.map((p) => (

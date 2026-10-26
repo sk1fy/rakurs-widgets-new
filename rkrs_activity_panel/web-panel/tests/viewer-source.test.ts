@@ -114,3 +114,44 @@ describe("viewer C1", () => {
     expect(mapEvent(event("task", { type: "task_completed", call_facts: facts(120) })).call).toBeNull();
   });
 });
+
+describe("viewer CRM origin", () => {
+  it.each(["https://alpha.amocrm.ru", "https://bravo.kommo.com"])('uses the account origin %s', async (origin) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ name: "Panel", timezone: "Europe/Moscow", display_window: { from: "09:00", to: "18:00" }, employees: [], crm_base_url: origin })));
+    expect((await new AmocrmProViewerSource("synthetic-key", "").loadPanel()).crmBaseUrl).toBe(origin);
+  });
+  it.each([undefined, "javascript:alert(1)", "https://alpha.amocrm.ru.attacker.test", "https://user:password@alpha.amocrm.ru", "https://alpha.amocrm.ru/untrusted", "http://alpha.amocrm.ru"])('does not create links from an invalid or absent origin', async (origin) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ name: "Panel", timezone: "Europe/Moscow", display_window: { from: "09:00", to: "18:00" }, employees: [], crm_base_url: origin })));
+    expect((await new AmocrmProViewerSource("synthetic-key", "").loadPanel()).crmBaseUrl).toBeNull();
+  });
+});
+
+describe("viewer product metadata and current problems", () => {
+  it("loads saved operators, pipelines and current counts without fixture fallback", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ name: "Panel", timezone: "Europe/Moscow", display_window: { from: "09:00", to: "18:00" }, employees: [], crm_base_url: "https://alpha.amocrm.ru", options: { pipeline_ids: [10], operators: [{ employee_id: 7, enabled: true, plan: 80, thresholds: { dialing_seconds: 10, conversation_seconds: 30, exceeding_seconds: 180 } }], departments: [] }, pipelines: [{ id: 10, name: "Sales", statuses: [{ id: 11, name: "Open" }] }] })).mockResolvedValueOnce(json({ snapshot_at: 1793000000, counts: [{ employee_id: 7, leads_no_tasks: 3, leads_overdue_tasks: 2, overdue_tasks: 4 }, { employee_id: 9, leads_no_tasks: 1, leads_overdue_tasks: 0, overdue_tasks: 0 }] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const source = new AmocrmProViewerSource("synthetic-key", "");
+    const panel = await source.loadPanel();
+    expect(panel.operators[0]?.plan).toBe(80);
+    expect(panel.pipelines).toEqual(["10"]);
+    const got = await source.loadProblemLists({ managers: [7], pipelines: ["10"] });
+    expect(got.kind).toBe("ok");
+    if (got.kind !== "ok") throw Error("unavailable");
+    expect(got.data.leadsNoTasks).toHaveLength(1);
+    expect(got.data.leadsNoTasks[0]?.count).toBe(3);
+    expect(got.data.leadsNoTasks[0]?.filterLink).toContain("alpha.amocrm.ru");
+    expect(got.data.meta.source).toBe("amocrm-pro");
+    expect(got.data.meta.snapshotAt).toBe(1793000000);
+  });
+  it("propagates a failed current snapshot rather than reporting zero counts", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code: "resource_exhausted", message: "snapshot limit" } }), { status: 429 })));
+    await expect(new AmocrmProViewerSource("synthetic-key", "").loadProblemLists({ managers: [7], pipelines: [] })).rejects.toMatchObject({ code: "resource_exhausted" });
+  });
+});
+
+it("loads actual session context separately from CRM events", async () => {
+ vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ snapshot_at: range.to, items: [{ kind: "activity", started_at: range.from + 100, stopped_at: range.from + 160, work_time_seconds: 60, context: { task_id: 0, task_name: "", task_type_id: 0, task_type_name: "", task_result: "", activity_name: "Imbox 123", activity_type: "imbox", entity_id: 31, entity_type: "leads", entity_name: "Synthetic deal", pipeline_id: 10, pipeline_name: "Sales", status_id: 11, status_name: "Open", status_color: "#00ff00" } }] })));
+ const got=await new AmocrmProViewerSource("synthetic-key","").loadSessions(7,range);
+ expect(got.kind).toBe("ok");if(got.kind!=="ok")throw Error("unavailable");
+ expect(got.data.meta.source).toBe("amocrm-pro");expect(got.data.items[0]).toMatchObject({activityType:"imbox",entityId:31,workTimeSeconds:60,taskId:null,startedAt:new Date((range.from+100)*1000).toISOString()});
+});

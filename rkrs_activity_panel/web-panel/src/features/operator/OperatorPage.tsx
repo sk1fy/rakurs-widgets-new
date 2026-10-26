@@ -3,13 +3,15 @@ import { AppHeader } from "../../app/AppHeader";
 import { usePanelScope } from "../../app/context";
 import { useNow, useResource } from "../../app/hooks";
 import { href } from "../../app/router";
-import { compareWithYesterday, conversionPercent, conversionTone, gaugeMax, remainingTimeLabel, speedColor, type Comparison } from "../../domain/formulas/operator";
-import { dayTitle, formatDurationShort, hhmm, todayKey } from "../../domain/time";
+import { compareWithYesterday, conversionPercent, conversionTone, gaugeMax, lastCallLabel, remainingTimeLabel, speedColor, type Comparison } from "../../domain/formulas/operator";
+import { dayTitle, formatDurationShort, formatDurationWithSeconds, todayKey } from "../../domain/time";
 import { Icon } from "../../ui/Icon";
-import { ErrorState, MetaBadges, NotConnected, Spinner, Switch } from "../../ui/primitives";
+import { ErrorState, HelpTip, MetaBadges, NotConnected, Spinner, Switch } from "../../ui/primitives";
 import { dayRange, previousDayRange, resolveWindow } from "../dashboard/model";
 import { SNAPSHOT_REFRESH_MS } from "../dashboard/useDashboardData";
 import { operatorSnapshot } from "./model";
+
+const TICK_ANGLES = [180, 120, 60, 0];
 
 function Gauge({ speed }: { speed: number }) {
   const max = gaugeMax(speed);
@@ -28,6 +30,11 @@ function Gauge({ speed }: { speed: number }) {
         </linearGradient>
       </defs>
       <path d="M 20 100 A 80 80 0 0 1 180 100" stroke="url(#gauge-g)" strokeWidth="16" fill="none" strokeLinecap="round" />
+      {TICK_ANGLES.map((deg) => {
+        const a = pt(deg, 70);
+        const b = pt(deg, 80);
+        return <line key={deg} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#fff" strokeWidth="1.5" />;
+      })}
       {labels.map((l, i) => {
         const p = pt(180 - (i * 180) / (labels.length - 1), 52);
         return (
@@ -42,16 +49,51 @@ function Gauge({ speed }: { speed: number }) {
   );
 }
 
-function Row({ label, today, cmp }: { label: string; today: number; cmp: Comparison | null | undefined }) {
+/** Счётчики окрашены цветом текущей скорости, стрелки — цветом тренда (как в GaugeComponent). */
+function Row({ label, today, cmp, color }: { label: string; today: number; cmp: Comparison | null | undefined; color: string }) {
   return (
     <div className="row">
-      <span className="dim">{label}</span>
+      <span style={{ color }}>{label}</span>
       <span>
-        <b className={cmp?.trend === "up" ? "up" : cmp?.trend === "down" ? "down" : ""}>{today}</b>
+        <b style={{ color }}>{today}</b>
         <span className="prev">/ {cmp ? cmp.yesterday : "—"}</span>
         {cmp?.trend === "up" && <span className="up"> ↑</span>}
         {cmp?.trend === "down" && <span className="down"> ↓</span>}
       </span>
+    </div>
+  );
+}
+
+type PaceBar = "actual" | "forecast" | "plan";
+
+/** «Темп выполнения плана»: факт и прогноз на одной шкале, отметка плана; наведение на легенду подсвечивает полосу. */
+function PlanPace({ plan, actual, forecast, showForecast }: { plan: number; actual: number; forecast: number; showForecast: boolean }) {
+  const [hl, setHl] = useState<PaceBar | null>(null);
+  const max = Math.max(plan, actual, showForecast ? forecast : 0, 100);
+  const pos = (v: number) => `${Math.min(100, (v / max) * 100)}%`;
+  const cls = (bar: PaceBar) => (hl === bar ? " hl" : "");
+  const legend = (bar: PaceBar, label: string, value: number) => (
+    <span className={`pace-lg ${bar}${cls(bar)}`} onMouseEnter={() => setHl(bar)} onMouseLeave={() => setHl(null)}>
+      <i />
+      {label}: <b className="tn">{value}</b>
+    </span>
+  );
+  return (
+    <div className={`pace${hl ? " has-hl" : ""}`}>
+      <div className="pace-t">Темп выполнения плана</div>
+      <div className="pace-row">
+        <div className="pace-bar">
+          {showForecast && <span className={`fc${cls("forecast")}`} style={{ width: pos(forecast) }} />}
+          <span className={`ac${cls("actual")}`} style={{ width: pos(actual) }} />
+          <span className={`pl${cls("plan")}`} style={{ left: pos(plan) }} />
+        </div>
+        <strong className="pace-pct tn">{plan > 0 ? Math.round((actual / plan) * 100) : 0}%</strong>
+      </div>
+      <div className="pace-legend">
+        {legend("actual", "Факт", actual)}
+        {showForecast && legend("forecast", "Прогноз", forecast)}
+        {legend("plan", "План", plan)}
+      </div>
     </div>
   );
 }
@@ -101,9 +143,9 @@ export function OperatorPage({ employeeId }: { employeeId: number }) {
     : null;
   const y = s?.yesterday ?? null;
   const cr = s ? conversionPercent(s.today.successful, s.today.calls) : 0;
-  const max = s ? Math.max(settings.plan, s.actual, s.showForecast ? s.forecast : 0, 100) : 100;
-  const bar = (v: number) => `${Math.min(100, (v / max) * 100)}%`;
-  const sinceLast = s?.today.lastCallUnix ? Math.floor((now - s.today.lastCallUnix) / 60) : null;
+  const lastCall = s?.today.lastCallUnix ? lastCallLabel(s.today.lastCallUnix, now, tz) : "нет данных";
+  const speed = s?.today.lastHourCalls ?? 0;
+  const color = speedColor(speed);
 
   return (
     <>
@@ -116,6 +158,7 @@ export function OperatorPage({ employeeId }: { employeeId: number }) {
           </h2>
           <div className="sp" />
           <Switch checked={unique} onChange={setUnique} label="Учитывать уникальные звонки" />
+          <HelpTip label="Об уникальных звонках">При включении учитываются только уникальные номера телефонов</HelpTip>
           {todayRes.data && <MetaBadges meta={todayRes.data.meta} timeZone={tz} />}
         </div>
         {todayRes.status === "error" && <ErrorState error={todayRes.error} onRetry={todayRes.reload} />}
@@ -124,32 +167,44 @@ export function OperatorPage({ employeeId }: { employeeId: number }) {
           <div className="op">
             <div className="card">
               <div className="gauge">
-                <Gauge speed={s.today.lastHourCalls} />
-                <div style={{ color: speedColor(s.today.lastHourCalls), fontWeight: 600 }}>Скорость работы: {s.today.lastHourCalls} зв./ч</div>
+                <Gauge speed={speed} />
+                <div className="gauge-sub" style={{ color }}>
+                  Скорость работы: <b>{speed}</b> зв./ч
+                  <HelpTip label="Подробнее о скорости" align="left">
+                    <span>Текущая скорость: {speed} зв./ч</span>
+                    {s.requiredSpeed > 0 && <span>Требуемая скорость: {s.requiredSpeed} зв./ч</span>}
+                    <span>Последний звонок: {lastCall}</span>
+                    <span>Осталось до плана: {s.remainingToPlan} зв.</span>
+                    <span>До конца рабочего времени: {remainingTimeLabel(s.remainingHours)}</span>
+                    {unique && <span className="hint-unique">Учитываются уникальные номера: {s.today.calls}</span>}
+                  </HelpTip>
+                </div>
                 <div className="dim small" style={{ textAlign: "center", marginTop: 6, lineHeight: 1.6 }}>
                   {s.requiredSpeed > 0 && <>Требуемая скорость: {s.requiredSpeed} зв./ч · </>}
                   Осталось до плана: {s.remainingToPlan} зв. · До конца рабочего времени: {remainingTimeLabel(s.remainingHours)}
                   <br />
-                  Последний звонок: {s.today.lastCallUnix ? `${hhmm(s.today.lastCallUnix, tz)}${sinceLast !== null ? ` (${sinceLast} мин назад)` : ""}` : "нет данных"}
+                  Последний звонок: {lastCall}
                 </div>
               </div>
-              <div className="plan-bars" style={{ marginTop: 14 }}>
-                <div className="pb"><span>План</span><span className="tr"><i style={{ width: bar(settings.plan), background: "rgba(255,255,255,.35)" }} /></span><b className="tn">{settings.plan}</b></div>
-                <div className="pb"><span>Факт</span><span className="tr"><i style={{ width: bar(s.actual), background: "var(--accent2)" }} /></span><b className="tn">{s.actual}</b></div>
-                {s.showForecast && <div className="pb"><span>Прогноз</span><span className="tr"><i style={{ width: bar(s.forecast), background: "#ae88e4" }} /></span><b className="tn">{s.forecast}</b></div>}
-              </div>
-              <div className="dim small">Выполнено {settings.plan > 0 ? Math.round((s.actual / settings.plan) * 100) : 0}% плана. Прогноз показывается, если за последний час были звонки.</div>
+              <PlanPace plan={settings.plan} actual={s.actual} forecast={s.forecast} showForecast={s.showForecast} />
+              <div className="dim small">Прогноз показывается, если за последний час были звонки.</div>
             </div>
             <div className="card op-stats">
               <div className="chips" style={{ marginBottom: 8 }}>
-                <span className={`chip ${conversionTone(cr)}`} title="Дозвоны / все звонки × 100%">CR {cr}%</span>
-                <span className="chip mut" title="Общая продолжительность дозвонов">{formatDurationShort(s.today.talkSeconds)}</span>
+                <span className={`chip ${conversionTone(cr)}`}>
+                  CR {cr}%
+                  <HelpTip label="Что такое CR" align="left">CR - показывает, какой процент звонков завершился успешным дозвоном (Дозвоны / Все звонки × 100%)</HelpTip>
+                </span>
+                <span className="chip mut">
+                  {s.today.talkSeconds < 3600 ? formatDurationWithSeconds(s.today.talkSeconds) : formatDurationShort(s.today.talkSeconds)}
+                  <HelpTip label="Что считается временем разговоров" align="left">Общая продолжительность исходящих звонков</HelpTip>
+                </span>
                 {s.today.unknownDuration > 0 && <span className="chip warn" title="Звонки без длительности: не классифицированы (C1, F9)">{s.today.unknownDuration} без длительности</span>}
               </div>
-              <Row label="Звонков" today={s.today.calls} cmp={y ? compareWithYesterday(s.today.calls, y.calls) : undefined} />
-              <Row label={`Дозвоны (≥ ${settings.dialingSeconds} с)`} today={s.today.successful} cmp={y ? compareWithYesterday(s.today.successful, y.successful) : undefined} />
-              <Row label={`Разговор (≥ ${settings.conversationSeconds} с)`} today={s.today.conversation} cmp={y ? compareWithYesterday(s.today.conversation, y.conversation) : undefined} />
-              <Row label={`Превышение (≥ ${settings.exceedingSeconds} с)`} today={s.today.exceeding} cmp={y ? compareWithYesterday(s.today.exceeding, y.exceeding) : undefined} />
+              <Row label="Звонков" today={s.today.calls} cmp={y ? compareWithYesterday(s.today.calls, y.calls) : undefined} color={color} />
+              <Row label={`Дозвоны (≥ ${settings.dialingSeconds} с)`} today={s.today.successful} cmp={y ? compareWithYesterday(s.today.successful, y.successful) : undefined} color={color} />
+              <Row label={`Разговор (≥ ${settings.conversationSeconds} с)`} today={s.today.conversation} cmp={y ? compareWithYesterday(s.today.conversation, y.conversation) : undefined} color={color} />
+              <Row label={`Превышение (≥ ${settings.exceedingSeconds} с)`} today={s.today.exceeding} cmp={y ? compareWithYesterday(s.today.exceeding, y.exceeding) : undefined} color={color} />
               <div className="dim small" style={{ marginTop: 10 }}>
                 «/ N» — вчера до того же времени{prevRes.status === "error" ? " (вчерашние данные не загрузились)" : ""}. Обновляется каждые 10 минут.
               </div>

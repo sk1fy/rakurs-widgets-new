@@ -3,7 +3,7 @@ import { describeError } from "../api/errors";
 import { CONTRACTS, type ContractId } from "../api/source";
 import type { DataMeta } from "../domain/types";
 import { hhmm } from "../domain/time";
-import { Icon } from "./Icon";
+import { Icon, type IconName } from "./Icon";
 
 const AVATAR_TONES = ["b", "p", "g", "o", "t", "r", "y"] as const;
 
@@ -12,8 +12,34 @@ export function initials(name: string): string {
   return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
 }
 
-export function Avatar({ id, name }: { id: number; name: string }) {
-  return <div className={`ava ${AVATAR_TONES[id % AVATAR_TONES.length]}`}>{initials(name)}</div>;
+/** Фото сотрудника из amoCRM; без фото или при ошибке загрузки — инициалы. */
+export function Avatar({ id, name, url, accent }: { id: number; name: string; url?: string | null; accent?: string }) {
+  const [broken, setBroken] = useState(false);
+  const style = accent ? { boxShadow: `0 0 0 2px ${accent}` } : undefined;
+  if (url && !broken) {
+    return (
+      <div className="ava photo" style={style}>
+        <img src={url} alt={name} loading="lazy" onError={() => setBroken(true)} />
+      </div>
+    );
+  }
+  return (
+    <div className={`ava ${AVATAR_TONES[id % AVATAR_TONES.length]}`} style={style}>
+      {initials(name)}
+    </div>
+  );
+}
+
+/** Значок «?» с подсказкой по наведению и фокусу (вместо нативного title). */
+export function HelpTip({ label, children, align = "right", className = "" }: { label: string; children: ReactNode; align?: "left" | "right"; className?: string }) {
+  return (
+    <span className={`help ${className}`} tabIndex={0} role="button" aria-label={label}>
+      ?
+      <span className={`help-pop help-${align}`} role="tooltip">
+        {children}
+      </span>
+    </span>
+  );
 }
 
 export function Switch({ checked, onChange, label, disabled }: { checked: boolean; onChange: (v: boolean) => void; label: ReactNode; disabled?: boolean }) {
@@ -110,10 +136,10 @@ export function ErrorState({ error, onRetry, compact }: { error: unknown; onRetr
   );
 }
 
-export function EmptyState({ title, hint }: { title: string; hint?: ReactNode }) {
+export function EmptyState({ title, hint, icon = "info" }: { title: string; hint?: ReactNode; icon?: IconName }) {
   return (
     <div className="state empty">
-      <Icon name="info" />
+      <Icon name={icon} />
       <div>
         <b>{title}</b>
         {hint && <div className="dim small">{hint}</div>}
@@ -177,4 +203,54 @@ export function Tabs<T extends string>({ value, onChange, items }: { value: T; o
       ))}
     </div>
   );
+}
+
+/** Иконка ↗ — переход в amoCRM; без адреса не рисуется. */
+export function ExtLink({ href, title }: { href: string | null; title: string }) {
+  if (!href) return null;
+  return (
+    <a className="ext-link" href={href} target="_blank" rel="noreferrer noopener" title={title} aria-label={title} onClick={(e) => e.stopPropagation()}>
+      <Icon name="ext" />
+    </a>
+  );
+}
+
+/** Позиция окна у элемента: относительно контейнера-якоря, не шире него. */
+export function anchorAt(e: { currentTarget: EventTarget }, hostSelector: string, width = 340): { x: number; y: number } {
+  const el = e.currentTarget as HTMLElement;
+  const seg = el.getBoundingClientRect();
+  const host = el.closest(hostSelector)?.getBoundingClientRect();
+  const hostWidth = host?.width ?? window.innerWidth;
+  return { x: Math.max(0, Math.min(seg.left - (host?.left ?? 0), hostWidth - Math.min(width, hostWidth))), y: seg.bottom - (host?.top ?? 0) + 6 };
+}
+
+/** Окно у отрезка графика: заголовок, ×, закрытие кликом снаружи и Esc. */
+export function AnchoredPop({ x, y, title, onClose, children }: { x: number; y: number; title: ReactNode; onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+  return (
+    <div className="tl-pop" ref={ref} style={{ left: x, top: y }} role="dialog" aria-label={typeof title === "string" ? title : undefined}>
+      <h4>
+        <span>{title}</span>
+        <button type="button" className="link-btn" onClick={onClose} aria-label="Закрыть">
+          <Icon name="close" size={14} />
+        </button>
+      </h4>
+      {children}
+    </div>
+  );
+}
+
+/** Скелетон загрузки: блоки той же высоты, что и будущее содержимое, с переливом. */
+export function Skeleton({ height = 16, width, radius = 6 }: { height?: number; width?: number | string; radius?: number }) {
+  return <span className="skel" style={{ height, width, borderRadius: radius }} aria-hidden="true" />;
 }

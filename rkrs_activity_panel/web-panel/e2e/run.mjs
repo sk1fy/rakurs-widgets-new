@@ -47,8 +47,10 @@ async function session(viewport, tag) {
 
   // Поиск, компактный вид, сортировка
   await page.locator(".srch input").first().fill("Глеб");
+  await page.waitForTimeout(400); // поиск в группе с задержкой 300 мс
   check((await page.locator(".grp").first().locator(".emp").count()) === 1, `${tag}: поиск в группе`);
   await page.locator(".srch input").first().fill("");
+  await page.waitForTimeout(400);
   await page.locator(".tools .ti").first().click();
   check((await page.locator(".emp.compact").count()) > 0, `${tag}: компактный вид`);
   await page.locator(".tools .ti").first().click();
@@ -79,6 +81,28 @@ async function session(viewport, tag) {
     await seg.click();
     check((await page.locator("tr.hl").count()) === 1, `${tag}: клик по отрезку подсвечивает строку`);
   }
+  // Цветные части одного столбца раскрывают отдельные группы событий.
+  const mixedBin = page.locator(".ea-hist .bin").filter({ has: page.locator("button:nth-child(2)") }).first();
+  if (await mixedBin.count()) {
+    const segments = mixedBin.locator("button");
+    await segments.first().click();
+    const firstGroup = await page.locator(".tl-pop").innerText();
+    await page.keyboard.press("Escape");
+    await segments.nth(1).click();
+    const secondGroup = await page.locator(".tl-pop").innerText();
+    check(firstGroup !== secondGroup, `${tag}: разные части столбца раскрывают разные группы`);
+    await page.keyboard.press("Escape");
+  }
+  check(await page.locator(".total-time .donut-chart").count() === 3, `${tag}: три кольцевые диаграммы суммарного времени`);
+  check(await page.locator(".task-history .history-summary .sum-card").count() === 5, `${tag}: пять показателей истории задач`);
+  const rangeStart = page.locator(".task-history input[aria-label='Начало периода']");
+  const rangeBefore = Number(await rangeStart.inputValue());
+  await rangeStart.focus();
+  await rangeStart.press("ArrowRight");
+  check(Number(await rangeStart.inputValue()) === rangeBefore + 1, `${tag}: диапазон истории управляется клавиатурой`);
+  await rangeStart.press("ArrowLeft");
+  const profileOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  check(profileOverflow <= 1, `${tag}: профиль не выходит за ширину страницы`);
   await shot("employee");
 
   // Оператор, пропущенные, настройки
@@ -91,10 +115,10 @@ async function session(viewport, tag) {
   await page.waitForTimeout(400);
   check((await page.locator(".set-nav").count()) === 1, `${tag}: настройки открываются`);
   await shot("settings-view");
-  await go("/p/demo/settings/panels");
+  await go("/settings/panels");
   await page.waitForTimeout(500);
   await shot("settings-panels");
-  await go("/p/demo/settings/task-panel");
+  await go("/settings/task-panel");
   await page.waitForTimeout(500);
   await shot("settings-task");
 

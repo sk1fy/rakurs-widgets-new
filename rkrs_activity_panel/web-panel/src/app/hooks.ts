@@ -72,3 +72,13 @@ export function useResource<T>(key: string | null, load: (signal: AbortSignal) =
   const reload = useCallback(() => setNonce((n) => n + 1), []);
   return { ...state, reload };
 }
+
+/** Значение с задержкой: обновляется, когда value не меняется delayMs. */
+export function useDebounced<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(t);
+  }, [value, delayMs]);
+  return debounced;
+}

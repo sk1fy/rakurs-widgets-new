@@ -1,6 +1,13 @@
 import { usePanelScope } from "../../app/context";
 import { entityLink, phoneSearchLink } from "../../domain/crmLinks";
 import type { MissedCallsResult } from "../../domain/formulas/missedCalls";
+import { plural } from "../../domain/plural";
+import { dayDotted, hhmm, zoned } from "../../domain/time";
+
+/** «Обновлено: 24.09.2026, 15:10» (MissedCallsDropdown). */
+export function updatedLabel(unix: number, timeZone: string): string {
+  return `Обновлено: ${dayDotted(zoned(unix, timeZone).dayKey)}, ${hhmm(unix, timeZone)}`;
+}
 
 export function MissedCallsList({ result, limit }: { result: MissedCallsResult; limit?: number }) {
   const { panel } = usePanelScope();
@@ -20,15 +27,15 @@ export function MissedCallsList({ result, limit }: { result: MissedCallsResult; 
         const search = phoneSearchLink(panel.crmBaseUrl, m.phone);
         const entity = entityLink(panel.crmBaseUrl, m.entityType, m.entityId);
         return (
-          <div className="row" key={m.normalizedPhone}>
+          <div className={`row mc${m.count > 1 ? " multi" : ""}`} key={m.normalizedPhone}>
             <div>
               <div>
                 {search ? (
-                  <a href={search} target="_blank" rel="noreferrer noopener">
+                  <a className="mc-phone" href={search} target="_blank" rel="noreferrer noopener">
                     {m.displayPhone}
                   </a>
                 ) : (
-                  m.displayPhone
+                  <span className="mc-phone">{m.displayPhone}</span>
                 )}
                 {entity && (
                   <>
@@ -42,8 +49,8 @@ export function MissedCallsList({ result, limit }: { result: MissedCallsResult; 
               <div className="dim small">{m.employeeIds.map((id) => names.get(id) ?? `#${id}`).join(", ")}</div>
             </div>
             <div style={{ textAlign: "right" }}>
-              <b>{m.count > 1 ? `${m.count} раза` : m.firstCallTime}</b>
-              {m.count > 1 && <div className="dim small">{m.callTimes.join(", ")}</div>}
+              <b>{m.count > 1 ? `${m.count} ${plural(m.count, "раз", "раза", "раз")}` : m.firstCallTime}</b>
+              {m.count > 1 && <div className="mc-times dim small">{m.callTimes.join(", ")}</div>}
             </div>
           </div>
         );

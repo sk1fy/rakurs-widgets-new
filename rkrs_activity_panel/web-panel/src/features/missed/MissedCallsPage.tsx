@@ -29,7 +29,9 @@ export function MissedCallsPage() {
           </a>
         </div>
         <div className="sec-h">
-          <h2>Пропущенные звонки · {dayTitle(today)}</h2>
+          <h2>
+            Пропущенные звонки{result ? ` (${result.items.length})` : ""} · {dayTitle(today)}
+          </h2>
           <div className="sp" />
           {res.data && <MetaBadges meta={res.data.meta} timeZone={panel.timezone} />}
         </div>

@@ -5,14 +5,14 @@ import { imboxHistory } from "../../domain/formulas/sessions";
 import { dayEndInclusive, dayStart, formatDurationShort, formatDurationWithSeconds } from "../../domain/time";
 import type { EmployeeSessions } from "../../domain/types";
 import { NotConnected } from "../../ui/primitives";
-import { BarList, RangeFilter, SessionStrip } from "./parts";
+import { DonutSummary, EmptyNote, nowMinutesFor, RangeFilter, SessionStrip, SumCard, TaskPanelGate, useFlashSelection } from "./parts";
 
 /** «История посещений в Imbox» (EmployeeInboxSectionV2). */
-export function ImboxHistory({ sessions, dayKey, timeZone, nowUnix, startMinutes, endMinutes, crmBase }: { sessions: Sourced<EmployeeSessions> | null; dayKey: string; timeZone: string; nowUnix: number; startMinutes: number; endMinutes: number; crmBase: string | null }) {
+export function ImboxHistory({ sessions, dayKey, timeZone, nowUnix, startMinutes, endMinutes, crmBase, taskPanelEnabled }: { sessions: Sourced<EmployeeSessions> | null; dayKey: string; timeZone: string; nowUnix: number; startMinutes: number; endMinutes: number; crmBase: string | null; taskPanelEnabled: boolean | null }) {
   const lo = Math.floor(startMinutes / 60) * 60;
   const hi = Math.ceil(endMinutes / 60) * 60;
   const [range, setRange] = useState<[number, number]>([lo, hi]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected, rowRef] = useFlashSelection();
   const data = useMemo(
     () =>
       sessions?.kind === "ok"
@@ -20,16 +20,17 @@ export function ImboxHistory({ sessions, dayKey, timeZone, nowUnix, startMinutes
         : null,
     [sessions, dayKey, timeZone, nowUnix, crmBase],
   );
+  if (taskPanelEnabled === false) return <TaskPanelGate title="История посещений в Imbox" />;
   if (!sessions) return null;
   const header = (
     <div className="sec-h">
       <h2>История посещений в Imbox</h2>
-      {sessions.kind === "ok" && sessions.data.meta.source === "fixture" && <span className="chip warn">синтетика (C4)</span>}
+      {sessions.kind === "ok" && sessions.data.meta.source === "fixture" && <span className="chip warn">Тестовые данные</span>}
     </div>
   );
   if (sessions.kind === "unavailable" || !data) {
     return (
-      <section className="sec">
+      <section className="sec history-section imbox-history">
         {header}
         {sessions.kind === "unavailable" && <NotConnected contract={sessions.contract} reason={sessions.reason} />}
       </section>
@@ -37,39 +38,43 @@ export function ImboxHistory({ sessions, dayKey, timeZone, nowUnix, startMinutes
   }
   const rows = data.rows.filter((r) => r.endMinutes >= range[0] && r.startMinutes <= range[1]);
   return (
-    <section className="sec">
+    <section className="sec history-section imbox-history">
       {header}
-      <div className="sum-row">
-        <div className="sum-card"><div className="k">Всего в Imbox</div><div className="v">{formatDurationShort(data.totalSeconds)}</div><div className="s">{data.rows.length} посещений</div></div>
-        <div className="sum-card"><div className="k">Среднее посещение</div><div className="v">{formatDurationShort(data.averageSeconds)}</div></div>
-        <div className="sum-card"><div className="k">Уникальных диалогов</div><div className="v">{data.uniqueConversations}</div></div>
-        <div className="sum-card"><div className="k">Сущностей</div><div className="v">{data.uniqueEntities}</div>{data.hasNonLeadEntities && <div className="s">есть контакты/компании</div>}</div>
+      <div className="card history-range-card">
+          <RangeFilter min={lo} max={hi} value={range} onChange={setRange} />
+      </div>
+      <div className="card history-timeline-card">
+          <SessionStrip items={data.rows.map((r) => ({ id: r.id, startMinutes: r.startMinutes, endMinutes: Math.max(r.endMinutes, r.startMinutes + 1), color: "#54b5b5", title: `${r.title}\n${r.start}–${r.end} · ${formatDurationWithSeconds(r.seconds)}` }))} min={range[0]} max={range[1]} selected={selected} onSelect={setSelected} nowMinutes={nowMinutesFor(nowUnix, dayKey, timeZone)} />
       </div>
       <div className="g21">
-        <div className="card">
-          <RangeFilter min={lo} max={hi} value={range} onChange={setRange} />
-          <SessionStrip items={data.rows.map((r) => ({ id: r.id, startMinutes: r.startMinutes, endMinutes: Math.max(r.endMinutes, r.startMinutes + 1), color: "#54b5b5", title: `${r.title} ${r.start}–${r.end}` }))} min={range[0]} max={range[1]} selected={selected} onSelect={setSelected} />
-          {rows.length === 0 ? (
-            <div className="dim small">В выбранном периоде посещений нет</div>
+        <div className="card history-table-card">
+          <div className="history-card-head">
+            <h3>События</h3>
+            <div className="history-summary">
+              <SumCard icon="clock" label="Всего в Imbox" value={formatDurationWithSeconds(data.totalSeconds)} />
+              <SumCard icon="refresh" label="Среднее" value={formatDurationWithSeconds(data.averageSeconds)} />
+              <SumCard icon="msg" label="Уникальных бесед" value={data.uniqueConversations} />
+            </div>
+          </div>
+          {data.rows.length === 0 ? (
+            <EmptyNote>Нет посещений Imbox за день</EmptyNote>
+          ) : rows.length === 0 ? (
+            <EmptyNote>В выбранном периоде посещений нет</EmptyNote>
           ) : (
             <div className="tbl-wrap" style={{ marginTop: 10 }}>
               <table className="tbl" style={{ minWidth: 520 }}>
                 <thead>
                   <tr>
-                    <th>Сущность</th>
-                    <th>Диалог</th>
-                    <th>Старт</th>
-                    <th>Финиш</th>
-                    <th>Время</th>
+                    <th>Название</th>
+                    <th>Старт — финиш</th>
+                    <th>Время в Imbox</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((r) => (
-                    <tr key={r.id} className={selected === r.id ? "hl" : ""} ref={(el) => { if (el && selected === r.id) el.scrollIntoView({ block: "nearest" }); }}>
-                      <td>{r.href ? <a href={r.href} target="_blank" rel="noreferrer noopener">{r.title}</a> : r.title}</td>
-                      <td className="dim">{r.subtitle}</td>
-                      <td className="num">{r.start}</td>
-                      <td className="num">{r.end}</td>
+                    <tr key={r.id} className={selected === r.id ? "hl" : ""} ref={(el) => rowRef(el, r.id)}>
+                      <td>{r.href ? <a href={r.href} target="_blank" rel="noreferrer noopener">{r.title}</a> : r.title}<span className="imbox-subtitle">{r.subtitle}</span></td>
+                      <td className="num">{r.start} — {r.end}</td>
                       <td className="num">{formatDurationWithSeconds(r.seconds)}</td>
                     </tr>
                   ))}
@@ -79,8 +84,11 @@ export function ImboxHistory({ sessions, dayKey, timeZone, nowUnix, startMinutes
           )}
         </div>
         <div className="card">
-          <h3>Топ сущностей по времени</h3>
-          <BarList rows={data.entities} empty="Нет посещений" />
+          <h3>{data.hasNonLeadEntities ? "Топ-7 сущностей по времени" : "Топ-7 сделок по времени"}</h3>
+          <div className="card-total">
+            <b>{formatDurationShort(data.totalSeconds)}</b> общее время
+          </div>
+          <DonutSummary value={data.uniqueEntities} label={data.hasNonLeadEntities ? "сущностей посещено" : "уникальных сделок посещено"} rows={data.entities} empty="Нет посещений" columns={["Время", "Сущность"]} />
         </div>
       </div>
     </section>

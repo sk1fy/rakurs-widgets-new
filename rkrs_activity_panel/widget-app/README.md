@@ -83,3 +83,27 @@ npm run package:widget -- --assets-url https://YOUR-HOST/widget-assets
 Команда создаёт `dist-package/rkrs-activity-prototype.zip`, подставляя адрес только в копию загрузчика. В ZIP входят `script.js`, manifest, локализация и изображения, **без UMD**. Это по-прежнему демонстрационная версия.
 
 Сервер должен разрешать CORS для `release.json`; для него нужен `Cache-Control: no-cache`, для файлов с хешем — долгий immutable-кеш. Публикация: сначала новый бандл, затем атомарное переключение `release.json`. Старые бандлы сохраняются; откат — возврат предыдущего `release.json`. Изменения загрузчика или manifest требуют обновления ZIP. Автоматического деплоя нет.
+
+## Live Activity API transport (2026-10-26)
+
+`src/session-client.js` предоставляет `createActivitySessionClient({baseURL,
+getToken})`: команды `startTask`, `startImbox`, `startActivity`, `startPause`,
+`stop`, повтор потерянного ответа с тем же command ID и новым одноразовым JWT,
+а также `createManagementLink(appOrigin)` для администратора.
+
+Транспорт подключён к `live-controller.js`, отдельно от демо-контроллера.
+Он передаёт реальные task/entity/pipeline/status IDs и восстанавливает состояние
+после перезагрузки. Демо-задачи никогда не отправляются в live API.
+Живая проверка Imbox DOM и конкретной установки ещё требуется.
+
+
+## Live Activity backend
+
+When hosted by amoCRM with `widget.$authorizedAjax`, runtime uses live-controller;
+the preview uses the demo controller. Build with VITE_ACTIVITY_API_ORIGIN and
+VITE_ACTIVITY_APP_ORIGIN. Core must allowlist the panel origin. The SDK signs each
+state/history/session/admin-link request; management credentials never enter
+widget configuration. General settings button opens a short-lived admin session.
+Real task actions read/complete CRM tasks; production verification is still required
+for Imbox DOM selectors and task-card hooks. Closed sessions retain32days; a
+background watchdog closes stale work tasks after8hours at observation time.

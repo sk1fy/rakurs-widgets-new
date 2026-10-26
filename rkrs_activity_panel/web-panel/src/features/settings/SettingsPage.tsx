@@ -14,7 +14,7 @@ type SettingsTab = "view" | "panels" | "task-panel";
 
 const BACKEND_LABEL: Record<SettingsBackend["kind"], { text: string; tone: string; title: string }> = {
   fixture: { text: "синтетика (dev)", tone: "warn", title: "Настройки хранятся только в этом браузере, в amoCRM ничего не уходит" },
-  "amocrm-pro": { text: "amocrm-pro (dev-proxy)", tone: "info", title: "Management API amocrm-pro через dev-proxy Vite" },
+  "amocrm-pro": { text: "amocrm-pro", tone: "info", title: "Серверные настройки аккаунта" },
   unavailable: { text: "управление недоступно", tone: "mut", title: "Production-сборка без авторизации администратора (C7)" },
 };
 
@@ -27,8 +27,7 @@ export function SettingsPage({ tab, standalone }: { tab: string | null; standalo
 
   const tabs: { value: SettingsTab; label: string; group: string }[] = [
     ...(scope ? [{ value: "view" as const, label: "Мой вид", group: "Только для меня" }] : []),
-    { value: "panels", label: "Панели", group: "Общие настройки" },
-    { value: "task-panel", label: "Панель задач", group: "Общие настройки" },
+    ...(!scope ? [{ value: "panels" as const, label: "Панели", group: "Общие настройки" }, { value: "task-panel" as const, label: "Панель задач", group: "Общие настройки" }] : []),
   ];
   const active: SettingsTab = tabs.find((t) => t.value === tab)?.value ?? tabs[0]?.value ?? "panels";
   const viewKey = scope?.viewKey ?? null;
@@ -38,6 +37,7 @@ export function SettingsPage({ tab, standalone }: { tab: string | null; standalo
     <>
       <AppHeader mode={__DATA_MODE__} panelName={scope?.panel.name} viewKey={viewKey} showSettings={false} />
       <div className="page">
+        {scope && backend.capabilities.managePanels.available && <a className="tool-btn" href={href({ name: "settings", viewKey: null, tab: "panels" })}>Общие настройки аккаунта</a>}
         <div className="row-f" style={{ justifyContent: "space-between", margin: "12px 8px 16px" }}>
           <div className="row-f">
             {viewKey && (

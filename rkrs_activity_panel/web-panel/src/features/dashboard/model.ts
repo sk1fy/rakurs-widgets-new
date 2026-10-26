@@ -58,9 +58,15 @@ export interface EmployeeRow {
 export interface GroupBlock {
   id: string;
   name: string;
+  /** Сотрудники после фильтров предпочтений, включая 0% (их скрывает экран). */
   rows: EmployeeRow[];
+  /** Сотрудники с активностью больше 0% — счётчик «активные/всего», как в старой панели. */
+  active: number;
   total: number;
 }
+
+/** Как в старой панели: сотрудник с 0% активности на дашборде не показывается. */
+export const hasActivity = (row: EmployeeRow): boolean => row.percent > 0;
 
 export function buildRows(params: {
   panel: PanelContext;
@@ -112,16 +118,20 @@ export function groupRows(rows: EmployeeRow[], panel: PanelContext, prefs: Local
   const selected = prefs.selectedDepartments.length ? new Set(prefs.selectedDepartments) : null;
   const inDept = visible.filter((r) => !selected || selected.has(r.employee.groupId));
   if (!prefs.groupByDepartments) {
-    return [{ id: "all", name: "Все сотрудники", rows: sortRows(inDept, prefs.sort), total: rows.filter((r) => !selected || selected.has(r.employee.groupId)).length }];
+    return [{ id: "all", name: "Все сотрудники", rows: sortRows(inDept, prefs.sort), active: inDept.filter(hasActivity).length, total: rows.filter((r) => !selected || selected.has(r.employee.groupId)).length }];
   }
   return panel.groups
     .filter((g) => !selected || selected.has(g.id))
-    .map((g) => ({
-      id: g.id,
-      name: g.name,
-      rows: sortRows(inDept.filter((r) => r.employee.groupId === g.id), prefs.sort),
-      total: rows.filter((r) => r.employee.groupId === g.id).length,
-    }))
+    .map((g) => {
+      const members = inDept.filter((r) => r.employee.groupId === g.id);
+      return {
+        id: g.id,
+        name: g.name,
+        rows: sortRows(members, prefs.sort),
+        active: members.filter(hasActivity).length,
+        total: rows.filter((r) => r.employee.groupId === g.id).length,
+      };
+    })
     .filter((g) => g.total > 0);
 }
 

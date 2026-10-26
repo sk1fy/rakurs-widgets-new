@@ -30,6 +30,13 @@ export interface PipelineRef {
   pipelineId: string;
 }
 
+/** Воронка amoCRM с этапами — для ссылок шапки с фильтром filter[pipe]. */
+export interface PipelineCatalogItem {
+  id: string;
+  name: string;
+  statuses: { id: string; name: string; disabled?: boolean }[];
+}
+
 export interface CrmEvent {
   id: string;
   type: string;
@@ -108,6 +115,8 @@ export interface PanelContext {
   /** Базовый адрес CRM для ссылок. В viewer API отсутствует (контракт C2). */
   crmBaseUrl: string | null;
   pipelines: string[];
+  /** Каталог воронок и этапов аккаунта. В viewer API отсутствует (контракт C5). */
+  pipelineCatalog: PipelineCatalogItem[];
   operators: OperatorSettings[];
   taskPanelEnabled: boolean | null;
   meta: DataMeta;

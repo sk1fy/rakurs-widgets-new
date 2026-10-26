@@ -3,7 +3,7 @@ import type { TaskPanelSettings } from "../../settings/models";
 import { Icon } from "../../ui/Icon";
 import { Switch } from "../../ui/primitives";
 import { EmployeePicker } from "./EmployeePicker";
-import { moveItem, priorityLabel } from "./draft";
+import { moveItem, priorityHint, priorityLabel } from "./draft";
 
 /** Форма глобальных настроек панели задач (значение + onChange). */
 export function TaskPanelForm({ value, onChange, employees }: { value: TaskPanelSettings; onChange: (next: TaskPanelSettings) => void; employees: Employee[] }) {
@@ -44,6 +44,7 @@ export function TaskPanelForm({ value, onChange, employees }: { value: TaskPanel
               </span>
               <span style={{ flex: 1 }}>
                 <Switch checked={p.enabled} disabled={off} onChange={(v) => patch({ priorities: value.priorities.map((x) => (x.key === p.key ? { ...x, enabled: v } : x)) })} label={priorityLabel(p.key)} />
+                {priorityHint(p.key) && <span className="prio-hint dim small">{priorityHint(p.key)}</span>}
               </span>
               <button type="button" className="icon-btn" aria-label="Выше" title="Выше" disabled={off || i === 0} onClick={() => patch({ priorities: moveItem(value.priorities, i, -1) })}>
                 <span style={{ display: "grid", transform: "rotate(180deg)" }}>

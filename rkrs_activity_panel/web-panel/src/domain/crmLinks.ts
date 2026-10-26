@@ -57,6 +57,20 @@ export function callsStatsLink(base: CrmBase, employeeId: EmployeeId, dayKey: st
   return `${base}/stats/calls/?with_filter=y#${hash.toString()}`;
 }
 
+/** Статистика всех звонков сотрудника за день («Общее время звонков» в старой панели). */
+export function allCallsStatsLink(base: CrmBase, employeeId: EmployeeId, dayKey: string): string | null {
+  if (!base) return null;
+  const params = new URLSearchParams();
+  for (let i = 1; i <= 8; i++) params.append("call_status[]", String(i));
+  params.append("call_type[]", "10");
+  params.append("call_type[]", "11");
+  params.append("filter[main_user][]", String(employeeId));
+  params.append("filter_date_from", dayDotted(dayKey));
+  params.append("filter_date_to", dayDotted(dayKey));
+  params.append("useFilter", "y");
+  return `${base}/stats/calls/?${params.toString()}`;
+}
+
 export function closedTasksLink(base: CrmBase, employeeId: EmployeeId, dayKey: string): string | null {
   if (!base) return null;
   const params = new URLSearchParams();
@@ -96,9 +110,32 @@ export function leadsTaskFilterLink(
   return `${base}/leads/list/?${params.toString()}`;
 }
 
+/**
+ * Ссылка значка шапки (DashboardHeader.vue): с воронками панели — фильтр по их
+ * открытым этапам; без воронок и при одном менеджере — готовая filter_link источника.
+ */
+export function problemHeaderLink(
+  base: CrmBase,
+  taskFilter: "no_tasks" | "failed_tasks",
+  rows: { managerId: EmployeeId; filterLink: string | null }[],
+  pipelines: string[],
+  pipelineStatuses: { pipelineId: string; statusIds: string[] }[],
+): string | null {
+  if (!pipelines.length && rows.length === 1 && rows[0]?.filterLink) return rows[0].filterLink;
+  return leadsTaskFilterLink(base, taskFilter, rows.map((r) => r.managerId), pipelineStatuses);
+}
+
 export function stageLink(base: CrmBase, pipelineId: number | string, statusId: number | string, employeeId: EmployeeId): string | null {
   if (!base) return null;
   return `${base}/leads/list/?filter%5Bpipe%5D%5B${pipelineId}%5D%5B%5D=${statusId}&filter%5Bmain_user%5D%5B%5D=${employeeId}&useFilter=y`;
+}
+
+/** Адрес фото сотрудника: абсолютный как есть, относительный — от адреса CRM (как в старой панели). */
+export function avatarSrc(url: string | null | undefined, base: CrmBase): string | null {
+  const value = url?.trim();
+  if (!value) return null;
+  if (/^https?:\/\//.test(value)) return value;
+  return base && value.startsWith("/") ? `${base}${value}` : null;
 }
 
 export const NO_CRM_BASE_HINT = "Адрес amoCRM не передан источником (контракт C2)";

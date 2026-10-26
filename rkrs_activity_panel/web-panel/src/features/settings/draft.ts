@@ -212,6 +212,11 @@ export function priorityLabel(key: string): string {
   return PRIORITY_RULES.find((r) => r.key === key)?.label ?? key;
 }
 
+/** Условие правила приоритета (SettingsView.vue). */
+export function priorityHint(key: string): string | null {
+  return PRIORITY_RULES.find((r) => r.key === key)?.hint ?? null;
+}
+
 /** Целое из поля ввода; пустое/мусор — NaN (валидация покажет ошибку). */
 export function toInt(text: string): number {
   if (text.trim() === "") return Number.NaN;
