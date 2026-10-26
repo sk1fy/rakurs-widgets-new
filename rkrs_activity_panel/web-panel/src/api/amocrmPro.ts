@@ -319,16 +319,20 @@ export class AmocrmProViewerSource implements ActivitySource {
   }
 
   async loadProblemLists(params: { managers: EmployeeId[]; pipelines: string[] }, signal?: AbortSignal): Promise<Sourced<ProblemLists>> {
-    const snapshot = await this.get<{ snapshot_at: number; stale?: boolean; state?: string; error_code?: string; counts: { employee_id: number; leads_no_tasks: number; leads_overdue_tasks: number; overdue_tasks: number }[] }>("/problems", signal);
+    const snapshot = await this.get<{ snapshot_at: number; stale?: boolean; state?: string; error_code?: string; collecting?: boolean; refresh_after?: number; counts: { employee_id: number; leads_no_tasks: number; leads_overdue_tasks: number; overdue_tasks: number }[] | null }>("/problems", signal);
     const base = this.panelContext?.crmBaseUrl ?? null;
     const selected = new Set(params.managers);
     const pipelineStatuses = openPipelineStatuses(this.panelContext?.pipelineCatalog ?? [], params.pipelines);
-    const rows = snapshot.counts.filter((r) => selected.has(r.employee_id));
+    const collecting = snapshot.collecting ?? (snapshot.state === "leads" || snapshot.state === "tasks");
+    const rows = (snapshot.counts ?? []).filter((r) => selected.has(r.employee_id));
     return { kind: "ok", data: {
+      collecting,
+      errorCode: snapshot.error_code,
+      refreshAfter: snapshot.refresh_after,
       leadsNoTasks: rows.map((r) => ({ managerId: r.employee_id, count: r.leads_no_tasks, filterLink: leadsTaskFilterLink(base, "no_tasks", [r.employee_id], pipelineStatuses) })),
       leadsWithFailedTasks: rows.map((r) => ({ managerId: r.employee_id, count: r.leads_overdue_tasks, filterLink: leadsTaskFilterLink(base, "failed_tasks", [r.employee_id], pipelineStatuses) })),
       overdueTasks: rows.map((r) => ({ managerId: r.employee_id, count: r.overdue_tasks, filterLink: base ? `${base}/todo/list/?filter[status][]=failed&filter[main_user][]=${r.employee_id}&useFilter=y` : null })),
-      meta: { source: "amocrm-pro", snapshotAt: snapshot.snapshot_at, coverage: "verified", partial: false, stale: snapshot.stale === true || Date.now() / 1000 - snapshot.snapshot_at > 120, note: snapshot.error_code ? "Обновление среза временно недоступно; показан последний полный срез" : snapshot.state && snapshot.state !== "idle" ? "Срез обновляется" : undefined },
+      meta: { source: "amocrm-pro", snapshotAt: snapshot.snapshot_at, coverage: snapshot.snapshot_at > 0 ? "verified" : "unknown", partial: false, stale: snapshot.stale === true || snapshot.snapshot_at <= 0 || Date.now() / 1000 - snapshot.snapshot_at >= 7 * 60, note: snapshot.error_code ? (!collecting ? (snapshot.snapshot_at > 0 ? "Сбор остановлен из-за ошибки; показан последний полный срез. Следующая проверка — после серверной паузы." : "Сбор остановлен из-за ошибки. Следующая проверка — после серверной паузы.") : snapshot.snapshot_at > 0 ? "Обновление среза временно недоступно; показан последний полный срез" : "Сбор среза временно недоступен; повтор выполняется автоматически") : collecting ? "Срез обновляется" : undefined },
     } };
   }
 

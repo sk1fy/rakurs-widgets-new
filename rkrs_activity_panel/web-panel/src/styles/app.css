@@ -624,3 +624,7 @@ a.mc-phone:hover{color:#ff8f8f;text-decoration:underline}
 .donut-expand{margin-top:8px}
 @media(min-width:1101px) and (max-width:1300px){.donut-summary.improved{grid-template-columns:115px minmax(0,1fr);gap:12px}.improved .donut-chart{width:115px}.improved .donut-center b{font-size:27px}.improved .donut-center span{font-size:9px}}
 @media(max-width:600px){.donut-summary.improved{grid-template-columns:110px minmax(0,1fr);gap:12px}.improved .donut-chart{width:110px}.improved .donut-center b{font-size:26px}.improved .donut-center.active b{font-size:20px}.improved .donut-center span{font-size:9px}.improved .donut-label{font-size:11px}.donut-select{gap:5px}}
+
+/* Keep the shared snapshot refresh indicator next to its existing badge. */
+.hic > .spin{display:block;margin:7px}
+.hic > .problem-refresh-spin{position:absolute;left:-14px;top:7px;margin:0}

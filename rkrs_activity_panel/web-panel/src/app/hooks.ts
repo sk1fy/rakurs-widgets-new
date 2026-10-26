@@ -26,7 +26,7 @@ export interface Resource<T> {
  * refreshMs после загрузки (F1), скрытая вкладка пропускает тик.
  * Ошибка фонового обновления не стирает данные: они помечаются как устаревшие.
  */
-export function useResource<T>(key: string | null, load: (signal: AbortSignal) => Promise<T>, options: { refreshMs?: number | null; refreshKey?: string | number | null } = {}): Resource<T> {
+export function useResource<T>(key: string | null, load: (signal: AbortSignal) => Promise<T>, options: { refreshMs?: number | null; refreshKey?: string | number | null; enabled?: boolean } = {}): Resource<T> {
   const [state, setState] = useState<Omit<Resource<T>, "reload">>({ data: null, error: null, status: "idle", refreshing: false, updatedAt: null });
   const loadRef = useRef(load);
   loadRef.current = load;
@@ -48,10 +48,20 @@ export function useResource<T>(key: string | null, load: (signal: AbortSignal) =
   }, []);
 
   const refreshKey = options.refreshKey;
+  const enabled = options.enabled ?? true;
   useEffect(() => {
     if (key === null) {
       keyRef.current = null;
       setState({ data: null, error: null, status: "idle", refreshing: false, updatedAt: null });
+      return;
+    }
+    if (!enabled) {
+      if (keyRef.current !== key) {
+        keyRef.current = key;
+        setState({ data: null, error: null, status: "idle", refreshing: false, updatedAt: null });
+      } else {
+        setState((s) => ({ ...s, refreshing: false, status: s.data !== null ? "ready" : s.error ? "error" : "idle" }));
+      }
       return;
     }
     const controller = new AbortController();
@@ -59,17 +69,17 @@ export function useResource<T>(key: string | null, load: (signal: AbortSignal) =
     keyRef.current = key;
     run(background, controller.signal);
     return () => controller.abort();
-  }, [key, nonce, refreshKey, run]);
+  }, [key, nonce, refreshKey, enabled, run]);
 
   const refreshMs = options.refreshMs ?? null;
   useEffect(() => {
-    if (key === null || !refreshMs) return;
+    if (key === null || !refreshMs || !enabled) return;
     const t = setInterval(() => {
       if (document.visibilityState === "hidden") return;
       setNonce((n) => n + 1);
     }, refreshMs);
     return () => clearInterval(t);
-  }, [key, refreshMs]);
+  }, [key, refreshMs, enabled]);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
   return { ...state, reload };
