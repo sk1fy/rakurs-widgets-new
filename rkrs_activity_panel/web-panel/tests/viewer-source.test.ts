@@ -164,3 +164,31 @@ it("loads actual session context separately from CRM events", async () => {
  expect(got.kind).toBe("ok");if(got.kind!=="ok")throw Error("unavailable");
  expect(got.data.meta.source).toBe("amocrm-pro");expect(got.data.items[0]).toMatchObject({activityType:"imbox",entityId:31,workTimeSeconds:60,taskId:null,startedAt:new Date((range.from+100)*1000).toISOString()});
 });
+
+describe("viewer demand-driven problem collection", () => {
+  it("preserves a collection with no published snapshot without reporting verified zeros", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ snapshot_at: 0, counts: null, collecting: true, refresh_after: 1793000060, state: "leads", stale: true })));
+    const got = await new AmocrmProViewerSource("synthetic-key", "").loadProblemLists({ managers: [7], pipelines: [] });
+    if (got.kind !== "ok") throw Error("unavailable");
+    expect(got.data.collecting).toBe(true);
+    expect(got.data.refreshAfter).toBe(1793000060);
+    expect(got.data.leadsNoTasks).toEqual([]);
+    expect(got.data.meta.snapshotAt).toBe(0);
+    expect(got.data.meta.coverage).toBe("unknown");
+  });
+  it("keeps published counts during a paused or retried background collection", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ snapshot_at: 1793000000, counts: [{ employee_id: 7, leads_no_tasks: 82, leads_overdue_tasks: 108, overdue_tasks: 9 }], collecting: true, refresh_after: 1793000600, state: "tasks", error_code: "resource_exhausted", stale: true })));
+    const got = await new AmocrmProViewerSource("synthetic-key", "").loadProblemLists({ managers: [7], pipelines: [] });
+    if (got.kind !== "ok") throw Error("unavailable");
+    expect(got.data.leadsNoTasks[0]?.count).toBe(82);
+    expect(got.data.leadsWithFailedTasks[0]?.count).toBe(108);
+    expect(got.data.collecting).toBe(true);
+    expect(got.data.meta.note).toContain("последний полный срез");
+  });
+  it("recognizes a legacy collecting phase when the boolean is absent", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ snapshot_at: 1793000000, counts: [], state: "leads" })));
+    const got = await new AmocrmProViewerSource("synthetic-key", "").loadProblemLists({ managers: [7], pipelines: [] });
+    if (got.kind !== "ok") throw Error("unavailable");
+    expect(got.data.collecting).toBe(true);
+  });
+});

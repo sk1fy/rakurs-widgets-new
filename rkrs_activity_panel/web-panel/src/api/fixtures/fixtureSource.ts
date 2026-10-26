@@ -10,11 +10,11 @@ import { ApiError } from "../errors";
 import type { ActivitySource, ActivityRatingParams, ActivityRatings, DayRange, EventCard, Sourced } from "../source";
 import { FIXTURE_TZ, fixtureMeta, fixturePanel, fixtureProblemLists, generateDay } from "./generator";
 
-export type FixtureScenario = "normal" | "error" | "rating-error" | "empty" | "partial" | "stale" | "slow";
+export type FixtureScenario = "normal" | "error" | "rating-error" | "empty" | "partial" | "stale" | "slow" | "problems-initial" | "problems-collecting" | "problems-stopped";
 
 export function fixtureScenario(): FixtureScenario {
   const value = new URLSearchParams(globalThis.location?.search ?? "").get("fixture");
-  return value === "error" || value === "rating-error" || value === "empty" || value === "partial" || value === "stale" || value === "slow" ? value : "normal";
+  return value === "error" || value === "rating-error" || value === "empty" || value === "partial" || value === "stale" || value === "slow" || value === "problems-initial" || value === "problems-collecting" || value === "problems-stopped" ? value : "normal";
 }
 
 const delay = (ms: number, signal?: AbortSignal) =>
@@ -108,7 +108,10 @@ export class FixtureSource implements ActivitySource {
 
   async loadProblemLists(params: { managers: EmployeeId[] }, signal?: AbortSignal): Promise<Sourced<ProblemLists>> {
     await this.wait(signal);
-    return { kind: "ok", data: fixtureProblemLists(params.managers, this.now(), fixturePanel(this.now()).crmBaseUrl) };
+    const data = fixtureProblemLists(params.managers, this.now(), fixturePanel(this.now()).crmBaseUrl);
+    if (this.scenario === "problems-stopped") return { kind: "ok", data: { ...data, collecting: false, errorCode: "permission_denied", refreshAfter: this.now() + 420, leadsNoTasks: [], leadsWithFailedTasks: [], overdueTasks: [], meta: { ...data.meta, snapshotAt: 0, coverage: "unknown", stale: true, note: "Сбор остановлен из-за ошибки доступа. Следующая проверка — после серверной паузы." } } };
+    if (this.scenario === "problems-initial") return { kind: "ok", data: { ...data, collecting: true, leadsNoTasks: [], leadsWithFailedTasks: [], overdueTasks: [], meta: { ...data.meta, snapshotAt: 0, coverage: "unknown" } } };
+    return { kind: "ok", data: { ...data, collecting: this.scenario === "problems-collecting" } };
   }
 
   async loadSessions(employeeId: EmployeeId, range: DayRange, signal?: AbortSignal): Promise<Sourced<EmployeeSessions>> {

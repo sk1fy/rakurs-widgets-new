@@ -148,6 +148,11 @@ export interface ProblemCount {
 }
 
 export interface ProblemLists {
+  /** Общий сбор аккаунта идёт, включая паузы между порциями и повторы. */
+  collecting?: boolean;
+  errorCode?: string;
+  /** Unix seconds: когда запрос сможет начать следующий сбор. */
+  refreshAfter?: number;
   leadsNoTasks: ProblemCount[];
   leadsWithFailedTasks: ProblemCount[];
   overdueTasks: ProblemCount[];

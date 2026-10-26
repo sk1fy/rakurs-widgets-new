@@ -1,7 +1,8 @@
 // Загрузки дневного экрана. Каждый блок грузится независимо (F3: ошибка
 // вчерашних данных не блокирует сегодняшние и показывается как «—»).
 // Автообновление: сегодня каждые 4 мин до конца рабочего окна (F1:
-// первый тик через 4 мин); проблемные списки и пропущенные — каждые 10 мин,
+// первый тик через 4 мин); пропущенные — каждые 10 мин, проблемные списки
+// по серверному сроку общего среза (7 мин) и чаще во время сбора,
 // всегда за «сегодня» (F5).
 
 import { useMemo } from "react";
@@ -9,6 +10,7 @@ import { useResource, type Resource } from "../../app/hooks";
 import type { ActivitySource, ActivityRatings, Sourced } from "../../api/source";
 import { minutesOfDay, todayKey } from "../../domain/time";
 import type { DayEvents, PanelContext, ProblemLists } from "../../domain/types";
+import { useProblemLists } from "./useProblemLists";
 import { dayRange, previousDayRange, type DayWindow } from "./model";
 
 export const DAY_REFRESH_MS = 4 * 60_000;
@@ -38,7 +40,7 @@ export function useDashboardData(source: ActivitySource, panel: PanelContext, wi
     { refreshKey: `${today.updatedAt}:${cutoffUnix}` });
   const yesterday = useResource(`prev:${prevRange.from}:${prevRange.to}`, (signal) => source.loadDayEvents(prevRange, signal));
   const managers = useMemo(() => panel.employees.map((e) => e.id), [panel.employees]);
-  const problems = useResource(`problems:${todayKey(tz)}:${managers.join(",")}`, (signal) => source.loadProblemLists({ managers, pipelines: panel.pipelines }, signal), { refreshMs: SNAPSHOT_REFRESH_MS });
+  const problems = useProblemLists(source, `problems:${todayKey(tz)}:${managers.join(",")}:${panel.pipelines.join(",")}`, managers, panel.pipelines);
   const current = useResource(win.isToday ? null : `current:${currentRange.from}`, (signal) => source.loadDayEvents(currentRange, signal), { refreshMs: SNAPSHOT_REFRESH_MS });
 
   return { today, ratings, yesterday, problems, current: win.isToday ? null : current };

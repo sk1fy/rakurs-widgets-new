@@ -4,6 +4,7 @@ import type { Sourced } from "../../api/source";
 import type { MissedCallsResult } from "../../domain/formulas/missedCalls";
 import { problemHeaderLink } from "../../domain/crmLinks";
 import { openPipelineStatuses } from "../../domain/formulas/pipelineFilter";
+import { hasProblemSnapshot } from "../../domain/problemRefresh";
 import { hhmm } from "../../domain/time";
 import type { ProblemCount, ProblemLists } from "../../domain/types";
 import { Icon } from "../../ui/Icon";
@@ -13,7 +14,7 @@ import { MissedCallsList, updatedLabel } from "../missed/MissedCallsList";
 /** Предел значка, как в старой шапке: 99+ у пропущенных, 999+ у сделок. */
 export const badge = (n: number, max: number): string => (n > max ? `${max}+` : String(n));
 
-function ProblemPopover({ title, dot, rows, link, snapshotAt, synthetic }: { title: string; dot: "y" | "r"; rows: ProblemCount[]; link: string | null; snapshotAt: number; synthetic: boolean }) {
+function ProblemPopover({ title, dot, rows, link, snapshotAt, synthetic, collecting, note }: { title: string; dot: "y" | "r"; rows: ProblemCount[]; link: string | null; snapshotAt: number; synthetic: boolean; collecting: boolean; note?: string }) {
   const { panel } = usePanelScope();
   const total = rows.reduce((s, r) => s + r.count, 0);
   const names = new Map(panel.employees.map((e) => [e.id, e.name]));
@@ -24,6 +25,7 @@ function ProblemPopover({ title, dot, rows, link, snapshotAt, synthetic }: { tit
       trigger={() => (
         <span className="hic" title={title}>
           <Icon name="dollar" />
+          {collecting && <span className="spin sm problem-refresh-spin" role="status" aria-label="Обновление проблемных сделок" />}
           <i className={`dot ${dot}`} />
           {total > 0 && <span className="cnt" title={String(total)}>{badge(total, 999)}</span>}
         </span>
@@ -37,6 +39,8 @@ function ProblemPopover({ title, dot, rows, link, snapshotAt, synthetic }: { tit
       <div className="dim small" style={{ marginBottom: 8 }}>
         Текущий срез на {hhmm(snapshotAt, panel.timezone)}, не зависит от выбранной даты.
       </div>
+      {collecting && <div className="dim small" role="status">Срез обновляется; показаны последние полные данные.</div>}
+      {note && <div className="dim small">{note}</div>}
       {rows
         .filter((r) => r.count > 0)
         .sort((a, b) => b.count - a.count)
@@ -64,9 +68,10 @@ function ProblemPopover({ title, dot, rows, link, snapshotAt, synthetic }: { tit
   );
 }
 
-export function HeaderIndicators({ missed, missedUpdatedAt, problems, problemsLoading, visibleIds }: { missed: MissedCallsResult | null; missedUpdatedAt: number | null; problems: Sourced<ProblemLists> | null; problemsLoading: boolean; visibleIds: number[] }) {
+export function HeaderIndicators({ missed, missedUpdatedAt, problems, problemsLoading, problemsError = false, visibleIds }: { missed: MissedCallsResult | null; missedUpdatedAt: number | null; problems: Sourced<ProblemLists> | null; problemsLoading: boolean; problemsError?: boolean; visibleIds: number[] }) {
   const { panel, prefs, viewKey } = usePanelScope();
   const n = prefs.notifications;
+  const initialError = problems?.kind === "ok" && !hasProblemSnapshot(problems) && !problems.data.collecting && Boolean(problems.data.errorCode);
   const visible = new Set(visibleIds);
   const pick = (list: ProblemCount[]) => list.filter((r) => visible.has(r.managerId));
   const statuses = openPipelineStatuses(panel.pipelineCatalog, panel.pipelines);
@@ -92,21 +97,26 @@ export function HeaderIndicators({ missed, missedUpdatedAt, problems, problemsLo
           {missed ? <MissedCallsList result={missed} limit={8} /> : <div className="dim small">Загрузка…</div>}
         </Popover>
       )}
-      {(n.leadsNoTasks || n.leadsFailedTasks) && !problems && problemsLoading && (
+      {(n.leadsNoTasks || n.leadsFailedTasks) && !hasProblemSnapshot(problems) && (problemsLoading || (problems?.kind === "ok" && problems.data.meta.snapshotAt <= 0 && !initialError)) && (
         <span className="hic" title="Загрузка проблемных сделок">
-          <span className="spin sm" />
+          <span className="spin sm" role="status" aria-label="Загрузка проблемных сделок" />
         </span>
+      )}
+      {(n.leadsNoTasks || n.leadsFailedTasks) && ((!problems && problemsError) || initialError) && (
+        <Popover align="right" label="Ошибка загрузки проблемных сделок" trigger={() => <span className="hic"><Icon name="dollar" /><span className="cnt">!</span></span>}>
+          <div className="dim small">{initialError && problems?.kind === "ok" ? problems.data.meta.note ?? "Сбор остановлен из-за ошибки доступа. Следующая проверка — не раньше чем через 7 минут." : "Срез не загрузился. Повтор выполняется автоматически."}</div>
+        </Popover>
       )}
       {(n.leadsNoTasks || n.leadsFailedTasks) && problems?.kind === "unavailable" && (
         <Popover align="right" label="Проблемные списки" trigger={() => <span className="hic" title="Проблемные списки не подключены"><Icon name="dollar" /></span>}>
           <NotConnected contract={problems.contract} reason={problems.reason} compact />
         </Popover>
       )}
-      {problems?.kind === "ok" && n.leadsNoTasks && (
-        <ProblemPopover title="Сделки без задач" dot="y" rows={pick(problems.data.leadsNoTasks)} link={headerLink("no_tasks", pick(problems.data.leadsNoTasks))} snapshotAt={problems.data.meta.snapshotAt} synthetic={problems.data.meta.source === "fixture"} />
+      {problems?.kind === "ok" && hasProblemSnapshot(problems) && n.leadsNoTasks && (
+        <ProblemPopover title="Сделки без задач" dot="y" rows={pick(problems.data.leadsNoTasks)} link={headerLink("no_tasks", pick(problems.data.leadsNoTasks))} snapshotAt={problems.data.meta.snapshotAt} synthetic={problems.data.meta.source === "fixture"} collecting={problemsLoading} note={problemsError ? "Обновление не удалось; показан последний полный срез. Повтор выполняется автоматически." : problems.data.meta.note} />
       )}
-      {problems?.kind === "ok" && n.leadsFailedTasks && (
-        <ProblemPopover title="Сделки с просроченными задачами" dot="r" rows={pick(problems.data.leadsWithFailedTasks)} link={headerLink("failed_tasks", pick(problems.data.leadsWithFailedTasks))} snapshotAt={problems.data.meta.snapshotAt} synthetic={problems.data.meta.source === "fixture"} />
+      {problems?.kind === "ok" && hasProblemSnapshot(problems) && n.leadsFailedTasks && (
+        <ProblemPopover title="Сделки с просроченными задачами" dot="r" rows={pick(problems.data.leadsWithFailedTasks)} link={headerLink("failed_tasks", pick(problems.data.leadsWithFailedTasks))} snapshotAt={problems.data.meta.snapshotAt} synthetic={problems.data.meta.source === "fixture"} collecting={problemsLoading} note={problemsError ? "Обновление не удалось; показан последний полный срез. Повтор выполняется автоматически." : problems.data.meta.note} />
       )}
     </>
   );

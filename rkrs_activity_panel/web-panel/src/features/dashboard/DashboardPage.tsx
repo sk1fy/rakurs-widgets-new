@@ -3,6 +3,7 @@ import { AppHeader } from "../../app/AppHeader";
 import { usePanelScope } from "../../app/context";
 import { useNow } from "../../app/hooks";
 import { navigate } from "../../app/router";
+import { hasProblemSnapshot } from "../../domain/problemRefresh";
 import { computeMissedCalls } from "../../domain/formulas/missedCalls";
 import { addMonths, dayShort, hhmm, minutesToHHMM, minutesOfDay, todayKey, addDays } from "../../domain/time";
 import { ErrorState, MetaBadges, NotConnected, Spinner } from "../../ui/primitives";
@@ -40,7 +41,7 @@ export function DashboardPage({ date }: { date: string | null }) {
       win,
       today: data.today.data,
       yesterday: data.yesterday.data,
-      problems: data.problems.data?.kind === "ok" ? data.problems.data.data : null,
+      problems: data.problems.data?.kind === "ok" && hasProblemSnapshot(data.problems.data) ? data.problems.data.data : null,
       nowUnix: now,
       ratings: data.ratings.data,
     });
@@ -65,6 +66,7 @@ export function DashboardPage({ date }: { date: string | null }) {
     </>
   );
   const problemsState = data.problems.data;
+  const problemsLoading = data.problems.status === "loading" || data.problems.refreshing || (problemsState?.kind === "ok" && problemsState.data.collecting === true);
   const hasRows = rows !== null;
   // Возврат из профиля: к карточке сотрудника, как в старой панели.
   useEffect(() => {
@@ -77,7 +79,7 @@ export function DashboardPage({ date }: { date: string | null }) {
 
   return (
     <>
-      <AppHeader mode={source.mode} panelName={panel.name} viewKey={viewKey} actions={<HeaderIndicators missed={missed} missedUpdatedAt={currentEvents?.meta.snapshotAt ?? null} problems={problemsState} problemsLoading={data.problems.status === "loading"} visibleIds={visibleIds} />} />
+      <AppHeader mode={source.mode} panelName={panel.name} viewKey={viewKey} actions={<HeaderIndicators missed={missed} missedUpdatedAt={currentEvents?.meta.snapshotAt ?? null} problems={problemsState} problemsLoading={problemsLoading} problemsError={data.problems.error !== null} visibleIds={visibleIds} />} />
       <div className="wrap">
         <div className="secrow">
           <div className="sect">Активность по группам</div>
@@ -136,11 +138,11 @@ export function DashboardPage({ date }: { date: string | null }) {
                       endMinutes={win.endMinutes}
                       isToday={win.isToday}
                       compact={compact}
-                      problemsAvailable={problemsState?.kind === "ok"}
+                      problemsAvailable={hasProblemSnapshot(problemsState)}
                       problemsSynthetic={problemsState?.kind === "ok" && problemsState.data.meta.source === "fixture"}
                       yesterdayLoaded={data.yesterday.status === "ready"}
                       yesterdayLoading={data.yesterday.status === "loading"}
-                      problemsLoading={data.problems.status === "loading"}
+                      problemsLoading={problemsLoading}
                       external={ext === "error" ? null : ext}
                       extra={ext === "error" ? <div className="dim small" style={{ marginTop: 4 }}>События панели задач не загрузились</div> : undefined}
                     />
