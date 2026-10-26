@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { AppHeader } from "../../app/AppHeader";
 import { usePanelScope } from "../../app/context";
 import { useNow } from "../../app/hooks";
@@ -12,6 +12,7 @@ import { GroupSection } from "./GroupSection";
 import { HeaderIndicators } from "./HeaderIndicators";
 import { buildRows, groupRows, resolveWindow, dayRange } from "./model";
 import { PlanFactStrip } from "./PlanFactStrip";
+import { takeReturn } from "./returnTarget";
 import { Sidebar } from "./Sidebar";
 import { useDashboardData } from "./useDashboardData";
 import { useExternalSessions } from "./useExternalSessions";
@@ -46,6 +47,7 @@ export function DashboardPage({ date }: { date: string | null }) {
   }, [panel, win, data.today.data, data.yesterday.data, data.problems.data, now]);
 
   const groups = rows ? groupRows(rows, panel, prefs) : [];
+  const percentById = useMemo(() => new Map((rows ?? []).map((r) => [r.employee.id, r.percent])), [rows]);
   const visibleIds = groups.flatMap((g) => g.rows.map((r) => r.employee.id));
   const currentEvents = win.isToday ? data.today.data : data.current?.data ?? null;
   const missed = useMemo(() => (currentEvents ? computeMissedCalls(currentEvents.byEmployee, tz) : null), [currentEvents, tz]);
@@ -63,10 +65,19 @@ export function DashboardPage({ date }: { date: string | null }) {
     </>
   );
   const problemsState = data.problems.data;
+  const hasRows = rows !== null;
+  // Возврат из профиля: к карточке сотрудника, как в старой панели.
+  useEffect(() => {
+    if (!hasRows) return;
+    const id = takeReturn();
+    if (id === null) return;
+    const card = document.querySelector(`[data-emp="${id}"]`);
+    if (card) card.scrollIntoView({ block: "center" });
+  }, [hasRows]);
 
   return (
     <>
-      <AppHeader mode={source.mode} panelName={panel.name} viewKey={viewKey} actions={<HeaderIndicators missed={missed} problems={problemsState} visibleIds={visibleIds} />} />
+      <AppHeader mode={source.mode} panelName={panel.name} viewKey={viewKey} actions={<HeaderIndicators missed={missed} missedUpdatedAt={currentEvents?.meta.snapshotAt ?? null} problems={problemsState} problemsLoading={data.problems.status === "loading"} visibleIds={visibleIds} />} />
       <div className="wrap">
         <div className="secrow">
           <div className="sect">Активность по группам</div>
@@ -91,7 +102,7 @@ export function DashboardPage({ date }: { date: string | null }) {
             Сотрудники
           </button>
           <div className="mainc">
-            {prefs.showPlanFact && <PlanFactStrip events={currentEvents} yesterday={win.isToday ? data.yesterday.data : null} win={currentWin} nowUnix={now} />}
+            {prefs.showPlanFact && <PlanFactStrip events={currentEvents} yesterday={win.isToday ? data.yesterday.data : null} win={currentWin} nowUnix={now} percentById={percentById} />}
             {showExternal && external.kind === "unavailable" && (
               <div style={{ marginBottom: 10 }}>
                 <NotConnected contract={external.contract} reason={`События панели задач на таймлайне: ${external.reason}`} compact />
@@ -125,6 +136,8 @@ export function DashboardPage({ date }: { date: string | null }) {
                       problemsAvailable={problemsState?.kind === "ok"}
                       problemsSynthetic={problemsState?.kind === "ok" && problemsState.data.meta.source === "fixture"}
                       yesterdayLoaded={data.yesterday.status === "ready"}
+                      yesterdayLoading={data.yesterday.status === "loading"}
+                      problemsLoading={data.problems.status === "loading"}
                       external={ext === "error" ? null : ext}
                       extra={ext === "error" ? <div className="dim small" style={{ marginTop: 4 }}>События панели задач не загрузились</div> : undefined}
                     />

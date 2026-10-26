@@ -233,6 +233,11 @@ export function fixturePanel(nowUnix: number): PanelContext {
     groups: [...new Map(FIXTURE_EMPLOYEES.map((e) => [e.groupId, { id: e.groupId, name: e.groupName }])).values()],
     crmBaseUrl: FIXTURE_CRM_BASE,
     pipelines: [],
+    pipelineCatalog: PIPELINES.map((p) => ({
+      id: String(p.id),
+      name: p.name,
+      statuses: [{ id: `${p.id}0`, name: "Неразобранное" }, ...p.stages.map((s) => ({ id: String(s.id), name: s.name })), { id: "142", name: "Успешно реализовано" }, { id: "143", name: "Закрыто и не реализовано" }],
+    })),
     operators: FIXTURE_OPERATORS,
     taskPanelEnabled: true,
     meta: fixtureMeta(nowUnix),

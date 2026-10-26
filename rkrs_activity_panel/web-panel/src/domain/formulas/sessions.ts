@@ -13,6 +13,11 @@ export function isImbox(s: WorkSession): boolean {
   return String(s.activityType ?? "").toLowerCase() === "imbox";
 }
 
+/** Время завершённых сессий панели задач без Imbox — подпись у «Завершённых» в анализе событий. */
+export function completedTaskSeconds(sessions: WorkSession[]): number {
+  return sessions.reduce((sum, s) => (s.kind !== "pause" && s.stoppedAt && !isImbox(s) ? sum + (s.workTimeSeconds || 0) : sum), 0);
+}
+
 /**
  * Длительность внутри выбранного дня: min(заявленная, фактически прошедшая),
  * открытая сессия учитывается только для сегодняшнего дня.
@@ -85,6 +90,8 @@ export interface SummaryCards {
   stages: SummaryRow[];
   taskTypes: SummaryRow[];
   fallbackTasks: number;
+  /** Уникальные задачи с временем (включая условные) — «N задач выполнено» у старой карточки. */
+  uniqueTasks: number;
 }
 
 const DEAL_PALETTE = ["#1f8d28", "#319a32", "#4fb94b", "#63c95f", "#7be67c", "#bcebbf", "#d7f2db"];
@@ -187,7 +194,8 @@ export function summaryCards(params: {
     }
   }
   const sort = (m: Map<string, SummaryRow>) => [...m.values()].sort((a, b) => b.seconds - a.seconds);
-  return { deals: sort(deals), stages: sort(stages), taskTypes: sort(types), fallbackTasks };
+  const uniqueTasks = new Set(items.map((i) => i.session.taskId).filter((id): id is number => !!id)).size;
+  return { deals: sort(deals), stages: sort(stages), taskTypes: sort(types), fallbackTasks, uniqueTasks };
 }
 
 export interface HistoryRow {

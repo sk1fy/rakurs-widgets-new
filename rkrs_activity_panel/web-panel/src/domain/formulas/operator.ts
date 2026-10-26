@@ -8,6 +8,8 @@
 // здесь он остаётся в «Звонках», но отдельно помечается как «без данных».
 
 import { normalizePhoneForMissed } from "../phone";
+import { plural } from "../plural";
+import { hhmm, zoned } from "../time";
 import type { CrmEvent, OperatorSettings } from "../types";
 
 export const DEFAULT_OPERATOR: Omit<OperatorSettings, "employeeId"> = {
@@ -163,4 +165,17 @@ export function remainingTimeLabel(hours: number): string {
   if (h > 0 && m > 0) return `${h}ч ${m}м`;
   if (h > 0) return `${h}ч`;
   return `${m}м`;
+}
+
+/** «Последний звонок» относительно сейчас (EmployeeSpeedWidget.formattedLastCallTime). */
+export function lastCallLabel(lastCallUnix: number, nowUnix: number, timeZone: string): string {
+  const minutes = Math.floor((nowUnix - lastCallUnix) / 60);
+  if (minutes < 1) return "только что";
+  if (minutes < 60) return `${minutes} ${plural(minutes, "минуту", "минуты", "минут")} назад`;
+  if (minutes < 24 * 60) {
+    const hours = Math.floor(minutes / 60);
+    return `${hours} ${plural(hours, "час", "часа", "часов")} назад`;
+  }
+  const day = zoned(lastCallUnix, timeZone).dayKey;
+  return `${day.slice(8, 10)}.${day.slice(5, 7)} в ${hhmm(lastCallUnix, timeZone)}`;
 }

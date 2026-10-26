@@ -4,7 +4,6 @@
 
 import type { DayEvents, EmployeeId, EmployeeSessions, PanelContext, ProblemLists } from "../domain/types";
 import { AmocrmProViewerSource } from "./amocrmPro";
-import { fixtureMeta, fixtureProblemLists, generateDay } from "./fixtures/generator";
 import type { ActivitySource, DayRange, EventCard, Sourced } from "./source";
 
 export class HybridSource implements ActivitySource {
@@ -31,15 +30,11 @@ export class HybridSource implements ActivitySource {
     return this.live.loadEventCard(eventId, signal);
   }
 
-  async loadProblemLists(params: { managers: EmployeeId[] }): Promise<Sourced<ProblemLists>> {
-    const now = Math.floor(Date.now() / 1000);
-    // Ссылки не строятся: адрес CRM живого аккаунта неизвестен (C2).
-    return { kind: "ok", data: { ...fixtureProblemLists(params.managers, now, null), meta: fixtureMeta(now, { note: "синтетика вместо C3" }) } };
+  loadProblemLists(params: { managers: EmployeeId[]; pipelines: string[] }, signal?: AbortSignal): Promise<Sourced<ProblemLists>> {
+    return this.live.loadProblemLists(params, signal);
   }
 
-  async loadSessions(employeeId: EmployeeId, range: DayRange): Promise<Sourced<EmployeeSessions>> {
-    const now = Math.floor(Date.now() / 1000);
-    const day = generateDay(employeeId, range.dayKey, now);
-    return { kind: "ok", data: { employeeId, day: range.dayKey, items: day.sessions, meta: fixtureMeta(now, { note: "синтетика вместо C4" }) } };
+  loadSessions(employeeId: EmployeeId, range: DayRange, signal?: AbortSignal): Promise<Sourced<EmployeeSessions>> {
+    return this.live.loadSessions(employeeId, range, signal);
   }
 }

@@ -1,5 +1,7 @@
+import { useState } from "react";
 import type { OperatorSettings } from "../../../domain/types";
-import { EmptyState, Switch } from "../../../ui/primitives";
+import { Icon } from "../../../ui/Icon";
+import { Avatar, EmptyState, Switch } from "../../../ui/primitives";
 import { departmentThresholds, toggleOperator } from "../draft";
 import { ExtensionGate, NumInput, type EditorSectionProps } from "./fields";
 
@@ -9,6 +11,9 @@ export function OperatorsSection({ draft, onChange, employees, errors, extension
   const selected = new Set(draft.core.employeeIds);
   const candidates = employees.filter((e) => selected.has(e.id)).sort((a, b) => a.name.localeCompare(b.name, "ru"));
   const byId = new Map(employees.map((e) => [e.id, e]));
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const shown = q ? candidates.filter((e) => e.name.toLowerCase().includes(q)) : candidates;
   const operators = draft.ext.operators;
   const isOperator = new Set(operators.map((o) => o.employeeId));
 
@@ -23,19 +28,32 @@ export function OperatorsSection({ draft, onChange, employees, errors, extension
           {candidates.length === 0 ? (
             <EmptyState title="Сначала выберите сотрудников" hint="Операторов можно назначить только из сотрудников панели (вкладка «Общие»)." />
           ) : (
-            <div className="checks">
-              {candidates.map((e) => (
-                <label key={e.id} className="chk">
-                  <input
-                    type="checkbox"
-                    checked={isOperator.has(e.id)}
-                    disabled={off}
-                    onChange={(ev) => setOperators(toggleOperator(operators, e.id, ev.target.checked, departmentThresholds(draft.ext, e.groupId)))}
-                  />
-                  {e.name}
-                </label>
-              ))}
-            </div>
+            <>
+              <div className="inline-srch" style={{ marginBottom: 4 }}>
+                <Icon name="search" />
+                <input type="search" placeholder="Поиск сотрудника" aria-label="Поиск сотрудника" value={query} onChange={(e) => setQuery(e.target.value)} />
+                {query && (
+                  <button type="button" className="srch-x" aria-label="Очистить поиск" onClick={() => setQuery("")}>
+                    <Icon name="close" />
+                  </button>
+                )}
+              </div>
+              <div className="checks">
+                {shown.length === 0 && <div className="dim small" style={{ padding: 6 }}>Никого не найдено</div>}
+                {shown.map((e) => (
+                  <label key={e.id} className="chk pick-e">
+                    <input
+                      type="checkbox"
+                      checked={isOperator.has(e.id)}
+                      disabled={off}
+                      onChange={(ev) => setOperators(toggleOperator(operators, e.id, ev.target.checked, departmentThresholds(draft.ext, e.groupId)))}
+                    />
+                    <Avatar id={e.id} name={e.name} url={e.avatarUrl} />
+                    <span className="pick-n">{e.name}</span>
+                  </label>
+                ))}
+              </div>
+            </>
           )}
         </div>
 
@@ -59,8 +77,13 @@ export function OperatorsSection({ draft, onChange, employees, errors, extension
                   return (
                     <tr key={o.employeeId} className={o.enabled ? "" : "dim"}>
                       <td>
-                        <div>{e?.name ?? `#${o.employeeId}`}</div>
-                        {e && <div className="dim small">{e.groupName}</div>}
+                        <div className="op-who">
+                          <Avatar id={o.employeeId} name={e?.name ?? `#${o.employeeId}`} url={e?.avatarUrl} />
+                          <div>
+                            <div>{e?.name ?? `#${o.employeeId}`}</div>
+                            {e && <div className="dim small">{e.groupName}</div>}
+                          </div>
+                        </div>
                         {err && <div className="small" style={{ color: "#ff8a8a" }}>{err}</div>}
                       </td>
                       <td>

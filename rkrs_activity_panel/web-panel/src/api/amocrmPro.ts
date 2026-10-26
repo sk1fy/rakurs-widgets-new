@@ -1,16 +1,18 @@
 // Адаптер viewer API amocrm-pro (/api/v1/activity/view/*, Bearer <view_key>).
 // Отдаёт только то, что источник действительно возвращает: проблемные
-// списки (C3) и сессии (C4) — «не подключено»; адрес CRM (C2) — null.
+// списки (C3) и сессии (C4) — «не подключено»; адрес CRM (C2) берётся из scoped viewer DTO.
 // Факты звонка: проекция call_facts (C1). Старый backend поддерживается
 // через payload события и ограниченную дозагрузку карточек (enrichment).
 
-import { extractPipelineIds } from "../domain/formulas/pipelineFilter";
-import type { CallFacts, CrmEvent, DataMeta, DayEvents, Employee, EmployeeId, Group, PanelContext } from "../domain/types";
+import { panelOptionsFromAPI, type RawPanelOptions } from "./panelOptions";
+import { leadsTaskFilterLink } from "../domain/crmLinks";
+import { extractPipelineIds, openPipelineStatuses } from "../domain/formulas/pipelineFilter";
+import type { CallFacts, CrmEvent, DataMeta, DayEvents, Employee, EmployeeId, Group, PanelContext, ProblemLists, EmployeeSessions, WorkSession } from "../domain/types";
 import { ApiError } from "./errors";
 import { mapLimit, requestJson } from "./http";
 import type { ActivitySource, DayRange, EventCard, Sourced } from "./source";
 
-interface RawUser { id: number; name: string; group_id: number; group_name: string }
+interface RawUser { id: number; name: string; group_id: number; group_name: string; avatar_url?: string; avatar?: string }
 interface RawEnrichment { object_kind: string; state: string; source: string; payload?: unknown; current: boolean }
 interface RawEvent {
   id: string;
@@ -33,7 +35,7 @@ interface RawEvent {
 }
 interface RawStatus { lag_seconds: number; last_success_at: number; state: string; reauth_required: boolean; error_code?: string }
 interface RawData { events: RawEvent[] | null; next_cursor?: string; status: RawStatus }
-interface RawPanel { name: string; timezone: string; display_window: { from: string; to: string }; employees: RawUser[] }
+interface RawPanel { task_panel_enabled?: boolean; options?: RawPanelOptions; pipelines?: { id: number; name: string; statuses: { id: number; name: string }[] }[]; crm_base_url?: string; name: string; timezone: string; display_window: { from: string; to: string }; employees: RawUser[] }
 interface RawTimeline { timezone: string; data: RawData; coverage?: string; freshness?: string; empty_reason?: string }
 
 /** Предел страниц на один день: 60 × 100 событий. Превышение — частичные данные. */
@@ -159,10 +161,21 @@ function metaFrom(t: RawTimeline, snapshotAt: number, partial: boolean, note?: s
   };
 }
 
+export function safeCrmBase(value: unknown): string | null {
+  if (typeof value !== "string" || !value) return null;
+  try {
+    const u = new URL(value);
+    if (u.protocol !== "https:" || u.username || u.password || u.port || u.search || u.hash || (u.pathname !== "/" && u.pathname !== "")) return null;
+    if (!/^[a-z0-9][a-z0-9-]*\.(amocrm\.ru|amocrm\.com|kommo\.com)$/.test(u.hostname)) return null;
+    return u.origin;
+  } catch { return null; }
+}
+
 export class AmocrmProViewerSource implements ActivitySource {
   readonly mode = "live" as const;
   private readonly base: string;
   private readonly viewKey: string;
+  private panelContext: PanelContext | null = null;
   private readonly cards = new Map<string, { card: EventCard; expiresAt: number }>();
 
   constructor(viewKey: string, apiBase: string = import.meta.env.VITE_ACTIVITY_API_BASE ?? "") {
@@ -176,21 +189,25 @@ export class AmocrmProViewerSource implements ActivitySource {
 
   async loadPanel(signal?: AbortSignal): Promise<PanelContext> {
     const raw = await this.get<RawPanel>("/panel", signal);
-    const employees: Employee[] = raw.employees.map((u) => ({ id: u.id, name: u.name, groupId: String(u.group_id), groupName: u.group_name || "Без отдела" }));
+    const options = panelOptionsFromAPI(raw.options);
+    const employees: Employee[] = raw.employees.map((u) => ({ id: u.id, name: u.name, groupId: String(u.group_id), groupName: u.group_name || "Без отдела", avatarUrl: u.avatar_url || u.avatar || undefined }));
     const groups = new Map<string, Group>();
     for (const e of employees) if (!groups.has(e.groupId)) groups.set(e.groupId, { id: e.groupId, name: e.groupName });
-    return {
+    const panel: PanelContext = {
       name: raw.name,
       timezone: raw.timezone,
       displayWindow: raw.display_window,
       employees,
       groups: [...groups.values()],
-      crmBaseUrl: null,
-      pipelines: [],
-      operators: [],
-      taskPanelEnabled: null,
+      crmBaseUrl: safeCrmBase(raw.crm_base_url),
+      pipelines: options?.pipelines ?? [],
+      pipelineCatalog: (raw.pipelines ?? []).map((p) => ({ id: String(p.id), name: p.name, statuses: (p.statuses ?? []).map((v) => ({ id: String(v.id), name: v.name })) })),
+      operators: options?.operators ?? [],
+      taskPanelEnabled: raw.task_panel_enabled ?? null,
       meta: { source: "amocrm-pro", snapshotAt: Math.floor(Date.now() / 1000), coverage: "unknown", partial: false, stale: false },
     };
+    this.panelContext = panel;
+    return panel;
   }
 
   private async paginate(path: string, range: DayRange, signal?: AbortSignal): Promise<{ events: CrmEvent[]; meta: DataMeta }> {
@@ -285,11 +302,47 @@ export class AmocrmProViewerSource implements ActivitySource {
     return card;
   }
 
-  async loadProblemLists(): Promise<Sourced<never>> {
-    return { kind: "unavailable", contract: "C3", reason: "amocrm-pro не отдаёт текущий срез сделок и задач для панели" };
+  async loadProblemLists(params: { managers: EmployeeId[]; pipelines: string[] }, signal?: AbortSignal): Promise<Sourced<ProblemLists>> {
+    const snapshot = await this.get<{ snapshot_at: number; stale?: boolean; state?: string; error_code?: string; counts: { employee_id: number; leads_no_tasks: number; leads_overdue_tasks: number; overdue_tasks: number }[] }>("/problems", signal);
+    const base = this.panelContext?.crmBaseUrl ?? null;
+    const selected = new Set(params.managers);
+    const pipelineStatuses = openPipelineStatuses(this.panelContext?.pipelineCatalog ?? [], params.pipelines);
+    const rows = snapshot.counts.filter((r) => selected.has(r.employee_id));
+    return { kind: "ok", data: {
+      leadsNoTasks: rows.map((r) => ({ managerId: r.employee_id, count: r.leads_no_tasks, filterLink: leadsTaskFilterLink(base, "no_tasks", [r.employee_id], pipelineStatuses) })),
+      leadsWithFailedTasks: rows.map((r) => ({ managerId: r.employee_id, count: r.leads_overdue_tasks, filterLink: leadsTaskFilterLink(base, "failed_tasks", [r.employee_id], pipelineStatuses) })),
+      overdueTasks: rows.map((r) => ({ managerId: r.employee_id, count: r.overdue_tasks, filterLink: base ? `${base}/todo/list/?filter[status][]=failed&filter[main_user][]=${r.employee_id}&useFilter=y` : null })),
+      meta: { source: "amocrm-pro", snapshotAt: snapshot.snapshot_at, coverage: "verified", partial: false, stale: snapshot.stale === true || Date.now() / 1000 - snapshot.snapshot_at > 120, note: snapshot.error_code ? "Обновление среза временно недоступно; показан последний полный срез" : snapshot.state && snapshot.state !== "idle" ? "Срез обновляется" : undefined },
+    } };
   }
 
-  async loadSessions(): Promise<Sourced<never>> {
-    return { kind: "unavailable", contract: "C4", reason: "Сессии задач и Imbox пишет устанавливаемый виджет; чтение в amocrm-pro не реализовано" };
+  async loadSessions(employeeId: EmployeeId, range: DayRange, signal?: AbortSignal): Promise<Sourced<EmployeeSessions>> {
+    const items: WorkSession[] = [];
+    const seen = new Set<string>();
+    let cursor = "";
+    let snapshotAt: number;
+    do {
+      const page = await this.get<{ snapshot_at: number; items: RawSession[]; next_cursor?: string }>(`/employees/${employeeId}/sessions?from=${range.from}&to=${range.to}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, signal);
+      items.push(...page.items.map(sessionFromAPI));
+      snapshotAt = page.snapshot_at;
+      cursor = page.next_cursor ?? "";
+      if (cursor && seen.has(cursor)) throw new ApiError({ code: "unavailable", message: "Повторяющаяся страница истории сессий" });
+      if (cursor) seen.add(cursor);
+    } while (cursor);
+    return { kind: "ok", data: { employeeId, day: range.dayKey, items, meta: { source: "amocrm-pro", snapshotAt, coverage: "verified", partial: false, stale: false } } };
   }
+}
+
+interface RawSession {
+  kind: "work" | "activity" | "pause"; started_at: number; stopped_at: number; work_time_seconds: number;
+  context: { task_id: number; task_name: string; task_type_id: number; task_type_name: string; task_result: string; activity_name: string; activity_type: string; entity_id: number; entity_type: string; entity_name: string; pipeline_id: number; pipeline_name: string; status_id: number; status_name: string; status_color: string };
+}
+function sessionFromAPI(s: RawSession): WorkSession {
+  const c = s.context;
+  return { kind: s.kind, startedAt: new Date(s.started_at * 1000).toISOString(), stoppedAt: s.stopped_at ? new Date(s.stopped_at * 1000).toISOString() : null, workTimeSeconds: s.work_time_seconds,
+    pauseTimeSeconds: s.kind === "pause" && s.stopped_at ? s.stopped_at - s.started_at : 0,
+    taskId: c.task_id || null, taskName: c.task_name, taskTypeId: c.task_type_id || null, taskTypeName: c.task_type_name, taskResult: c.task_result,
+    activityName: c.activity_name, activityType: c.activity_type, entityId: c.entity_id || null, entityType: c.entity_type, entityName: c.entity_name,
+    pipelineId: c.pipeline_id || null, pipelineName: c.pipeline_name, statusId: c.status_id || null, statusName: c.status_name, statusColor: c.status_color,
+  };
 }

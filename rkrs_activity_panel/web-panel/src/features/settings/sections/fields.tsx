@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Employee } from "../../../domain/types";
+import type { Employee, PipelineCatalogItem } from "../../../domain/types";
 import type { Capability } from "../../../settings/api";
 import { NotConnected } from "../../../ui/primitives";
 import { toInt, type FieldErrors, type PanelDraft } from "../draft";
@@ -9,6 +9,7 @@ export interface EditorSectionProps {
   draft: PanelDraft;
   onChange: (next: PanelDraft) => void;
   employees: Employee[];
+  pipelineCatalog?: PipelineCatalogItem[];
   errors: FieldErrors;
   extensions: Capability;
   disabled?: boolean;

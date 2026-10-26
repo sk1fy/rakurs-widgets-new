@@ -123,16 +123,17 @@ export function defaultExtensions(): PanelExtensions {
 }
 
 export const PRIORITY_RULES = [
-  { key: "urgent", label: "Срочные" },
-  { key: "overdue", label: "Просрочены" },
-  { key: "overdue_no_time", label: "Просрочены без времени" },
-  { key: "today_no_time", label: "Сегодняшние без времени" },
-  { key: "today_timed", label: "На сегодня по времени" },
-  { key: "future", label: "Будущие" },
+  { key: "urgent", label: "Срочные", hint: "Сегодня + задано конкретное время + (время прошло или осталось ≤ 10 мин до дедлайна)" },
+  { key: "overdue", label: "Просрочены", hint: "Задача уже просрочена + задано конкретное время" },
+  { key: "overdue_no_time", label: "Просрочены без времени", hint: "Задача уже просрочена + время не задано (весь день)" },
+  { key: "today_no_time", label: "Сегодняшние без времени", hint: "Сегодня + весь день" },
+  { key: "today_timed", label: "На сегодня по времени", hint: "Сегодня + задано конкретное время, до дедлайна больше 10 минут" },
+  { key: "future", label: "Будущие", hint: "Срок — завтра или позднее, со временем или без" },
 ] as const;
 export type PriorityRuleKey = (typeof PRIORITY_RULES)[number]["key"];
 
 export interface TaskPanelSettings {
+  revision?: number;
   enabled: boolean;
   enabledEmployees: EmployeeId[];
   considerFutureTasks: boolean;

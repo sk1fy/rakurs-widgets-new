@@ -2,12 +2,16 @@ import { usePanelScope } from "../../app/context";
 import { href } from "../../app/router";
 import type { Sourced } from "../../api/source";
 import type { MissedCallsResult } from "../../domain/formulas/missedCalls";
-import { leadsTaskFilterLink } from "../../domain/crmLinks";
+import { problemHeaderLink } from "../../domain/crmLinks";
+import { openPipelineStatuses } from "../../domain/formulas/pipelineFilter";
 import { hhmm } from "../../domain/time";
 import type { ProblemCount, ProblemLists } from "../../domain/types";
 import { Icon } from "../../ui/Icon";
 import { NotConnected, Popover } from "../../ui/primitives";
-import { MissedCallsList } from "../missed/MissedCallsList";
+import { MissedCallsList, updatedLabel } from "../missed/MissedCallsList";
+
+/** Предел значка, как в старой шапке: 99+ у пропущенных, 999+ у сделок. */
+export const badge = (n: number, max: number): string => (n > max ? `${max}+` : String(n));
 
 function ProblemPopover({ title, dot, rows, link, snapshotAt, synthetic }: { title: string; dot: "y" | "r"; rows: ProblemCount[]; link: string | null; snapshotAt: number; synthetic: boolean }) {
   const { panel } = usePanelScope();
@@ -21,7 +25,7 @@ function ProblemPopover({ title, dot, rows, link, snapshotAt, synthetic }: { tit
         <span className="hic" title={title}>
           <Icon name="dollar" />
           <i className={`dot ${dot}`} />
-          {total > 0 && <span className="cnt">{total}</span>}
+          {total > 0 && <span className="cnt" title={String(total)}>{badge(total, 999)}</span>}
         </span>
       )}
     >
@@ -60,11 +64,13 @@ function ProblemPopover({ title, dot, rows, link, snapshotAt, synthetic }: { tit
   );
 }
 
-export function HeaderIndicators({ missed, problems, visibleIds }: { missed: MissedCallsResult | null; problems: Sourced<ProblemLists> | null; visibleIds: number[] }) {
+export function HeaderIndicators({ missed, missedUpdatedAt, problems, problemsLoading, visibleIds }: { missed: MissedCallsResult | null; missedUpdatedAt: number | null; problems: Sourced<ProblemLists> | null; problemsLoading: boolean; visibleIds: number[] }) {
   const { panel, prefs, viewKey } = usePanelScope();
   const n = prefs.notifications;
   const visible = new Set(visibleIds);
   const pick = (list: ProblemCount[]) => list.filter((r) => visible.has(r.managerId));
+  const statuses = openPipelineStatuses(panel.pipelineCatalog, panel.pipelines);
+  const headerLink = (filter: "no_tasks" | "failed_tasks", rows: ProblemCount[]) => problemHeaderLink(panel.crmBaseUrl, filter, rows, panel.pipelines, statuses);
   return (
     <>
       {n.missedCalls && (
@@ -74,7 +80,7 @@ export function HeaderIndicators({ missed, problems, visibleIds }: { missed: Mis
           trigger={() => (
             <span className={`hic${missed?.items.length ? " red" : ""}`} title="Пропущенные звонки за сегодня">
               <Icon name="phoneIn" />
-              {missed && missed.items.length > 0 && <span className="cnt">{missed.items.length}</span>}
+              {missed && missed.items.length > 0 && <span className="cnt" title={String(missed.items.length)}>{badge(missed.items.length, 99)}</span>}
             </span>
           )}
         >
@@ -82,8 +88,14 @@ export function HeaderIndicators({ missed, problems, visibleIds }: { missed: Mis
             <span>Пропущенные сегодня</span>
             <a href={href({ name: "missed", viewKey })}>все</a>
           </h4>
+          {missedUpdatedAt !== null && <div className="mc-upd dim small">{updatedLabel(missedUpdatedAt, panel.timezone)}</div>}
           {missed ? <MissedCallsList result={missed} limit={8} /> : <div className="dim small">Загрузка…</div>}
         </Popover>
+      )}
+      {(n.leadsNoTasks || n.leadsFailedTasks) && !problems && problemsLoading && (
+        <span className="hic" title="Загрузка проблемных сделок">
+          <span className="spin sm" />
+        </span>
       )}
       {(n.leadsNoTasks || n.leadsFailedTasks) && problems?.kind === "unavailable" && (
         <Popover align="right" label="Проблемные списки" trigger={() => <span className="hic" title="Проблемные списки не подключены"><Icon name="dollar" /></span>}>
@@ -91,10 +103,10 @@ export function HeaderIndicators({ missed, problems, visibleIds }: { missed: Mis
         </Popover>
       )}
       {problems?.kind === "ok" && n.leadsNoTasks && (
-        <ProblemPopover title="Сделки без задач" dot="y" rows={pick(problems.data.leadsNoTasks)} link={leadsTaskFilterLink(panel.crmBaseUrl, "no_tasks", visibleIds)} snapshotAt={problems.data.meta.snapshotAt} synthetic={problems.data.meta.source === "fixture"} />
+        <ProblemPopover title="Сделки без задач" dot="y" rows={pick(problems.data.leadsNoTasks)} link={headerLink("no_tasks", pick(problems.data.leadsNoTasks))} snapshotAt={problems.data.meta.snapshotAt} synthetic={problems.data.meta.source === "fixture"} />
       )}
       {problems?.kind === "ok" && n.leadsFailedTasks && (
-        <ProblemPopover title="Сделки с просроченными задачами" dot="r" rows={pick(problems.data.leadsWithFailedTasks)} link={leadsTaskFilterLink(panel.crmBaseUrl, "failed_tasks", visibleIds)} snapshotAt={problems.data.meta.snapshotAt} synthetic={problems.data.meta.source === "fixture"} />
+        <ProblemPopover title="Сделки с просроченными задачами" dot="r" rows={pick(problems.data.leadsWithFailedTasks)} link={headerLink("failed_tasks", pick(problems.data.leadsWithFailedTasks))} snapshotAt={problems.data.meta.snapshotAt} synthetic={problems.data.meta.source === "fixture"} />
       )}
     </>
   );

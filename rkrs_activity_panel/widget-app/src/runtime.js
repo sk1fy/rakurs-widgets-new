@@ -1,6 +1,7 @@
 import { createApp } from "vue";
 import WidgetPanel from "./WidgetPanel.vue";
 import widgetCss from "./widget.css?inline";
+import { createLiveActivityController } from "./live-controller.js";
 import { createActivityController } from "./model.js";
 
 const registered = new WeakSet();
@@ -33,7 +34,7 @@ function recordFor(context) {
   if (!record) {
     record = {
       storageKey: key,
-      controller: createActivityController({
+      controller: typeof context.widget.$authorizedAjax === "function" && !document.querySelector("[data-rkrs-activity-panel-slot]") ? createLiveActivityController({ context, apiOrigin: import.meta.env.VITE_ACTIVITY_API_ORIGIN, appOrigin: import.meta.env.VITE_ACTIVITY_APP_ORIGIN }) : createActivityController({
         storage: safeStorage(),
         storageKey: key,
       }),

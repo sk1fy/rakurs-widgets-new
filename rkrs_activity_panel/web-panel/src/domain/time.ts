@@ -165,11 +165,17 @@ export function formatDurationShort(totalSeconds: number): string {
   return `${m} м.`;
 }
 
-/** Секунды показываются, пока нет полной минуты (суммарное время, задачи). */
+/** «1 м. 5 с.», «10 с.», «1 ч. 2 м.» — с остатком секунд, как в истории задач старой панели. */
 export function formatDurationWithSeconds(totalSeconds: number): string {
   const safe = Math.max(0, Math.round(totalSeconds));
-  if (safe < 60) return `${safe} с.`;
-  return formatDurationShort(safe);
+  const h = Math.floor(safe / 3600);
+  const m = Math.floor((safe % 3600) / 60);
+  const sec = safe % 60;
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h} ч.`);
+  if (m > 0) parts.push(`${m} м.`);
+  if (sec > 0 || parts.length === 0) parts.push(`${sec} с.`);
+  return parts.join(" ");
 }
 
 /** Длительность звонка «m:ss». */
@@ -177,6 +183,28 @@ export function formatCallDuration(seconds: number | null): string {
   if (seconds === null) return "—";
   const s = Math.max(0, Math.round(seconds));
   return `${Math.floor(s / 60)}:${pad(s % 60)}`;
+}
+
+/** «45м», «1ч 5м», «2ч» — длительность отрезка таймлайна в минутах. */
+export function formatSpan(totalMinutes: number): string {
+  const safe = Math.max(0, Math.round(totalMinutes));
+  if (safe < 60) return `${safe}м`;
+  const h = Math.floor(safe / 60);
+  const m = safe % 60;
+  return m > 0 ? `${h}ч ${m}м` : `${h}ч`;
+}
+
+/** «0с», «45с», «3м 10с», «1ч 5м» — длительность сессии панели задач. */
+export function formatSpanSeconds(seconds: number | null | undefined): string {
+  if (seconds == null || seconds < 0) return "—";
+  const safe = Math.round(seconds);
+  if (safe === 0) return "0с";
+  const h = Math.floor(safe / 3600);
+  const m = Math.floor((safe % 3600) / 60);
+  const s = safe % 60;
+  if (h > 0) return s === 0 ? `${h}ч ${m}м` : `${h}ч ${m}м ${s}с`;
+  if (m === 0) return `${s}с`;
+  return s === 0 ? `${m}м` : `${m}м ${s}с`;
 }
 
 export function formatMinutes(totalMinutes: number): string {

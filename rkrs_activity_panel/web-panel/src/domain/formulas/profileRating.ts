@@ -78,3 +78,16 @@ export function ratingColor(percent: number): string {
   if (percent < 75) return "#d8c100";
   return "#60d975";
 }
+
+/** Окраска карточки профиля по рейтингу (RATING_THEME_MAP в EmployeeGeneralInfoSectionV2.vue). */
+const RATING_THEMES: { max: number; accent: string; background: string }[] = [
+  { max: 20, accent: "#ff5a5f", background: "linear-gradient(135deg, rgba(84, 46, 69, 0.98), rgba(79, 48, 70, 0.96))" },
+  { max: 40, accent: "#f0a33a", background: "linear-gradient(135deg, rgba(69, 64, 57, 0.98), rgba(66, 62, 56, 0.96))" },
+  { max: 60, accent: "#d8c100", background: "linear-gradient(135deg, rgba(59, 72, 42, 0.98), rgba(57, 69, 42, 0.96))" },
+  { max: 75, accent: "#d8c100", background: "linear-gradient(135deg, rgba(60, 71, 43, 0.98), rgba(58, 69, 43, 0.96))" },
+  { max: Infinity, accent: "#60d975", background: "linear-gradient(135deg, rgba(35, 79, 75, 0.98), rgba(37, 83, 79, 0.96))" },
+];
+
+export function ratingTheme(percent: number): { accent: string; background: string } {
+  return RATING_THEMES.find((t) => percent < t.max) ?? RATING_THEMES[RATING_THEMES.length - 1]!;
+}

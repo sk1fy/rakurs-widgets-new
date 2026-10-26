@@ -98,8 +98,17 @@ export function ViewPreferencesForm({ value, onChange, panel }: { value: LocalPr
       </div>
 
       <div className="card">
-        <h3>Показатели</h3>
-        <p className="sub">Какие KPI показывать в карточках сотрудников.</p>
+        <div className="ch">
+          <div>
+            <h3>Показатели</h3>
+            <p className="sub">Какие KPI показывать в карточках сотрудников.</p>
+          </div>
+          <Switch
+            checked={KPI_KEYS.every((k) => value.kpi[k])}
+            onChange={(v) => patch({ kpi: Object.fromEntries(KPI_KEYS.map((k) => [k, v])) as typeof value.kpi })}
+            label="Все показатели"
+          />
+        </div>
         <div className="checks" style={{ maxHeight: "none" }}>
           {KPI_KEYS.map((k) => (
             <label key={k} className="chk">
