@@ -32,7 +32,7 @@ interface RawEvent {
   };
 }
 interface RawStatus { lag_seconds: number; last_success_at: number; state: string; reauth_required: boolean; error_code?: string }
-interface RawData { events: RawEvent[]; next_cursor?: string; status: RawStatus }
+interface RawData { events: RawEvent[] | null; next_cursor?: string; status: RawStatus }
 interface RawPanel { name: string; timezone: string; display_window: { from: string; to: string }; employees: RawUser[] }
 interface RawTimeline { timezone: string; data: RawData; coverage?: string; freshness?: string; empty_reason?: string }
 
@@ -203,10 +203,13 @@ export class AmocrmProViewerSource implements ActivitySource {
       const q = new URLSearchParams({ from: String(range.from), to: String(range.to), limit: "100" });
       if (cursor) q.set("cursor", cursor);
       last = await this.get<RawTimeline>(`${path}?${q.toString()}`, signal);
-      for (const event of last.data.events) {
+      // Go encodes an empty nil slice as null. Coverage still decides whether
+      // the empty result is verified; normalizing the list must not hide it.
+      const pageEvents = last.data.events ?? [];
+      for (const event of pageEvents) {
         if (event.call_facts == null) legacyCalls.add(String(event.id));
       }
-      events.push(...last.data.events.map(mapEvent));
+      events.push(...pageEvents.map(mapEvent));
       cursor = last.data.next_cursor || undefined;
       pages += 1;
     } while (cursor && pages < MAX_PAGES);

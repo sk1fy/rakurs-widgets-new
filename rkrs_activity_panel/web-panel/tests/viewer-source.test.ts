@@ -8,7 +8,7 @@ const event = (id: string, extra = {}) => ({
   entity_type: "leads", entity_id: 31, value_before: [], value_after: [{ note: { id: 51 } }], ...extra,
 });
 const facts = (duration: number | null) => ({ duration, phone: "+70000000001", direction: "incoming", result: "4", source: "notes_api", current: true });
-const timeline = (events: ReturnType<typeof event>[], cursor?: string) => ({
+const timeline = (events: ReturnType<typeof event>[] | null, cursor?: string) => ({
   data: { events, next_cursor: cursor, status: { state: "ready" } }, timezone: "Europe/Moscow", coverage: "verified", freshness: "current",
 });
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -16,6 +16,20 @@ const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("viewer C1", () => {
+  it.each(["day", "employee"] as const)("loads a null %s event page while retaining unverified coverage", async (surface) => {
+    const fetchMock = vi.fn().mockResolvedValue(json({
+      ...timeline(null), coverage: "partial", empty_reason: "unverified_empty",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const source = new AmocrmProViewerSource("synthetic-key", "");
+    const data = await (surface === "day" ? source.loadDayEvents(range) : source.loadEmployeeEvents(7, range));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect([...data.byEmployee.values()].flat()).toEqual([]);
+    expect(data.meta.coverage).toBe("partial");
+    expect(data.meta.partial).toBe(true);
+    expect(data.meta.note).toContain("unverified_empty");
+  });
+
   it("uses the page projection: known zero is missed, null remains unknown", async () => {
     const fetchMock = vi.fn().mockResolvedValue(json(timeline([
       event("zero", { call_facts: facts(0) }),
