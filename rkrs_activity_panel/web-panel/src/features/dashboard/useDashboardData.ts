@@ -33,8 +33,9 @@ export function useDashboardData(source: ActivitySource, panel: PanelContext, wi
 
   const today = useResource(`day:${range.from}:${range.to}`, (signal) => source.loadDayEvents(range, signal), { refreshMs: live ? DAY_REFRESH_MS : null });
   const cutoffUnix = win.isToday ? today.data?.meta.snapshotAt ?? nowUnix : null;
-  const ratings = useResource(today.data ? `rating:${range.from}:${range.to}:${win.startMinutes}:${win.endMinutes}:${today.updatedAt}:${cutoffUnix}` : null,
-    (signal) => source.loadActivityRatings({ ...range, surface: "dashboard", startMinutes: win.startMinutes, endMinutes: win.endMinutes, cutoffUnix }, signal));
+  const ratings = useResource(today.data ? `rating:${range.from}:${range.to}:${win.startMinutes}:${win.endMinutes}` : null,
+    (signal) => source.loadActivityRatings({ ...range, surface: "dashboard", startMinutes: win.startMinutes, endMinutes: win.endMinutes, cutoffUnix }, signal),
+    { refreshKey: `${today.updatedAt}:${cutoffUnix}` });
   const yesterday = useResource(`prev:${prevRange.from}:${prevRange.to}`, (signal) => source.loadDayEvents(prevRange, signal));
   const managers = useMemo(() => panel.employees.map((e) => e.id), [panel.employees]);
   const problems = useResource(`problems:${todayKey(tz)}:${managers.join(",")}`, (signal) => source.loadProblemLists({ managers, pipelines: panel.pipelines }, signal), { refreshMs: SNAPSHOT_REFRESH_MS });

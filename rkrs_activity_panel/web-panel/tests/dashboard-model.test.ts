@@ -25,6 +25,25 @@ describe("сравнение со вчера", () => {
 });
 
 describe("сборка строк", () => {
+  it("keeps CRM rows, KPIs and problem counts when the rating service is unavailable", () => {
+    const now = unixAt("2026-10-21", 12 * 60, TZ);
+    const panel = fixturePanel(now);
+    const today = { byEmployee: new Map(panel.employees.map((e) => [e.id, generateDay(e.id, "2026-10-21", now).events])), from: 0, to: 0, meta: panel.meta };
+    const win = resolveWindow(panel, defaultPreferences(), "2026-10-21", now);
+    const problems = { leadsNoTasks: panel.employees.map((employee) => ({ managerId: employee.id, count: 7, filterLink: null })), leadsWithFailedTasks: [], overdueTasks: [], meta: panel.meta };
+    const input = { panel, win, today, yesterday: null, problems, nowUnix: now };
+    const withoutRatings = buildRows({ ...input, ratings: null });
+    const withRatings = buildRows({ ...input, ratings: ratings(panel.employees.map((e) => e.id)) });
+    expect(withoutRatings).toHaveLength(withRatings.length);
+    for (const [index, row] of withoutRatings.entries()) {
+      expect(row.percent).toBeNull();
+      expect(row.kpis).toEqual(withRatings[index]?.kpis);
+      expect(row.timeline).toEqual(withRatings[index]?.timeline);
+      expect(row.problems).toEqual(withRatings[index]?.problems);
+      expect(row.problems.noTasks?.count).toBe(7);
+      expect(hasActivity(row)).toBe(row.events.length > 0);
+    }
+  });
   it("скрытые сотрудники и фильтр отделов", () => {
     const now = unixAt("2026-10-21", 12 * 60, TZ);
     const panel = fixturePanel(now);

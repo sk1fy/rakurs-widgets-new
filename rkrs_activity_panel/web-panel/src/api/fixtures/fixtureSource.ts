@@ -2,7 +2,7 @@ import { dashboardActivityPercent } from "../../domain/formulas/dashboardActivit
 import { profileRatingPercent } from "../../domain/formulas/profileRating";
 import { filterByPipelines } from "../../domain/formulas/pipelineFilter";
 // Источник режима разработки. Все ответы помечены meta.source = "fixture".
-// Сценарии состояний для проверки экранов: ?fixture=error|empty|partial|stale|slow.
+// Сценарии состояний для проверки экранов: ?fixture=error|rating-error|empty|partial|stale|slow.
 
 import { addDays, zoned, unixAt } from "../../domain/time";
 import type { CrmEvent, DayEvents, EmployeeId, EmployeeSessions, PanelContext, ProblemLists } from "../../domain/types";
@@ -10,11 +10,11 @@ import { ApiError } from "../errors";
 import type { ActivitySource, ActivityRatingParams, ActivityRatings, DayRange, EventCard, Sourced } from "../source";
 import { FIXTURE_TZ, fixtureMeta, fixturePanel, fixtureProblemLists, generateDay } from "./generator";
 
-export type FixtureScenario = "normal" | "error" | "empty" | "partial" | "stale" | "slow";
+export type FixtureScenario = "normal" | "error" | "rating-error" | "empty" | "partial" | "stale" | "slow";
 
 export function fixtureScenario(): FixtureScenario {
   const value = new URLSearchParams(globalThis.location?.search ?? "").get("fixture");
-  return value === "error" || value === "empty" || value === "partial" || value === "stale" || value === "slow" ? value : "normal";
+  return value === "error" || value === "rating-error" || value === "empty" || value === "partial" || value === "stale" || value === "slow" ? value : "normal";
 }
 
 const delay = (ms: number, signal?: AbortSignal) =>
@@ -63,6 +63,7 @@ export class FixtureSource implements ActivitySource {
 
   async loadActivityRatings(params: ActivityRatingParams, signal?: AbortSignal): Promise<ActivityRatings> {
     await this.wait(signal);
+    if (this.scenario === "rating-error") throw new ApiError({ code: "unavailable", message: "fixture: calculation unavailable", retryable: true });
     const panel = fixturePanel(this.now());
     const ids = params.employeeIds ?? panel.employees.map((e) => e.id);
     const byEmployee = new Map(ids.map((employeeId) => {

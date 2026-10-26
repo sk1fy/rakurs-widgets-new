@@ -34,7 +34,7 @@ export function DashboardPage({ date }: { date: string | null }) {
   const data = useDashboardData(source, panel, stableWin, now, stableCur);
 
   const rows = useMemo(() => {
-    if (!data.today.data || !data.ratings.data) return null;
+    if (!data.today.data) return null;
     return buildRows({
       panel,
       win,
@@ -109,7 +109,7 @@ export function DashboardPage({ date }: { date: string | null }) {
               </div>
             )}
             {data.ratings.error !== null && <ErrorState error={data.ratings.error} onRetry={data.ratings.reload} />}
-            {data.today.data && data.ratings.status === "loading" && <Spinner label="Расчёт активности…" />}
+            {data.today.data && (data.ratings.status === "loading" || data.ratings.refreshing) && <div className="refreshing"><span className="spin" /> {data.ratings.data ? "Обновление расчёта активности…" : "Расчёт активности…"}</div>}
             {data.ratings.data?.partial && <div className="banner">Расчёт активности выполнен по неполной выборке событий.</div>}
             {data.today.status === "error" && <ErrorState error={data.today.error} onRetry={data.today.reload} />}
             {data.today.status === "loading" && <Spinner label="Загрузка событий дня…" />}

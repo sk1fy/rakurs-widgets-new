@@ -49,7 +49,7 @@ export function comparisonCutoff(win: DayWindow, timeZone: string, nowUnix: numb
 export interface EmployeeRow {
   employee: Employee;
   events: CrmEvent[];
-  percent: number;
+  percent: number | null;
   kpis: RowKpis;
   timeline: TimelineRow;
   problems: { noTasks: ProblemCount | null; failed: ProblemCount | null; overdue: ProblemCount | null };
@@ -65,8 +65,8 @@ export interface GroupBlock {
   total: number;
 }
 
-/** Как в старой панели: сотрудник с 0% активности на дашборде не показывается. */
-export const hasActivity = (row: EmployeeRow): boolean => row.percent > 0;
+/** Known zero stays hidden; unavailable ratings do not hide observed CRM events. */
+export const hasActivity = (row: EmployeeRow): boolean => row.percent === null ? row.events.length > 0 : row.percent > 0;
 
 export function buildRows(params: {
   panel: PanelContext;
@@ -75,7 +75,7 @@ export function buildRows(params: {
   yesterday: DayEvents | null;
   problems: ProblemLists | null;
   nowUnix: number;
-  ratings: ActivityRatings;
+  ratings: ActivityRatings | null;
 }): EmployeeRow[] {
   const { panel, win, today, yesterday, problems, nowUnix } = params;
   const tz = panel.timezone;
@@ -87,7 +87,7 @@ export function buildRows(params: {
     return {
       employee,
       events,
-      percent: requiredRating(params.ratings, employee.id),
+      percent: serverRating(params.ratings, employee.id),
       kpis: rowKpis(events, yEvents),
       timeline: buildTimelineRow({ events, dayKey: win.dayKey, timeZone: tz, startMinutes: win.startMinutes, endMinutes: win.endMinutes, nowUnix: win.isToday ? nowUnix : null }),
       problems: {
@@ -99,16 +99,14 @@ export function buildRows(params: {
   });
 }
 
-function requiredRating(ratings: ActivityRatings, employeeId: EmployeeId): number {
-  const rating = ratings.byEmployee.get(employeeId);
-  if (!rating) throw new Error(`Missing Activity percentage for employee ${employeeId}`);
-  return rating.percent;
+function serverRating(ratings: ActivityRatings | null, employeeId: EmployeeId): number | null {
+  return ratings?.byEmployee.get(employeeId)?.percent ?? null;
 }
 
 export function sortRows(rows: EmployeeRow[], order: SortOrder): EmployeeRow[] {
   const copy = [...rows];
   if (order === "name") return copy.sort((a, b) => a.employee.name.localeCompare(b.employee.name, "ru"));
-  return copy.sort((a, b) => (order === "desc" ? b.percent - a.percent : a.percent - b.percent) || a.employee.name.localeCompare(b.employee.name, "ru"));
+  return copy.sort((a, b) => (order === "desc" ? (b.percent ?? -1) - (a.percent ?? -1) : (a.percent ?? -1) - (b.percent ?? -1)) || a.employee.name.localeCompare(b.employee.name, "ru"));
 }
 
 export function groupRows(rows: EmployeeRow[], panel: PanelContext, prefs: LocalPreferences): GroupBlock[] {

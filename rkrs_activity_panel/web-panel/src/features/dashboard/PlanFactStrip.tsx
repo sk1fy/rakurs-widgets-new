@@ -12,7 +12,7 @@ import type { DayWindow } from "./model";
 const SCROLL_STEP = 450;
 
 /** Карусель план/факт операторов — всегда «сегодня» (F5), по настройкам операторов панели (C5). */
-export function PlanFactStrip({ events, yesterday, win, nowUnix, percentById }: { events: DayEvents | null; yesterday: DayEvents | null; win: DayWindow; nowUnix: number; percentById: Map<EmployeeId, number> }) {
+export function PlanFactStrip({ events, yesterday, win, nowUnix, percentById }: { events: DayEvents | null; yesterday: DayEvents | null; win: DayWindow; nowUnix: number; percentById: Map<EmployeeId, number | null> }) {
   const { panel, viewKey } = usePanelScope();
   const stripRef = useRef<HTMLDivElement>(null);
   const [edges, setEdges] = useState({ left: false, right: false });

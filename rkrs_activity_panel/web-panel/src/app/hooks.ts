@@ -26,7 +26,7 @@ export interface Resource<T> {
  * refreshMs после загрузки (F1), скрытая вкладка пропускает тик.
  * Ошибка фонового обновления не стирает данные: они помечаются как устаревшие.
  */
-export function useResource<T>(key: string | null, load: (signal: AbortSignal) => Promise<T>, options: { refreshMs?: number | null } = {}): Resource<T> {
+export function useResource<T>(key: string | null, load: (signal: AbortSignal) => Promise<T>, options: { refreshMs?: number | null; refreshKey?: string | number | null } = {}): Resource<T> {
   const [state, setState] = useState<Omit<Resource<T>, "reload">>({ data: null, error: null, status: "idle", refreshing: false, updatedAt: null });
   const loadRef = useRef(load);
   loadRef.current = load;
@@ -34,7 +34,7 @@ export function useResource<T>(key: string | null, load: (signal: AbortSignal) =
   const keyRef = useRef<string | null>(null);
 
   const run = useCallback((background: boolean, signal: AbortSignal) => {
-    setState((s) => (background ? { ...s, refreshing: true } : { data: null, error: null, status: "loading", refreshing: false, updatedAt: s.updatedAt }));
+    setState((s) => (background && s.data !== null ? { ...s, refreshing: true } : { data: null, error: null, status: "loading", refreshing: false, updatedAt: s.updatedAt }));
     loadRef.current(signal).then(
       (data) => {
         if (signal.aborted) return;
@@ -47,17 +47,19 @@ export function useResource<T>(key: string | null, load: (signal: AbortSignal) =
     );
   }, []);
 
+  const refreshKey = options.refreshKey;
   useEffect(() => {
     if (key === null) {
+      keyRef.current = null;
       setState({ data: null, error: null, status: "idle", refreshing: false, updatedAt: null });
       return;
     }
     const controller = new AbortController();
-    const background = keyRef.current === key && nonce > 0;
+    const background = keyRef.current === key;
     keyRef.current = key;
     run(background, controller.signal);
     return () => controller.abort();
-  }, [key, nonce, run]);
+  }, [key, nonce, refreshKey, run]);
 
   const refreshMs = options.refreshMs ?? null;
   useEffect(() => {
