@@ -1,3 +1,4 @@
+import type { ActivityRatings } from "../src/api/source";
 import { describe, expect, it } from "vitest";
 import { comparisonCutoff, resolveWindow, buildRows, groupRows, hasActivity } from "../src/features/dashboard/model";
 import { fixturePanel, generateDay } from "../src/api/fixtures/generator";
@@ -7,6 +8,7 @@ import { defaultPreferences } from "../src/settings/models";
 import { parseHash, href } from "../src/app/router";
 
 const TZ = "Europe/Moscow";
+const ratings = (ids: number[], idle?: number): ActivityRatings => ({ formulaVersion: "dashboard-v1", dayKey: "2026-10-21", timeZone: TZ, startMinutes: 540, endMinutes: 1080, cutoffUnix: null, snapshotAt: 0, partial: false, byEmployee: new Map(ids.map((id) => [id, { employeeId: id, percent: id === idle ? 0 : 37.4 }])) });
 
 describe("сравнение со вчера", () => {
   const panel = fixturePanel(0);
@@ -28,12 +30,12 @@ describe("сборка строк", () => {
     const panel = fixturePanel(now);
     const today = { byEmployee: new Map(panel.employees.map((e) => [e.id, generateDay(e.id, "2026-10-21", now).events])), from: 0, to: 0, meta: panel.meta };
     const win = resolveWindow(panel, defaultPreferences(), "2026-10-21", now);
-    const rows = buildRows({ panel, win, today, yesterday: null, problems: null, nowUnix: now, cutoffUnix: now });
+    const rows = buildRows({ panel, win, today, yesterday: null, problems: null, nowUnix: now, ratings: ratings(panel.employees.map((e) => e.id)) });
     const prefs = { ...defaultPreferences(), hiddenEmployees: [9001], selectedDepartments: ["1"] };
     const groups = groupRows(rows, panel, prefs);
     expect(groups.map((g) => g.id)).toEqual(["1"]);
     expect(groups[0]?.rows.map((r) => r.employee.id)).not.toContain(9001);
-    expect(rows.every((r) => r.percent >= 0 && r.percent <= 100)).toBe(true);
+    expect(rows.every((r) => r.percent === 37.4)).toBe(true);
   });
   it("как в старой панели: 0% не показывается, счётчик группы — активные/всего", () => {
     const now = unixAt("2026-10-21", 12 * 60, TZ);
@@ -41,7 +43,7 @@ describe("сборка строк", () => {
     const [idle, ...rest] = panel.employees;
     const today = { byEmployee: new Map(rest.map((e) => [e.id, generateDay(e.id, "2026-10-21", now).events])), from: 0, to: 0, meta: panel.meta };
     const win = resolveWindow(panel, defaultPreferences(), "2026-10-21", now);
-    const rows = buildRows({ panel, win, today, yesterday: null, problems: null, nowUnix: now, cutoffUnix: now });
+    const rows = buildRows({ panel, win, today, yesterday: null, problems: null, nowUnix: now, ratings: ratings(panel.employees.map((e) => e.id), idle?.id) });
     const idleRow = rows.find((r) => r.employee.id === idle?.id);
     expect(idleRow?.percent).toBe(0);
     expect(idleRow && hasActivity(idleRow)).toBe(false);

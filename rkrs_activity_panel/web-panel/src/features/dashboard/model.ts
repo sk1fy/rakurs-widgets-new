@@ -1,7 +1,7 @@
 // Чистая сборка строк дневного экрана из загруженных данных. Без React —
 // чтобы правила (отсечка, сравнение со вчера, сортировка, фильтры) проверялись тестами.
 
-import { dashboardActivityPercent } from "../../domain/formulas/dashboardActivity";
+import type { ActivityRatings } from "../../api/source";
 import { rowKpis, type RowKpis } from "../../domain/formulas/kpi";
 import { filterByPipelines } from "../../domain/formulas/pipelineFilter";
 import { buildTimelineRow, type TimelineRow } from "../../domain/formulas/timelineRow";
@@ -75,8 +75,7 @@ export function buildRows(params: {
   yesterday: DayEvents | null;
   problems: ProblemLists | null;
   nowUnix: number;
-  /** Момент среза текущих данных — отсечка процента для сегодня. */
-  cutoffUnix: number | null;
+  ratings: ActivityRatings;
 }): EmployeeRow[] {
   const { panel, win, today, yesterday, problems, nowUnix } = params;
   const tz = panel.timezone;
@@ -88,14 +87,7 @@ export function buildRows(params: {
     return {
       employee,
       events,
-      percent: dashboardActivityPercent({
-        events,
-        dayKey: win.dayKey,
-        timeZone: tz,
-        startMinutes: win.startMinutes,
-        endMinutes: win.endMinutes,
-        cutoffUnix: win.isToday ? params.cutoffUnix ?? nowUnix : null,
-      }),
+      percent: requiredRating(params.ratings, employee.id),
       kpis: rowKpis(events, yEvents),
       timeline: buildTimelineRow({ events, dayKey: win.dayKey, timeZone: tz, startMinutes: win.startMinutes, endMinutes: win.endMinutes, nowUnix: win.isToday ? nowUnix : null }),
       problems: {
@@ -105,6 +97,12 @@ export function buildRows(params: {
       },
     };
   });
+}
+
+function requiredRating(ratings: ActivityRatings, employeeId: EmployeeId): number {
+  const rating = ratings.byEmployee.get(employeeId);
+  if (!rating) throw new Error(`Missing Activity percentage for employee ${employeeId}`);
+  return rating.percent;
 }
 
 export function sortRows(rows: EmployeeRow[], order: SortOrder): EmployeeRow[] {

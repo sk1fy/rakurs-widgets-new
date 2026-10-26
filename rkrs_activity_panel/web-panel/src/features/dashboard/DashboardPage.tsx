@@ -34,7 +34,7 @@ export function DashboardPage({ date }: { date: string | null }) {
   const data = useDashboardData(source, panel, stableWin, now, stableCur);
 
   const rows = useMemo(() => {
-    if (!data.today.data) return null;
+    if (!data.today.data || !data.ratings.data) return null;
     return buildRows({
       panel,
       win,
@@ -42,9 +42,9 @@ export function DashboardPage({ date }: { date: string | null }) {
       yesterday: data.yesterday.data,
       problems: data.problems.data?.kind === "ok" ? data.problems.data.data : null,
       nowUnix: now,
-      cutoffUnix: data.today.data.meta.snapshotAt,
+      ratings: data.ratings.data,
     });
-  }, [panel, win, data.today.data, data.yesterday.data, data.problems.data, now]);
+  }, [panel, win, data.today.data, data.ratings.data, data.yesterday.data, data.problems.data, now]);
 
   const groups = rows ? groupRows(rows, panel, prefs) : [];
   const percentById = useMemo(() => new Map((rows ?? []).map((r) => [r.employee.id, r.percent])), [rows]);
@@ -108,6 +108,9 @@ export function DashboardPage({ date }: { date: string | null }) {
                 <NotConnected contract={external.contract} reason={`События панели задач на таймлайне: ${external.reason}`} compact />
               </div>
             )}
+            {data.ratings.error !== null && <ErrorState error={data.ratings.error} onRetry={data.ratings.reload} />}
+            {data.today.data && data.ratings.status === "loading" && <Spinner label="Расчёт активности…" />}
+            {data.ratings.data?.partial && <div className="banner">Расчёт активности выполнен по неполной выборке событий.</div>}
             {data.today.status === "error" && <ErrorState error={data.today.error} onRetry={data.today.reload} />}
             {data.today.status === "loading" && <Spinner label="Загрузка событий дня…" />}
             {rows && groups.length === 0 && <div className="state empty">Нет сотрудников для показа: проверьте фильтр отделов и сотрудников.</div>}

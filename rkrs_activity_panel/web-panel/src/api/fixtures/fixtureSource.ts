@@ -1,10 +1,13 @@
+import { dashboardActivityPercent } from "../../domain/formulas/dashboardActivity";
+import { profileRatingPercent } from "../../domain/formulas/profileRating";
+import { filterByPipelines } from "../../domain/formulas/pipelineFilter";
 // Источник режима разработки. Все ответы помечены meta.source = "fixture".
 // Сценарии состояний для проверки экранов: ?fixture=error|empty|partial|stale|slow.
 
-import { addDays, zoned } from "../../domain/time";
+import { addDays, zoned, unixAt } from "../../domain/time";
 import type { CrmEvent, DayEvents, EmployeeId, EmployeeSessions, PanelContext, ProblemLists } from "../../domain/types";
 import { ApiError } from "../errors";
-import type { ActivitySource, DayRange, EventCard, Sourced } from "../source";
+import type { ActivitySource, ActivityRatingParams, ActivityRatings, DayRange, EventCard, Sourced } from "../source";
 import { FIXTURE_TZ, fixtureMeta, fixturePanel, fixtureProblemLists, generateDay } from "./generator";
 
 export type FixtureScenario = "normal" | "error" | "empty" | "partial" | "stale" | "slow";
@@ -56,6 +59,20 @@ export class FixtureSource implements ActivitySource {
       coverage: this.scenario === "partial" ? "partial" : "verified",
       note: this.scenario === "partial" ? "fixture: часть страниц не получена" : this.scenario === "stale" ? "fixture: сбор отстаёт" : undefined,
     });
+  }
+
+  async loadActivityRatings(params: ActivityRatingParams, signal?: AbortSignal): Promise<ActivityRatings> {
+    await this.wait(signal);
+    const panel = fixturePanel(this.now());
+    const ids = params.employeeIds ?? panel.employees.map((e) => e.id);
+    const byEmployee = new Map(ids.map((employeeId) => {
+      const allEvents = this.eventsFor(employeeId, params);
+      const input = { events: params.surface === "dashboard" ? filterByPipelines(allEvents, panel.pipelines) : allEvents, dayKey: params.dayKey, timeZone: panel.timezone, startMinutes: params.startMinutes, endMinutes: params.endMinutes };
+      const percent = params.surface === "dashboard" ? dashboardActivityPercent({ ...input, cutoffUnix: params.cutoffUnix }) : profileRatingPercent({ ...input, nowUnix: params.cutoffUnix });
+      const minutePercentages = params.surface === "profile" ? Array.from({ length: 1441 }, (_, m) => profileRatingPercent({ ...input, nowUnix: unixAt(params.dayKey, m, panel.timezone) })) : undefined;
+      return [employeeId, { employeeId, percent, minutePercentages }] as const;
+    }));
+    return { formulaVersion: `${params.surface}-v1`, dayKey: params.dayKey, timeZone: panel.timezone, startMinutes: params.startMinutes, endMinutes: params.endMinutes, cutoffUnix: params.cutoffUnix, snapshotAt: this.now(), partial: this.scenario === "partial", byEmployee };
   }
 
   async loadPanel(signal?: AbortSignal): Promise<PanelContext> {

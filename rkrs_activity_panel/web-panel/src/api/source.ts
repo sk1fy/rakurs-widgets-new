@@ -47,8 +47,37 @@ export interface DayRange {
   to: number;
 }
 
+/** Inputs to the Activity-owned legacy-compatible percentage calculation. */
+export interface ActivityRatingParams extends DayRange {
+  surface: "dashboard" | "profile";
+  startMinutes: number;
+  endMinutes: number;
+  cutoffUnix: number | null;
+  employeeIds?: EmployeeId[];
+}
+
+export interface ActivityEmployeeRating {
+  employeeId: EmployeeId;
+  percent: number;
+  /** Profile-only ready-made percentages indexed by local minute 0..1440. */
+  minutePercentages?: number[];
+}
+
+export interface ActivityRatings {
+  formulaVersion: "dashboard-v1" | "profile-v1";
+  dayKey: string;
+  timeZone: string;
+  startMinutes: number;
+  endMinutes: number;
+  cutoffUnix: number | null;
+  snapshotAt: number;
+  partial: boolean;
+  byEmployee: Map<EmployeeId, ActivityEmployeeRating>;
+}
+
 export interface ActivitySource {
   readonly mode: DataMode;
+  loadActivityRatings(params: ActivityRatingParams, signal?: AbortSignal): Promise<ActivityRatings>;
   loadPanel(signal?: AbortSignal): Promise<PanelContext>;
   /** События всех сотрудников панели за окно [from, to]. */
   loadDayEvents(range: DayRange, signal?: AbortSignal): Promise<DayEvents>;

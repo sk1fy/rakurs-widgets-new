@@ -10,7 +10,7 @@ import { extractPipelineIds, openPipelineStatuses } from "../domain/formulas/pip
 import type { CallFacts, CrmEvent, DataMeta, DayEvents, Employee, EmployeeId, Group, PanelContext, ProblemLists, EmployeeSessions, WorkSession } from "../domain/types";
 import { ApiError } from "./errors";
 import { mapLimit, requestJson } from "./http";
-import type { ActivitySource, DayRange, EventCard, Sourced } from "./source";
+import type { ActivitySource, ActivityRatingParams, ActivityRatings, DayRange, EventCard, Sourced } from "./source";
 
 interface RawUser { id: number; name: string; group_id: number; group_name: string; avatar_url?: string; avatar?: string }
 interface RawEnrichment { object_kind: string; state: string; source: string; payload?: unknown; current: boolean }
@@ -261,6 +261,22 @@ export class AmocrmProViewerSource implements ActivitySource {
       }
     });
     return { unresolved: events.filter((e) => e.call && e.call.durationSeconds === null).length };
+  }
+
+  async loadActivityRatings(params: ActivityRatingParams, signal?: AbortSignal): Promise<ActivityRatings> {
+    const query = new URLSearchParams({ from: String(params.from), to: String(params.to), day: params.dayKey, surface: params.surface, start_minutes: String(params.startMinutes), end_minutes: String(params.endMinutes) });
+    if (params.cutoffUnix !== null) query.set("cutoff_unix", String(params.cutoffUnix));
+    if (params.employeeIds?.length) query.set("employee_ids", params.employeeIds.join(","));
+    const raw = await this.get<{ formula_version: string; day: string; timezone: string; start_minutes: number; end_minutes: number; cutoff_unix?: number; snapshot_at: number; partial: boolean; employees: { employee_id: number; percent: number; minute_percentages?: number[] }[] }>(`/activity?${query}`, signal);
+    const expectedVersion = `${params.surface}-v1` as ActivityRatings["formulaVersion"];
+    const validPercent = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 100;
+    if (raw.formula_version !== expectedVersion || raw.day !== params.dayKey || raw.start_minutes !== params.startMinutes || raw.end_minutes !== params.endMinutes || (raw.cutoff_unix ?? null) !== params.cutoffUnix || !Array.isArray(raw.employees) || raw.employees.some((r) => !validPercent(r.percent) || (params.surface === "profile" && (!Array.isArray(r.minute_percentages) || r.minute_percentages.length !== 1441 || !r.minute_percentages.every(validPercent))))) {
+      throw new ApiError({ code: "unavailable", message: "Некорректный ответ расчёта активности", retryable: true });
+    }
+    const byEmployee = new Map(raw.employees.map((r) => [r.employee_id, { employeeId: r.employee_id, percent: r.percent, minutePercentages: r.minute_percentages }]));
+    const expectedIds = params.employeeIds ?? this.panelContext?.employees.map((e) => e.id) ?? [];
+    if (expectedIds.some((id) => !byEmployee.has(id))) throw new ApiError({ code: "unavailable", message: "Расчёт активности вернул не всех сотрудников", retryable: true });
+    return { formulaVersion: expectedVersion, dayKey: raw.day, timeZone: raw.timezone, startMinutes: raw.start_minutes, endMinutes: raw.end_minutes, cutoffUnix: raw.cutoff_unix ?? null, snapshotAt: raw.snapshot_at, partial: raw.partial, byEmployee };
   }
 
   async loadDayEvents(range: DayRange, signal?: AbortSignal): Promise<DayEvents> {

@@ -4,7 +4,8 @@ import { usePanelScope } from "../../app/context";
 import { useNow } from "../../app/hooks";
 import { href, navigate } from "../../app/router";
 import { avatarSrc } from "../../domain/crmLinks";
-import { profileRatingPercent, ratingTheme } from "../../domain/formulas/profileRating";
+import { ratingTheme } from "../../domain/formulas/profileRating";
+import { profileActivityPercent } from "../../domain/activityRatings";
 import { addMonths, todayKey } from "../../domain/time";
 import { Icon } from "../../ui/Icon";
 import { Avatar, EmptyState, ErrorState, MetaBadges } from "../../ui/primitives";
@@ -29,7 +30,7 @@ export function EmployeePage({ employeeId, date }: { employeeId: number; date: s
   const dayKey = date && date >= addMonths(today, -1) && date <= today ? date : today;
   const win = resolveWindow(panel, prefs, dayKey, now);
   const employee = panel.employees.find((e) => e.id === employeeId);
-  const data = useEmployeeData(source, employeeId, dayKey, tz, win.isToday ? DAY_REFRESH_MS : null);
+  const data = useEmployeeData(source, employeeId, dayKey, tz, win.isToday ? DAY_REFRESH_MS : null, win.startMinutes, win.endMinutes, now);
   const events = data.events.data?.byEmployee.get(employeeId) ?? null;
   const prevEvents = data.prevEvents.data?.byEmployee.get(employeeId) ?? null;
   const crmBase = panel.crmBaseUrl;
@@ -49,10 +50,8 @@ export function EmployeePage({ employeeId, date }: { employeeId: number; date: s
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [employeeId]);
-  const rating = useMemo(
-    () => (events ? profileRatingPercent({ events, dayKey, timeZone: tz, startMinutes: win.startMinutes, endMinutes: win.endMinutes, nowUnix: now }) : null),
-    [events, dayKey, tz, win.startMinutes, win.endMinutes, now],
-  );
+  const rating = profileActivityPercent(data.ratings.data, employeeId, now);
+  const previousRating = profileActivityPercent(data.prevRatings.data, employeeId, now);
 
   if (!employee) {
     return (
@@ -96,6 +95,9 @@ export function EmployeePage({ employeeId, date }: { employeeId: number; date: s
             <button className="tool-btn" type="button" onClick={() => setPreviewEnabled((v) => !v)}>{previewEnabled ? "Только реальные данные" : "Показать тестовые примеры"}</button>
           </div>
         )}
+        {data.ratings.error !== null && <ErrorState error={data.ratings.error} onRetry={data.ratings.reload} compact />}
+        {data.prevRatings.error !== null && <div className="banner">Не удалось загрузить вчерашний рейтинг активности.</div>}
+        {(data.ratings.data?.partial || data.prevRatings.data?.partial) && <div className="banner">Рейтинг активности рассчитан по неполной выборке событий.</div>}
         {data.events.status === "error" && <ErrorState error={data.events.error} onRetry={data.events.reload} />}
         {data.events.status === "loading" && (
           <>
@@ -106,11 +108,9 @@ export function EmployeePage({ employeeId, date }: { employeeId: number; date: s
         {events && (
           <>
             <GeneralInfo
-              today={{ events, sessions, dayKey }}
-              yesterday={{ events: data.prevEvents.status === "ready" ? prevEvents ?? [] : null, sessions: data.prevSessions.data ?? null, dayKey: data.prev.dayKey }}
+              today={{ events, sessions, dayKey, activityPercent: rating }}
+              yesterday={{ events: data.prevEvents.status === "ready" ? prevEvents ?? [] : null, sessions: data.prevSessions.data ?? null, dayKey: data.prev.dayKey, activityPercent: previousRating }}
               timeZone={tz}
-              startMinutes={win.startMinutes}
-              endMinutes={win.endMinutes}
               workEndMinutes={win.endMinutes}
               nowUnix={now}
               isToday={win.isToday}
