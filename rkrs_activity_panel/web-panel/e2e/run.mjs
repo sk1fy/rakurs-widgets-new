@@ -17,6 +17,29 @@ const check = (cond, msg) => {
 
 const browser = await chromium.launch();
 
+// Exercise the actual resource hook with controlled pending requests. A new
+// observation refresh must preserve data; changing its scope must clear it.
+const resourcePage = await browser.newPage();
+await resourcePage.goto(`${BASE}e2e/resource-refresh.html`);
+await resourcePage.getByTestId("status").filter({ hasText: "loading" }).waitFor();
+await resourcePage.getByRole("button", { name: "Resolve", exact: true }).click();
+await resourcePage.getByTestId("data").filter({ hasText: "1:0" }).waitFor();
+await resourcePage.getByRole("button", { name: "Refresh", exact: true }).click();
+await resourcePage.getByTestId("refreshing").filter({ hasText: "true" }).waitFor();
+check(await resourcePage.getByTestId("data").innerText() === "1:0", "resource: pending refresh keeps displayed data");
+await resourcePage.getByRole("button", { name: "Reject", exact: true }).click();
+await resourcePage.getByTestId("error").filter({ hasText: "failed" }).waitFor();
+check(await resourcePage.getByTestId("data").innerText() === "1:0", "resource: failed refresh keeps displayed data");
+await resourcePage.getByRole("button", { name: "Refresh", exact: true }).click();
+await resourcePage.getByTestId("refreshing").filter({ hasText: "true" }).waitFor();
+await resourcePage.getByRole("button", { name: "Resolve", exact: true }).click();
+await resourcePage.getByTestId("data").filter({ hasText: "1:2" }).waitFor();
+check(await resourcePage.getByTestId("error").innerText() === "none", "resource: retry replaces data and clears error");
+await resourcePage.getByRole("button", { name: "Change scope", exact: true }).click();
+await resourcePage.getByTestId("data").filter({ hasText: "empty" }).waitFor();
+check(await resourcePage.getByTestId("status").innerText() === "loading", "resource: new date, window or employee clears the old scope");
+await resourcePage.close();
+
 async function session(viewport, tag) {
   const page = await browser.newPage({ viewport });
   const errors = [];
@@ -123,6 +146,12 @@ async function session(viewport, tag) {
   await shot("settings-task");
 
   // Состояния
+  await go("/p/demo", "?fixture=rating-error");
+  await page.waitForSelector(".emp");
+  check((await page.locator(".emp").count()) === 9, `${tag}: ошибка рейтинга не скрывает сотрудников`);
+  check((await page.locator(".tl-bar").count()) === 9, `${tag}: таймлайны доступны без рейтинга`);
+  check((await page.locator(".emp .pct").allTextContents()).every((text) => text.trim() === "—"), `${tag}: нет локальной подмены недоступного процента`);
+  check((await page.locator(".emp .metrics .v").count()) > 0, `${tag}: KPI доступны при ошибке рейтинга`);
   await go("/p/demo", "?fixture=error");
   await page.waitForTimeout(600);
   check((await page.locator(".state.error").count()) >= 1, `${tag}: состояние ошибки`);

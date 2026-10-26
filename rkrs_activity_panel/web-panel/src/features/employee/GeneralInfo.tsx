@@ -1,6 +1,6 @@
 import type { Sourced } from "../../api/source";
 import { isProfileActivityEvent } from "../../domain/eventCatalog";
-import { profileRatingPercent, RATING_LEGEND, ratingColor, ratingTheme } from "../../domain/formulas/profileRating";
+import { RATING_LEGEND, ratingColor, ratingTheme } from "../../domain/formulas/profileRating";
 import { profileSessionMetrics } from "../../domain/formulas/sessions";
 import { formatDurationShort, hhmm } from "../../domain/time";
 import type { CrmEvent, EmployeeSessions } from "../../domain/types";
@@ -11,15 +11,15 @@ interface DaySide {
   events: CrmEvent[] | null;
   sessions: Sourced<EmployeeSessions> | null;
   dayKey: string;
+  activityPercent: number | null;
 }
 
 const fmtPct = (v: number) => `${v.toFixed(1).replace(".0", "")}%`;
 
 /** «Общая информация» (EmployeeGeneralInfoSectionV2). Вчера без ответа — «—» (F3). */
-export function GeneralInfo({ today, yesterday, timeZone, startMinutes, endMinutes, workEndMinutes, nowUnix, isToday }: { today: DaySide; yesterday: DaySide; timeZone: string; startMinutes: number; endMinutes: number; workEndMinutes: number; nowUnix: number; isToday: boolean }) {
-  const rating = (side: DaySide) => (side.events ? profileRatingPercent({ events: side.events, dayKey: side.dayKey, timeZone, startMinutes, endMinutes, nowUnix }) : null);
-  const r = rating(today);
-  const ry = rating(yesterday);
+export function GeneralInfo({ today, yesterday, timeZone, workEndMinutes, nowUnix, isToday }: { today: DaySide; yesterday: DaySide; timeZone: string; workEndMinutes: number; nowUnix: number; isToday: boolean }) {
+  const r = today.activityPercent;
+  const ry = yesterday.activityPercent;
   const evEdge = (side: DaySide, edge: "first" | "last") => {
     const list = (side.events ?? []).filter(isProfileActivityEvent).sort((a, b) => a.createdAt - b.createdAt);
     const e = edge === "first" ? list[0] : list[list.length - 1];

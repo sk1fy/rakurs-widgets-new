@@ -4,7 +4,7 @@
 
 import type { DayEvents, EmployeeId, EmployeeSessions, PanelContext, ProblemLists } from "../domain/types";
 import { AmocrmProViewerSource } from "./amocrmPro";
-import type { ActivitySource, DayRange, EventCard, Sourced } from "./source";
+import type { ActivitySource, ActivityRatingParams, ActivityRatings, DayRange, EventCard, Sourced } from "./source";
 
 export class HybridSource implements ActivitySource {
   readonly mode = "hybrid" as const;
@@ -12,6 +12,10 @@ export class HybridSource implements ActivitySource {
 
   constructor(viewKey: string) {
     this.live = new AmocrmProViewerSource(viewKey);
+  }
+
+  loadActivityRatings(params: ActivityRatingParams, signal?: AbortSignal): Promise<ActivityRatings> {
+    return this.live.loadActivityRatings(params, signal);
   }
 
   loadPanel(signal?: AbortSignal): Promise<PanelContext> {

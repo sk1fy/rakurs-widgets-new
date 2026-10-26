@@ -149,7 +149,7 @@ export function EmployeeCard({
         <div className="rating" title="Доля активного времени от прошедшего рабочего окна (2-минутные отрезки)">
           <Icon name="chart" />
           <span className="pct">
-            {row.percent.toFixed(1).replace(".0", "")}%
+            {row.percent === null ? "—" : `${row.percent.toFixed(1).replace(".0", "")}%`}
           </span>
         </div>
       </div>

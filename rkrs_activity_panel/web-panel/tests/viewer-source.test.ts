@@ -149,6 +149,15 @@ describe("viewer product metadata and current problems", () => {
   });
 });
 
+it("loads an empty backend session history serialized as null", async () => {
+ vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ snapshot_at: range.to, items: null })));
+ const got = await new AmocrmProViewerSource("synthetic-key", "").loadSessions(7, range);
+ expect(got.kind).toBe("ok"); if(got.kind !== "ok") throw Error("unavailable");
+ expect(got.data.items).toEqual([]);
+ expect(got.data.meta.snapshotAt).toBe(range.to);
+ expect(got.data.meta.source).toBe("amocrm-pro");
+});
+
 it("loads actual session context separately from CRM events", async () => {
  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ snapshot_at: range.to, items: [{ kind: "activity", started_at: range.from + 100, stopped_at: range.from + 160, work_time_seconds: 60, context: { task_id: 0, task_name: "", task_type_id: 0, task_type_name: "", task_result: "", activity_name: "Imbox 123", activity_type: "imbox", entity_id: 31, entity_type: "leads", entity_name: "Synthetic deal", pipeline_id: 10, pipeline_name: "Sales", status_id: 11, status_name: "Open", status_color: "#00ff00" } }] })));
  const got=await new AmocrmProViewerSource("synthetic-key","").loadSessions(7,range);
