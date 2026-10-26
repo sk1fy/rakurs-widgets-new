@@ -322,8 +322,8 @@ export class AmocrmProViewerSource implements ActivitySource {
     let cursor = "";
     let snapshotAt: number;
     do {
-      const page = await this.get<{ snapshot_at: number; items: RawSession[]; next_cursor?: string }>(`/employees/${employeeId}/sessions?from=${range.from}&to=${range.to}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, signal);
-      items.push(...page.items.map(sessionFromAPI));
+      const page = await this.get<{ snapshot_at: number; items: RawSession[] | null; next_cursor?: string }>(`/employees/${employeeId}/sessions?from=${range.from}&to=${range.to}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, signal);
+      items.push(...(page.items ?? []).map(sessionFromAPI));
       snapshotAt = page.snapshot_at;
       cursor = page.next_cursor ?? "";
       if (cursor && seen.has(cursor)) throw new ApiError({ code: "unavailable", message: "Повторяющаяся страница истории сессий" });
