@@ -10,5 +10,11 @@
     "installation": true
   },
   "locations": ["settings", "everywhere"],
-  "settings": {}
+  "settings": {
+    "activity_panel": {
+      "name": "settings.activity_panel",
+      "type": "custom",
+      "required": false
+    }
+  }
 }
