@@ -127,11 +127,10 @@ export function ViewPreferencesForm({ value, onChange, panel }: { value: LocalPr
             <Switch
               checked={value.showTaskPanelEvents}
               onChange={(v) => patch({ showTaskPanelEvents: v })}
-              disabled={panel.taskPanelEnabled === false}
               label="События панели задач на таймлайне"
             />
             <div className="dim small" style={{ marginTop: 4 }}>
-              {panel.taskPanelEnabled === false ? "Панель задач выключена в аккаунте — события не показываются." : "По умолчанию выключено. Скрывается, если панель задач выключена."}
+              {panel.taskPanelEnabled === false ? "Сбор новых интервалов отключён. Записанную историю можно показать на таймлайне." : "По умолчанию выключено. Показывает записанные интервалы виджета сотрудников."}
             </div>
           </div>
           <label className="field" style={{ maxWidth: 280 }}>

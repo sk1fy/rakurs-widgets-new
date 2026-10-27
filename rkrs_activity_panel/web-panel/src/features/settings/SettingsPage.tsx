@@ -15,7 +15,7 @@ type SettingsTab = "view" | "panels" | "task-panel";
 const BACKEND_LABEL: Record<SettingsBackend["kind"], { text: string; tone: string; title: string }> = {
   fixture: { text: "синтетика (dev)", tone: "warn", title: "Настройки хранятся только в этом браузере, в amoCRM ничего не уходит" },
   "amocrm-pro": { text: "amocrm-pro", tone: "info", title: "Серверные настройки аккаунта" },
-  unavailable: { text: "управление недоступно", tone: "mut", title: "Production-сборка без авторизации администратора (C7)" },
+  unavailable: { text: "управление недоступно", tone: "mut", title: "Откройте общие настройки из виджета amoCRM с правами администратора" },
 };
 
 /** Экран настроек: «Мой вид» (локально), «Панели» и «Панель задач» (общие). */

@@ -1,3 +1,4 @@
+import { shouldGateSessionHistory } from "./sessionHistoryState";
 import type { Sourced } from "../../api/source";
 import { entityLink, stageLink } from "../../domain/crmLinks";
 import { summaryCards } from "../../domain/formulas/sessions";
@@ -8,7 +9,7 @@ import { DonutSummary, TaskPanelGate } from "./parts";
 
 /** «Суммарное время (задачи + Imbox)»: топ-7 сделок, этапов и типов задач (EmployeeDealsSnapshotSectionV2). */
 export function TotalTime({ sessions, events, dayKey, timeZone, nowUnix, crmBase, employeeId, taskPanelEnabled }: { sessions: Sourced<EmployeeSessions> | null; events: CrmEvent[]; dayKey: string; timeZone: string; nowUnix: number; crmBase: string | null; employeeId: number; taskPanelEnabled: boolean | null }) {
-  if (taskPanelEnabled === false) return <TaskPanelGate title="Суммарное время" />;
+  if (shouldGateSessionHistory(taskPanelEnabled, sessions)) return <TaskPanelGate title="Суммарное время" />;
   if (!sessions) return null;
   if (sessions.kind === "unavailable") {
     return (
@@ -34,6 +35,7 @@ export function TotalTime({ sessions, events, dayKey, timeZone, nowUnix, crmBase
     <section className="sec total-time">
       <div className="sec-h">
         <h2>Суммарное время (задачи + Imbox)</h2>
+        {taskPanelEnabled === false && <span className="chip warn">Сбор отключён</span>}
         {sessions.data.meta.source === "fixture" && <span className="chip warn">Тестовые данные</span>}
         <div className="sp" />
         <span className="dim small">по сделкам: {formatDurationShort(total)}</span>
@@ -49,7 +51,7 @@ export function TotalTime({ sessions, events, dayKey, timeZone, nowUnix, crmBase
         </div>
         <div className="card">
           <h3>Топ-7 типов задач</h3>
-          <DonutSummary value={cards.uniqueTasks} label="задач выполнено" rows={cards.taskTypes} empty="Нет данных по типам задач" columns={["Время в задаче", "Тип задачи"]} />
+          <DonutSummary value={cards.uniqueTasks} label="задач с учтённым временем" rows={cards.taskTypes} empty="Нет данных по типам задач" columns={["Время в задаче", "Тип задачи"]} />
         </div>
       </div>
       {cards.fallbackTasks > 0 && (

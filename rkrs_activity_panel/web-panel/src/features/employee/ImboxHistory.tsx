@@ -1,3 +1,4 @@
+import { shouldGateSessionHistory } from "./sessionHistoryState";
 import { useMemo, useState } from "react";
 import type { Sourced } from "../../api/source";
 import { entityLink } from "../../domain/crmLinks";
@@ -20,11 +21,12 @@ export function ImboxHistory({ sessions, dayKey, timeZone, nowUnix, startMinutes
         : null,
     [sessions, dayKey, timeZone, nowUnix, crmBase],
   );
-  if (taskPanelEnabled === false) return <TaskPanelGate title="История посещений в Imbox" />;
+  if (shouldGateSessionHistory(taskPanelEnabled, sessions)) return <TaskPanelGate title="История посещений в Imbox" />;
   if (!sessions) return null;
   const header = (
     <div className="sec-h">
       <h2>История посещений в Imbox</h2>
+      {taskPanelEnabled === false && <span className="chip warn">Сбор отключён</span>}
       {sessions.kind === "ok" && sessions.data.meta.source === "fixture" && <span className="chip warn">Тестовые данные</span>}
     </div>
   );

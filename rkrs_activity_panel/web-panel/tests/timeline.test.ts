@@ -46,7 +46,7 @@ describe("полоса панели задач", () => {
     expect(lane.idle).toEqual([{ startMinutes: 9 * 60, endMinutes: 11 * 60 }]);
   });
   it("паузы и другие дни не попадают", () => {
-    const lane = buildExternalLane({ ...base, sessions: [{ ...work("10:00", "10:10", 600), kind: "pause" }, { ...work("10:00", "10:10", 600), startedAt: "2026-10-20T10:00:00+03:00" }] });
+    const lane = buildExternalLane({ ...base, sessions: [{ ...work("10:00", "10:10", 600), kind: "pause" }, { ...work("10:00", "10:10", 600), startedAt: "2026-10-20T10:00:00+03:00", stoppedAt: "2026-10-20T10:10:00+03:00" }] });
     expect(lane.segments).toEqual([]);
     expect(lane.idle).toEqual([{ startMinutes: 9 * 60, endMinutes: 18 * 60 }]);
   });

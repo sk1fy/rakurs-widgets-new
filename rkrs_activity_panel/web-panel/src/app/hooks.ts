@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "../api/errors";
 
+export const ACTIVE_REFRESH_MS = 4 * 60_000;
+
 /** Текущее время, тикает раз в tickMs (по умолчанию 30 с). */
 export function useNow(tickMs = 30_000): number {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
@@ -23,7 +25,8 @@ export interface Resource<T> {
 
 /**
  * Загрузка с отменой и автообновлением. Первое автообновление — через
- * refreshMs после загрузки (F1), скрытая вкладка пропускает тик.
+ * refreshMs после загрузки (F1). Скрытая вкладка приостанавливает запросы;
+ * возвращение в неё сразу обновляет данные и начинает новый интервал.
  * Ошибка фонового обновления не стирает данные: они помечаются как устаревшие.
  */
 export function useResource<T>(key: string | null, load: (signal: AbortSignal) => Promise<T>, options: { refreshMs?: number | null; refreshKey?: string | number | null; enabled?: boolean } = {}): Resource<T> {
@@ -32,23 +35,39 @@ export function useResource<T>(key: string | null, load: (signal: AbortSignal) =
   loadRef.current = load;
   const [nonce, setNonce] = useState(0);
   const keyRef = useRef<string | null>(null);
+  const settledAtRef = useRef(0);
+  const loadingRef = useRef(false);
+  const refreshMs = options.refreshMs ?? null;
+  const [visible, setVisible] = useState(() => typeof document === "undefined" || document.visibilityState !== "hidden");
+  useEffect(() => {
+    if (!refreshMs) return;
+    const changed = () => setVisible(document.visibilityState !== "hidden");
+    changed();
+    document.addEventListener("visibilitychange", changed);
+    return () => document.removeEventListener("visibilitychange", changed);
+  }, [refreshMs]);
 
   const run = useCallback((background: boolean, signal: AbortSignal) => {
+    loadingRef.current = true;
     setState((s) => (background && s.data !== null ? { ...s, refreshing: true } : { data: null, error: null, status: "loading", refreshing: false, updatedAt: s.updatedAt }));
     loadRef.current(signal).then(
       (data) => {
         if (signal.aborted) return;
+        loadingRef.current = false;
+        settledAtRef.current = Date.now();
         setState({ data, error: null, status: "ready", refreshing: false, updatedAt: Math.floor(Date.now() / 1000) });
       },
       (error) => {
         if (signal.aborted || (error instanceof ApiError && error.code === "aborted")) return;
+        loadingRef.current = false;
+        settledAtRef.current = Date.now();
         setState((s) => (background && s.data !== null ? { ...s, refreshing: false, error } : { data: null, error, status: "error", refreshing: false, updatedAt: s.updatedAt }));
       },
     );
   }, []);
 
   const refreshKey = options.refreshKey;
-  const enabled = options.enabled ?? true;
+  const enabled = (options.enabled ?? true) && (!refreshMs || visible);
   useEffect(() => {
     if (key === null) {
       keyRef.current = null;
@@ -68,18 +87,37 @@ export function useResource<T>(key: string | null, load: (signal: AbortSignal) =
     const background = keyRef.current === key;
     keyRef.current = key;
     run(background, controller.signal);
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      loadingRef.current = false;
+    };
   }, [key, nonce, refreshKey, enabled, run]);
 
-  const refreshMs = options.refreshMs ?? null;
   useEffect(() => {
-    if (key === null || !refreshMs || !enabled) return;
-    const t = setInterval(() => {
-      if (document.visibilityState === "hidden") return;
-      setNonce((n) => n + 1);
-    }, refreshMs);
-    return () => clearInterval(t);
-  }, [key, refreshMs, enabled]);
+    if (key === null || !refreshMs || !enabled || state.status === "idle" || state.status === "loading" || state.refreshing) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      clearTimeout(timer);
+      if (document.visibilityState === "hidden" || loadingRef.current) return;
+      const remaining = settledAtRef.current + refreshMs - Date.now();
+      if (remaining <= 0) {
+        // Reserve the refresh before React renders: focus and visibilitychange
+        // can arrive together, and must not start two requests.
+        loadingRef.current = true;
+        setNonce((n) => n + 1);
+      } else {
+        timer = setTimeout(schedule, remaining);
+      }
+    };
+    schedule();
+    document.addEventListener("visibilitychange", schedule);
+    window.addEventListener("focus", schedule);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", schedule);
+      window.removeEventListener("focus", schedule);
+    };
+  }, [key, refreshMs, enabled, state.status, state.refreshing, state.updatedAt, state.error]);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
   return { ...state, reload };

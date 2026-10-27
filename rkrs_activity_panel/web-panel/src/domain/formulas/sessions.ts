@@ -6,6 +6,7 @@
 
 import { hhmm, isoToUnix, minutesOfDay, zoned } from "../time";
 import type { CrmEvent, WorkSession } from "../types";
+import { sessionWindow } from "./sessionWindow";
 
 export const FALLBACK_COMPLETED_TASK_SECONDS = 10;
 
@@ -14,30 +15,13 @@ export function isImbox(s: WorkSession): boolean {
 }
 
 /** Время завершённых сессий панели задач без Imbox — подпись у «Завершённых» в анализе событий. */
-export function completedTaskSeconds(sessions: WorkSession[]): number {
-  return sessions.reduce((sum, s) => (s.kind !== "pause" && s.stoppedAt && !isImbox(s) ? sum + (s.workTimeSeconds || 0) : sum), 0);
+export function completedTaskSeconds(sessions: WorkSession[], params: { dayKey: string; timeZone: string; nowUnix: number }): number {
+  return sessions.reduce((sum, s) => (s.kind !== "pause" && s.stoppedAt && !isImbox(s) ? sum + (sessionWindow(s, params.dayKey, params.timeZone, params.nowUnix)?.seconds ?? 0) : sum), 0);
 }
 
-/**
- * Длительность внутри выбранного дня: min(заявленная, фактически прошедшая),
- * открытая сессия учитывается только для сегодняшнего дня.
- */
+/** Реальный интервал внутри выбранного дня; открытый растёт от серверного start. */
 export function clippedSeconds(s: WorkSession, dayKey: string, timeZone: string, nowUnix: number, dayBounds: { start: number; end: number }): number {
-  const reported = Math.max(0, s.workTimeSeconds || 0);
-  const started = isoToUnix(s.startedAt);
-  if (!reported || started === null) return 0;
-  const isToday = zoned(nowUnix, timeZone).dayKey === dayKey;
-  const stopped = isoToUnix(s.stoppedAt);
-  if (stopped === null && !isToday) return 0;
-  const end = Math.min(stopped ?? nowUnix, dayBounds.end);
-  const start = Math.max(started, dayBounds.start);
-  const elapsed = Math.max(0, end - start);
-  return elapsed ? Math.min(reported, elapsed) : 0;
-}
-
-function startedOnDay(s: WorkSession, dayKey: string, timeZone: string): boolean {
-  const started = isoToUnix(s.startedAt);
-  return started !== null && zoned(started, timeZone).dayKey === dayKey;
+  return sessionWindow(s, dayKey, timeZone, nowUnix, dayBounds)?.seconds ?? 0;
 }
 
 export interface ProfileSessionMetrics {
@@ -50,17 +34,18 @@ export interface ProfileSessionMetrics {
 /** Метрики профиля по сессиям (EmployeeGeneralInfoSectionV2). */
 export function profileSessionMetrics(params: {
   sessions: WorkSession[];
+  dayKey: string;
   timeZone: string;
   isToday: boolean;
   nowUnix: number;
   workEndMinutes: number;
 }): ProfileSessionMetrics {
-  const sorted = [...params.sessions].sort((a, b) => (isoToUnix(a.startedAt) ?? 0) - (isoToUnix(b.startedAt) ?? 0));
+  const sorted = params.sessions.filter((s) => sessionWindow(s, params.dayKey, params.timeZone, params.nowUnix)).sort((a, b) => (isoToUnix(a.startedAt) ?? 0) - (isoToUnix(b.startedAt) ?? 0));
   const first = sorted[0];
   const last = sorted[sorted.length - 1];
-  const firstAt = first ? isoToUnix(first.startedAt) : null;
-  const lastAt = last ? isoToUnix(last.stoppedAt) ?? isoToUnix(last.startedAt) : null;
-  let finish = lastAt !== null ? hhmm(lastAt, params.timeZone) : null;
+  const firstAt = first ? sessionWindow(first, params.dayKey, params.timeZone, params.nowUnix)?.start ?? null : null;
+  const lastInterval = last?.stoppedAt ? sessionWindow(last, params.dayKey, params.timeZone, params.nowUnix) : null;
+  let finish = lastInterval?.endLabel ?? null;
   // «Финиш дня» сегодня показывается только за 2 часа до конца рабочего окна.
   if (finish && params.isToday && minutesOfDay(params.nowUnix, params.timeZone) < params.workEndMinutes - 120) {
     finish = null;
@@ -68,9 +53,8 @@ export function profileSessionMetrics(params: {
   return {
     dayStart: firstAt !== null ? hhmm(firstAt, params.timeZone) : null,
     dayFinish: finish,
-    // Рабочее время: сумма work_time_seconds всех сессий ответа.
-    workSeconds: params.sessions.reduce((sum, s) => sum + (Number(s.workTimeSeconds) || 0), 0),
-    taskSwitches: params.sessions.filter((s) => s.kind === "work").length,
+    workSeconds: sorted.reduce((sum, s) => sum + (sessionWindow(s, params.dayKey, params.timeZone, params.nowUnix)?.seconds ?? 0), 0),
+    taskSwitches: sorted.filter((s) => s.kind === "work" && zoned(isoToUnix(s.startedAt)!, params.timeZone).dayKey === params.dayKey).length,
   };
 }
 
@@ -121,7 +105,7 @@ export function summaryCards(params: {
 }): SummaryCards {
   const { dayKey, timeZone, nowUnix, dayBounds } = params;
   const items: SummaryItem[] = params.sessions
-    .filter((s) => s.kind !== "pause" && startedOnDay(s, dayKey, timeZone))
+    .filter((s) => s.kind !== "pause")
     .map((s) => ({ session: s, seconds: clippedSeconds(s, dayKey, timeZone, nowUnix, dayBounds), fallback: false }))
     .filter((i) => i.seconds > 0);
 
@@ -215,10 +199,6 @@ export interface HistoryRow {
   session: WorkSession;
 }
 
-function endUnix(s: WorkSession, isToday: boolean, nowUnix: number, dayEnd: number): number {
-  return isoToUnix(s.stoppedAt) ?? (isToday ? nowUnix : dayEnd);
-}
-
 /**
  * «История выполненных задач» (EmployeeTaskBoardSectionV2).
  * F7: pause-сессии исключены — в старом UI они попадали в таблицу как «Задача».
@@ -233,27 +213,27 @@ export function taskHistory(params: {
   const { dayKey, timeZone, nowUnix } = params;
   const isToday = zoned(nowUnix, timeZone).dayKey === dayKey;
   const rows = params.sessions
-    .filter((s) => s.kind !== "pause" && !isImbox(s) && startedOnDay(s, dayKey, timeZone))
-    .map((s, index): HistoryRow => {
-      const start = isoToUnix(s.startedAt) as number;
-      const end = endUnix(s, isToday, nowUnix, params.dayEnd);
+    .filter((s) => s.kind !== "pause" && !isImbox(s))
+    .flatMap((s, index): HistoryRow[] => {
+      const interval = sessionWindow(s, dayKey, timeZone, nowUnix);
+      if (!interval) return [];
       const typeLabel = s.taskTypeName || (s.kind === "activity" ? "Другое" : "Задача");
-      return {
+      return [{
         id: String(s.taskId ?? `session-${index}`) + `-${index}`,
         title: s.entityName || s.taskName || `Задача #${s.taskId ?? index + 1}`,
         href: s.taskUrl ?? null,
         typeLabel,
-        start: hhmm(start, timeZone),
-        end: s.stoppedAt ? hhmm(end, timeZone) : "В процессе",
+        start: interval.startLabel,
+        end: !s.stoppedAt && isToday ? "В процессе" : interval.endLabel,
         inProgress: !s.stoppedAt,
-        startMinutes: minutesOfDay(start, timeZone),
-        endMinutes: minutesOfDay(end, timeZone),
-        seconds: Number(s.workTimeSeconds) || 0,
+        startMinutes: interval.startMinutes,
+        endMinutes: interval.endMinutes,
+        seconds: interval.seconds,
         text: s.taskName || s.groupName || s.activityName || "— Не указан —",
         result: s.taskResult || "— Не указан —",
         color: s.statusColor || (s.kind === "activity" ? "#f0a33a" : "#9654f1"),
         session: s,
-      };
+      }];
     });
   const total = rows.length;
   const sum = rows.reduce((acc, r) => acc + r.seconds, 0);
@@ -281,21 +261,20 @@ export function imboxHistory(params: {
 }) {
   const { dayKey, timeZone, nowUnix, dayBounds } = params;
   const rows = params.sessions
-    .filter((s) => isImbox(s) && startedOnDay(s, dayKey, timeZone))
+    .filter(isImbox)
     .map((s, index) => ({ s, index, seconds: clippedSeconds(s, dayKey, timeZone, nowUnix, dayBounds) }))
     .filter((r) => r.seconds > 0)
     .map(({ s, index, seconds }) => {
-      const start = isoToUnix(s.startedAt) as number;
-      const end = isoToUnix(s.stoppedAt) ?? nowUnix;
+      const interval = sessionWindow(s, dayKey, timeZone, nowUnix, dayBounds)!;
       return {
         id: `${s.entityType ?? "entity"}-${s.entityId ?? "na"}-${s.startedAt}-${index}`,
         title: imboxEntityLabel(s),
         subtitle: s.pipelineName || s.activityName || (s.entityId ? `Диалог #${s.entityId}` : "Диалог Imbox"),
         href: params.entityLink(s.entityType, s.entityId),
-        start: hhmm(start, timeZone),
-        end: hhmm(end, timeZone),
-        startMinutes: minutesOfDay(start, timeZone),
-        endMinutes: minutesOfDay(end, timeZone),
+        start: interval.startLabel,
+        end: interval.endLabel,
+        startMinutes: interval.startMinutes,
+        endMinutes: interval.endMinutes,
         seconds,
         conversationKey: String(s.activityName ?? "").trim() || `${s.entityType ?? "entity"}-${s.entityId ?? "unknown"}`,
         session: s,

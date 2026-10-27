@@ -11,7 +11,7 @@
     "typecheck": "tsc -b",
     "lint": "eslint .",
     "test": "vitest run",
-    "e2e": "node e2e/run.mjs"
+    "e2e": "npm run build && node e2e/run.mjs"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

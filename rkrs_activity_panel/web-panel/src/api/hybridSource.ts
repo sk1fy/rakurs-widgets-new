@@ -1,6 +1,5 @@
-// hybrid: всё, что умеет amocrm-pro, — живое; неготовые контракты
-// (C3 проблемные списки, C4 сессии) — синтетика с meta.source = "fixture",
-// которую экран обязан пометить. Используется только в разработке.
+// Совместимое имя dev-режима: все чтения идут к amocrm-pro.
+// Ошибки и недоступные контракты не подменяются синтетическими данными.
 
 import type { DayEvents, EmployeeId, EmployeeSessions, PanelContext, ProblemLists } from "../domain/types";
 import { AmocrmProViewerSource } from "./amocrmPro";

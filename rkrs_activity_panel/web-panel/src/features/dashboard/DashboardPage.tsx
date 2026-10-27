@@ -15,7 +15,7 @@ import { buildRows, groupRows, resolveWindow, dayRange } from "./model";
 import { PlanFactStrip } from "./PlanFactStrip";
 import { takeReturn } from "./returnTarget";
 import { Sidebar } from "./Sidebar";
-import { useDashboardData } from "./useDashboardData";
+import { DAY_REFRESH_MS, useDashboardData } from "./useDashboardData";
 import { useExternalSessions } from "./useExternalSessions";
 
 export function DashboardPage({ date }: { date: string | null }) {
@@ -52,8 +52,8 @@ export function DashboardPage({ date }: { date: string | null }) {
   const visibleIds = groups.flatMap((g) => g.rows.map((r) => r.employee.id));
   const currentEvents = win.isToday ? data.today.data : data.current?.data ?? null;
   const missed = useMemo(() => (currentEvents ? computeMissedCalls(currentEvents.byEmployee, tz) : null), [currentEvents, tz]);
-  const showExternal = prefs.showTaskPanelEvents && panel.taskPanelEnabled !== false;
-  const external = useExternalSessions(source, panel.employees.map((e) => e.id), dayRange(stableWin, tz), showExternal);
+  const showExternal = prefs.showTaskPanelEvents;
+  const external = useExternalSessions(source, panel.employees.map((e) => e.id), dayRange(stableWin, tz), showExternal, win.isToday ? DAY_REFRESH_MS : null);
 
   const nowLabel = win.isToday ? `сегодня · ${hhmm(now, tz)}` : `рабочий день ${minutesToHHMM(win.startMinutes)}–${minutesToHHMM(win.endMinutes)}`;
   const cmpLabel = win.isToday ? (
@@ -110,6 +110,12 @@ export function DashboardPage({ date }: { date: string | null }) {
                 <NotConnected contract={external.contract} reason={`События панели задач на таймлайне: ${external.reason}`} compact />
               </div>
             )}
+            {showExternal && panel.taskPanelEnabled === false && <div className="banner">Сбор новых интервалов отключён; показана записанная история.</div>}
+            {showExternal && external.kind === "loading" && <Spinner label="Загрузка интервалов панели задач…" />}
+            {showExternal && external.kind === "error" && <ErrorState compact error={external.error} onRetry={external.reload} />}
+            {showExternal && external.kind === "ready" && external.refreshing && <div className="refreshing"><span className="spin" /> Обновление интервалов панели задач…</div>}
+            {showExternal && external.kind === "ready" && external.stale && <div className="banner">Обновить все интервалы панели задач не удалось. Доступные данные сохранены. <button className="tool-btn" type="button" onClick={external.reload}>Повторить</button></div>}
+            {showExternal && external.kind === "ready" && external.synthetic && <span className="chip warn">Интервалы: тестовые данные</span>}
             {data.ratings.error !== null && <ErrorState error={data.ratings.error} onRetry={data.ratings.reload} />}
             {data.today.data && (data.ratings.status === "loading" || data.ratings.refreshing) && <div className="refreshing"><span className="spin" /> {data.ratings.data ? "Обновление расчёта активности…" : "Расчёт активности…"}</div>}
             {data.ratings.data?.partial && <div className="banner">Расчёт активности выполнен по неполной выборке событий.</div>}
@@ -144,7 +150,7 @@ export function DashboardPage({ date }: { date: string | null }) {
                       yesterdayLoading={data.yesterday.status === "loading"}
                       problemsLoading={problemsLoading}
                       external={ext === "error" ? null : ext}
-                      extra={ext === "error" ? <div className="dim small" style={{ marginTop: 4 }}>События панели задач не загрузились</div> : undefined}
+                      extra={ext === "error" || (external.kind === "ready" && external.failedEmployeeIds.has(row.employee.id)) ? <div className="dim small" style={{ marginTop: 4 }}>{ext === "error" ? "События панели задач не загрузились" : "Показаны прежние интервалы: обновление не удалось"}</div> : undefined}
                     />
                   );
                 }}

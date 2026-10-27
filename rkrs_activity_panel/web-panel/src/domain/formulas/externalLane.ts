@@ -5,7 +5,8 @@
 // Старая полоса кластеризовала по пикселям; здесь порог в минутах,
 // чтобы раскладка не зависела от ширины экрана и проверялась тестами.
 
-import { isoToUnix, minutesOfDay, zoned } from "../time";
+import { addDays, dayStart, unixAt } from "../time";
+import { sessionWindow } from "./sessionWindow";
 import type { WorkSession } from "../types";
 
 export interface LaneItem {
@@ -14,6 +15,7 @@ export interface LaneItem {
   endMinutes: number;
   /** Сессия ещё идёт (stoppedAt = null). */
   active: boolean;
+  seconds: number;
 }
 
 export interface LaneSegment {
@@ -73,13 +75,10 @@ export function buildExternalLane(params: {
   const items: LaneItem[] = [];
   for (const session of sessions) {
     if (session.kind === "pause") continue;
-    const a = isoToUnix(session.startedAt);
-    if (a === null || zoned(a, timeZone).dayKey !== dayKey) continue;
-    const b = isoToUnix(session.stoppedAt);
-    const active = session.stoppedAt === null;
-    const start = minutesOfDay(a, timeZone);
-    const end = active ? nowMinutes ?? endMinutes : b !== null ? minutesOfDay(b, timeZone) : start;
-    items.push({ session, startMinutes: start, endMinutes: Math.max(start, end), active });
+    const cutoff = nowMinutes === null ? dayStart(addDays(dayKey, 1), timeZone) : unixAt(dayKey, nowMinutes, timeZone);
+    const interval = sessionWindow(session, dayKey, timeZone, cutoff);
+    if (!interval) continue;
+    items.push({ session, startMinutes: interval.startMinutes, endMinutes: interval.endMinutes, active: session.stoppedAt === null, seconds: interval.seconds });
   }
   items.sort((x, y) => x.startMinutes - y.startMinutes);
 
@@ -93,7 +92,7 @@ export function buildExternalLane(params: {
       last.color = LANE_COLORS.cluster;
       continue;
     }
-    segments.push({ items: [item], startMinutes: item.startMinutes, endMinutes: item.endMinutes, color: laneColor(item.session) });
+    segments.push({ items: [item], startMinutes: item.startMinutes, endMinutes: item.endMinutes, color: laneColor({ ...item.session, workTimeSeconds: item.seconds }) });
   }
 
   const idle: LaneIdle[] = [];

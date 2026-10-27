@@ -4,6 +4,8 @@
 // Скриншоты — в E2E_OUT (по умолчанию ./e2e-out, игнорируется git).
 import { chromium } from "playwright";
 import { mkdirSync } from "node:fs";
+import { managementMvp } from "./management-mvp.mjs";
+import { sessionRefreshChecks } from "./session-refresh-checks.mjs";
 
 const BASE = process.env.E2E_URL ?? "http://127.0.0.1:5173/";
 const OUT = process.env.E2E_OUT ?? "e2e-out";
@@ -16,6 +18,8 @@ const check = (cond, msg) => {
 };
 
 const browser = await chromium.launch();
+await managementMvp(browser, check, OUT);
+await sessionRefreshChecks(browser, BASE, check);
 
 // Exercise the actual resource hook with controlled pending requests. A new
 // observation refresh must preserve data; changing its scope must clear it.
@@ -39,6 +43,69 @@ await resourcePage.getByRole("button", { name: "Change scope", exact: true }).cl
 await resourcePage.getByTestId("data").filter({ hasText: "empty" }).waitFor();
 check(await resourcePage.getByTestId("status").innerText() === "loading", "resource: new date, window or employee clears the old scope");
 await resourcePage.close();
+
+// A hidden panel must catch up when shown, without duplicate focus requests
+// or aborting a slow refresh at the next polling boundary.
+const pollingPage = await browser.newPage();
+await pollingPage.clock.install();
+await pollingPage.goto(`${BASE}e2e/resource-refresh.html?refreshMs=240000`);
+const pollingText = (id) => pollingPage.getByTestId(id).innerText();
+const pollingWait = (id, text) => pollingPage.getByTestId(id).filter({ hasText: text }).waitFor();
+const pollingClick = (name) => pollingPage.getByRole("button", { name, exact: true }).click();
+await pollingWait("status", "loading");
+await pollingClick("Resolve");
+await pollingWait("data", "1:1");
+await pollingClick("Hide tab");
+await pollingPage.clock.fastForward(30000);
+check(await pollingText("requests") === "1", "timeline: inactive panel does not poll");
+await pollingClick("Show tab");
+await pollingClick("Focus");
+await pollingWait("refreshing", "true");
+check(await pollingText("requests") === "2", "timeline: even a thirty-second absence refreshes immediately on return, once");
+await pollingClick("Resolve");
+await pollingWait("data", "1:2");
+await pollingPage.clock.fastForward(120000);
+await pollingClick("Focus");
+check(await pollingText("requests") === "2", "timeline: focus without a visibility transition keeps a fresh snapshot");
+await pollingPage.clock.fastForward(120000);
+await pollingWait("refreshing", "true");
+check(await pollingText("requests") === "3", "timeline: active panel refreshes four minutes after the return refresh");
+check(await pollingText("data") === "1:2", "timeline: polling retains previous segments while loading");
+await pollingPage.clock.fastForward(480000);
+await pollingClick("Focus");
+check(await pollingText("requests") === "3", "timeline: slow refresh is not restarted by timers or focus");
+await pollingClick("Resolve");
+await pollingWait("data", "1:3");
+await pollingClick("Hide tab");
+await pollingPage.clock.fastForward(2400000);
+check(await pollingText("requests") === "3", "timeline: hidden panel makes no polling requests");
+await pollingClick("Show tab");
+await pollingClick("Focus");
+await pollingWait("refreshing", "true");
+check(await pollingText("requests") === "4", "timeline: returning after forty minutes refreshes once immediately");
+await pollingClick("Resolve");
+await pollingWait("data", "1:4");
+check(await pollingText("data") === "1:4", "timeline: new snapshot appears without page reload");
+await pollingPage.clock.fastForward(240000);
+await pollingWait("refreshing", "true");
+await pollingClick("Reject");
+await pollingWait("error", "failed");
+check(await pollingText("data") === "1:4", "timeline: refresh failure retains the last snapshot");
+await pollingPage.clock.fastForward(240000);
+await pollingWait("refreshing", "true");
+check(await pollingText("requests") === "6", "timeline: polling retries after an error");
+await pollingPage.close();
+
+const hiddenPollingPage = await browser.newPage();
+await hiddenPollingPage.clock.install();
+await hiddenPollingPage.goto(`${BASE}e2e/resource-refresh.html?refreshMs=240000&hidden=1`);
+await hiddenPollingPage.getByTestId("status").filter({ hasText: "idle" }).waitFor();
+await hiddenPollingPage.clock.fastForward(480000);
+check(await hiddenPollingPage.getByTestId("requests").innerText() === "0", "timeline: initially inactive panel makes no request");
+await hiddenPollingPage.getByRole("button", { name: "Show tab", exact: true }).click();
+await hiddenPollingPage.getByTestId("status").filter({ hasText: "loading" }).waitFor();
+check(await hiddenPollingPage.getByTestId("requests").innerText() === "1", "timeline: initial activation loads immediately");
+await hiddenPollingPage.close();
 
 // Exercise demand-driven collection using the real hook and deterministic clock.
 const problemPage = await browser.newPage();
@@ -155,7 +222,7 @@ async function session(viewport, tag) {
   await page.waitForSelector("h1");
   await page.waitForTimeout(800);
   check((await page.locator("h2:has-text('Анализ событий')").count()) === 1, `${tag}: профиль — анализ событий`);
-  check((await page.locator("h2:has-text('История выполненных задач')").count()) === 1, `${tag}: профиль — история задач`);
+  check((await page.locator("h2:has-text('История задач')").count()) === 1, `${tag}: профиль — история задач`);
   await page.waitForSelector("h2:has-text('посещений в Imbox')", { timeout: 5000 }).catch(() => {});
   check((await page.locator("h2:has-text('посещений в Imbox')").count()) === 1, `${tag}: профиль — Imbox`);
   const seg = page.locator(".strip button").first();

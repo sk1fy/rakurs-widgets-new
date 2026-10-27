@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useResource } from "../../app/hooks";
 import type { ActivitySource, DayRange } from "../../api/source";
+import { sourceIdentity } from "../../api/sourceIdentity";
 import { addDays, dayEndInclusive, dayStart } from "../../domain/time";
 import type { EmployeeId } from "../../domain/types";
 
@@ -11,15 +12,16 @@ export function useEmployeeData(source: ActivitySource, employeeId: EmployeeId, 
     const d = addDays(dayKey, -1);
     return { dayKey: d, from: dayStart(d, timeZone), to: dayEndInclusive(d, timeZone) };
   }, [dayKey, timeZone]);
-  const events = useResource(`emp:${employeeId}:${range.from}`, (s) => source.loadEmployeeEvents(employeeId, range, s), { refreshMs });
-  const prevEvents = useResource(`emp-prev:${employeeId}:${prev.from}`, (s) => source.loadEmployeeEvents(employeeId, prev, s));
-  const ratings = useResource(events.data ? `emp-rating:${employeeId}:${range.from}:${startMinutes}:${endMinutes}` : null,
+  const scope = sourceIdentity(source);
+  const events = useResource(`emp:${scope}:${employeeId}:${range.from}`, (s) => source.loadEmployeeEvents(employeeId, range, s), { refreshMs });
+  const prevEvents = useResource(`emp-prev:${scope}:${employeeId}:${prev.from}`, (s) => source.loadEmployeeEvents(employeeId, prev, s));
+  const ratings = useResource(events.data ? `emp-rating:${scope}:${employeeId}:${range.from}:${startMinutes}:${endMinutes}` : null,
     (s) => source.loadActivityRatings({ ...range, surface: "profile", employeeIds: [employeeId], startMinutes, endMinutes, cutoffUnix: nowUnix }, s),
     { refreshKey: events.updatedAt });
-  const prevRatings = useResource(prevEvents.data ? `emp-prev-rating:${employeeId}:${prev.from}:${startMinutes}:${endMinutes}` : null,
+  const prevRatings = useResource(prevEvents.data ? `emp-prev-rating:${scope}:${employeeId}:${prev.from}:${startMinutes}:${endMinutes}` : null,
     (s) => source.loadActivityRatings({ ...prev, surface: "profile", employeeIds: [employeeId], startMinutes, endMinutes, cutoffUnix: nowUnix }, s),
     { refreshKey: prevEvents.updatedAt });
-  const sessions = useResource(`ses:${employeeId}:${range.dayKey}`, (s) => source.loadSessions(employeeId, range, s), { refreshMs });
-  const prevSessions = useResource(`ses-prev:${employeeId}:${prev.dayKey}`, (s) => source.loadSessions(employeeId, prev, s));
+  const sessions = useResource(`ses:${scope}:${employeeId}:${range.from}:${range.to}`, (s) => source.loadSessions(employeeId, range, s), { refreshMs });
+  const prevSessions = useResource(`ses-prev:${scope}:${employeeId}:${prev.from}:${prev.to}`, (s) => source.loadSessions(employeeId, prev, s));
   return { range, prev, events, prevEvents, ratings, prevRatings, sessions, prevSessions };
 }

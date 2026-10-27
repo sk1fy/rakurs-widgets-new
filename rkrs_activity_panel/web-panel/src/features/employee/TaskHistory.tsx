@@ -1,3 +1,4 @@
+import { shouldGateSessionHistory } from "./sessionHistoryState";
 import { useMemo, useState } from "react";
 import type { Sourced } from "../../api/source";
 import { taskHistory, type HistoryRow } from "../../domain/formulas/sessions";
@@ -8,7 +9,7 @@ import { EmptyNote, isPlaceholder, nowMinutesFor, RangeFilter, SessionStrip, Sum
 
 type SortKey = "start" | "end" | "duration";
 
-/** «История выполненных задач» (EmployeeTaskBoardSectionV2). F7: паузы не попадают в таблицу. */
+/** «История задач» (EmployeeTaskBoardSectionV2). F7: паузы не попадают в таблицу. */
 export function TaskHistory({ sessions, dayKey, timeZone, nowUnix, startMinutes, endMinutes, taskPanelEnabled }: { sessions: Sourced<EmployeeSessions> | null; dayKey: string; timeZone: string; nowUnix: number; startMinutes: number; endMinutes: number; taskPanelEnabled: boolean | null }) {
   const [range, setRange] = useState<[number, number]>([Math.floor(startMinutes / 60) * 60, Math.ceil(endMinutes / 60) * 60]);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "start", dir: 1 });
@@ -17,11 +18,12 @@ export function TaskHistory({ sessions, dayKey, timeZone, nowUnix, startMinutes,
   if (!sessions) return null;
   const header = (
     <div className="sec-h">
-      <h2>История выполненных задач</h2>
+      <h2>История задач</h2>
+      {taskPanelEnabled === false && <span className="chip warn">Сбор отключён</span>}
       {sessions.kind === "ok" && sessions.data.meta.source === "fixture" && <span className="chip warn">Тестовые данные</span>}
     </div>
   );
-  if (taskPanelEnabled === false) return <TaskPanelGate title="История выполненных задач" />;
+  if (shouldGateSessionHistory(taskPanelEnabled, sessions)) return <TaskPanelGate title="История задач" />;
   if (sessions.kind === "unavailable" || !data) {
     return (
       <section className="sec history-section task-history">
@@ -56,7 +58,7 @@ export function TaskHistory({ sessions, dayKey, timeZone, nowUnix, startMinutes,
         <div className="history-card-head">
           <h3>Список задач</h3>
           <div className="history-summary">
-            <SumCard icon="task" label="Закрыто" value={s.closed} />
+            <SumCard icon="task" label="Завершено интервалов" value={s.closed} />
             <SumCard icon="clock" label="Среднее" value={formatDurationWithSeconds(s.averageSeconds)} />
             <SumCard icon="ok" label="С результатом" value={`${s.withResult} / ${s.total}`} />
             <SumCard icon="chart" label="Типов" value={s.types} />
