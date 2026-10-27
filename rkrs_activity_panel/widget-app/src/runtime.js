@@ -22,22 +22,47 @@ function identity(context) {
   )}:${encodeURIComponent(context.userId ?? "demo")}`;
 }
 
+function unavailableController(message) {
+  const state = {
+    live: true, ready: false, enabled: false, busy: false, pending: false,
+    scenario: "tasks", tasks: [], dialogs: [], selectedTaskId: null,
+    active: null, history: [], settings: { compact: false },
+    error: message, elapsedSeconds: 0, totalSeconds: 0, completedCount: null,
+  };
+  const noop = () => false;
+  return {
+    getSnapshot: () => structuredClone(state), subscribe: () => noop,
+    selectScenario: noop, selectTask: noop, startTask: noop, startOther: noop,
+    startImbox: noop, pause: noop, stop: noop, completeTask: noop,
+    refresh: noop, updateSettings: noop, openManagement: noop,
+    reset: noop, tick: noop, dispose: noop,
+  };
+}
+
 function recordFor(context) {
   if (!context?.widget || typeof context.widget !== "object")
     throw new Error("Widget instance is required");
   const key = identity(context);
+  // Only the explicit simulator context may create local tasks or timers.
+  // A missing SDK in amoCRM is an unavailable integration, never a demo.
+  const demo = context.mode === "demo";
+  const authenticated = typeof context.widget.$authorizedAjax === "function" &&
+    Number.isSafeInteger(Number(context.accountId)) && Number(context.accountId) > 0 &&
+    Number.isSafeInteger(Number(context.userId)) && Number(context.userId) > 0;
+  const mode = demo ? "demo" : authenticated ? "live" : "unavailable";
   let record = records.get(context.widget);
-  if (record && record.storageKey !== key) {
+  if (record && (record.storageKey !== key || record.mode !== mode)) {
     unmountAll(context.widget);
     record = null;
   }
   if (!record) {
     record = {
       storageKey: key,
-      controller: typeof context.widget.$authorizedAjax === "function" && !document.querySelector("[data-rkrs-activity-panel-slot]") ? createLiveActivityController({ context, apiOrigin: import.meta.env.VITE_ACTIVITY_API_ORIGIN, appOrigin: import.meta.env.VITE_ACTIVITY_APP_ORIGIN }) : createActivityController({
+      mode,
+      controller: demo ? createActivityController({
         storage: safeStorage(),
         storageKey: key,
-      }),
+      }) : authenticated ? createLiveActivityController({ context, apiOrigin: import.meta.env.VITE_ACTIVITY_API_ORIGIN, appOrigin: import.meta.env.VITE_ACTIVITY_APP_ORIGIN }) : unavailableController("Виджет не подключён: недоступны авторизация amoCRM или данные сотрудника. Обновите страницу CRM."),
       panel: null,
       settings: null,
       timer: null,
@@ -92,7 +117,7 @@ export function mountPanel(context) {
   if (record.panel?.host.isConnected) return;
   removeSurface(record.panel);
   const target =
-    document.querySelector("[data-rkrs-activity-panel-slot]") ||
+    (record.mode === "demo" && document.querySelector("[data-rkrs-activity-panel-slot]")) ||
     document.querySelector("#app") ||
     document.body;
   record.panel = surface(target, record.controller);
@@ -103,7 +128,7 @@ export function mountPanel(context) {
     );
   record.previewUnsubscribe?.();
   // Explicit simulator-only bridge. No selectors or writes into real amoCRM task cards.
-  if (target.hasAttribute("data-rkrs-activity-panel-slot")) {
+  if (record.mode === "demo" && target.hasAttribute("data-rkrs-activity-panel-slot")) {
     record.bridgeTarget = target;
     record.bridgeHandler = (event) => {
       if (event.detail?.type === "task")

@@ -19,6 +19,8 @@ function setup() {
     }
   );
   const { window } = dom;
+  window.structuredClone = structuredClone;
+  window.TextEncoder = TextEncoder;
   const intervals = new Set();
   const createInterval = window.setInterval.bind(window);
   const clearInterval = window.clearInterval.bind(window);
@@ -34,7 +36,7 @@ function setup() {
   window.eval(code);
   const app = window.RkrsActivityPrototype;
   const widget = {};
-  const context = { widget, accountId: 1, userId: 2 };
+  const context = { widget, accountId: 1, userId: 2, mode: "demo" };
   const slot = window.document.querySelector("[data-rkrs-activity-panel-slot]");
   return { dom, window, app, context, widget, intervals, slot };
 }
@@ -174,6 +176,59 @@ test("external Imbox action updates the visible dialog and outside clicks dismis
     );
     await settle();
     assert.equal(shadow.querySelector(".rkrs-popover"), null);
+  } finally {
+    app.unmountAll(widget);
+    dom.window.close();
+  }
+});
+
+test("missing SDK stays unavailable even beside a simulator slot; demo must be explicit", async () => {
+  const { dom, window, app, context, widget, slot } = setup();
+  try {
+    delete context.mode;
+    app.mountPanel(context);
+    await settle();
+    const shadow = window.document.querySelector('[data-rkrs-prototype-surface="panel"]').shadowRoot;
+    assert.match(shadow.textContent, /Виджет не подключён/);
+    assert.equal(shadow.querySelector('.rkrs-demo'), null);
+    assert.equal(shadow.querySelector('.rkrs-start').disabled, true);
+    assert.equal(shadow.querySelector('.rkrs-complete').disabled, true);
+    slot.dispatchEvent(new window.CustomEvent('rkrs-activity-demo-action', { detail: { type: 'task', id: 'task-call' } }));
+    assert.equal(window.localStorage.length, 0);
+    app.mountPanel({ ...context, mode: 'demo' });
+    await settle();
+    const demo = slot.querySelector('[data-rkrs-prototype-surface="panel"]').shadowRoot;
+    assert.ok(demo.querySelector('.rkrs-demo'));
+    assert.equal(demo.querySelector('.rkrs-start').disabled, false);
+  } finally {
+    app.unmountAll(widget);
+    dom.window.close();
+  }
+});
+
+test("task completion requests a result, validates UTF-8 limit and accepts an empty result", async () => {
+  const { dom, window, app, context, widget, slot } = setup();
+  try {
+    app.mountPanel(context);
+    await settle();
+    const shadow = slot.querySelector('[data-rkrs-prototype-surface="panel"]').shadowRoot;
+    shadow.querySelector('.rkrs-complete').click();
+    await settle();
+    const form = shadow.querySelector('.rkrs-completion-form');
+    assert.ok(form, 'completion requires an explicit form submission');
+    const textarea = form.querySelector('textarea');
+    textarea.value = 'я'.repeat(1001);
+    textarea.dispatchEvent(new window.Event('input', { bubbles: true }));
+    await settle();
+    assert.equal(form.querySelector('[type="submit"]').disabled, true);
+    textarea.value = '';
+    textarea.dispatchEvent(new window.Event('input', { bubbles: true }));
+    await settle();
+    assert.equal(form.querySelector('[type="submit"]').disabled, false);
+    form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    await settle();
+    assert.equal(shadow.querySelector('.rkrs-completion-form'), null);
+    assert.equal(JSON.parse(window.localStorage.getItem('rkrs_activity_prototype_v1:1:2')).completedTaskIds.length, 1);
   } finally {
     app.unmountAll(widget);
     dom.window.close();

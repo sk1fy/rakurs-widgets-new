@@ -99,6 +99,16 @@ test("one release and bundle request shared across renders and instances; callba
   assert.equal(calls.mount[0].userId, 42);
   assert.equal(calls.mount[0].subdomain, "demo");
   assert.equal(calls.mount[0].area, "dashboard");
+  assert.equal(calls.mount[0].mode, "live");
+});
+
+test("only an explicit preview instance enables demo context", async () => {
+  const { Widget, calls } = setup();
+  const widget = new Widget();
+  widget.__rkrsActivityPreview = true;
+  widget.callbacks.init();
+  await tick();
+  assert.equal(calls.mount[0].mode, "demo");
 });
 
 test("fetch failure is visible and next render retries successfully", async () => {

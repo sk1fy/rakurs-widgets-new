@@ -116,6 +116,7 @@ define([], function () {
             try { area = AMOCRM.widgets.system.area || ''; } catch (ignored) { /* Preview без CRM. */ }
             return {
                 widget: self,
+                mode: self.__rkrsActivityPreview === true ? 'demo' : 'live',
                 accountId: account.id || null,
                 userId: user.id || constant('user_id') || null,
                 subdomain: account.subdomain || '',
