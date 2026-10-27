@@ -7,7 +7,7 @@
 //  - UnavailableSettingsBackend: production-сборка без браузерной
 //    авторизации администратора (C7) — управление закрыто.
 
-import { consumeBrowserSession } from "./browserSession";
+import { clearBrowserSession, consumeBrowserSession } from "./browserSession";
 import { panelOptionsFromAPI, panelOptionsToAPI, type RawPanelOptions } from "../api/panelOptions";
 import { FIXTURE_EMPLOYEES, FIXTURE_OPERATORS, FIXTURE_TZ } from "../api/fixtures/generator";
 import { ApiError } from "../api/errors";
@@ -225,10 +225,18 @@ export class ManagementProxyBackend implements SettingsBackend {
   private taskSaveError: ApiError | null = null;
   constructor(private readonly base = "/dev-management/api/v1/activity", private readonly bearer?: string) {}
 
-  private call<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+  private async call<T>(path: string, method = "GET", body?: unknown): Promise<T> {
     const headers: Record<string, string> = {};
     if (method === "POST") headers["Idempotency-Key"] = crypto.randomUUID();
-    return requestJson<T>(`${this.base}${path}`, { method, body, headers, bearer: this.bearer });
+    try {
+      return await requestJson<T>(`${this.base}${path}`, { method, body, headers, bearer: this.bearer });
+    } catch (error) {
+      if (this.bearer && error instanceof ApiError && error.code === "unauthenticated") {
+        clearBrowserSession(this.bearer);
+        throw new ApiError({ code: "management_session_expired", message: "Admin session expired", status: error.status, requestId: error.requestId });
+      }
+      throw error;
+    }
   }
 
   async listPanels() {
@@ -284,7 +292,7 @@ export class ManagementProxyBackend implements SettingsBackend {
         this.taskRevision = raw.revision;
         return taskPanelFromAPI(raw);
       } catch (error) {
-        if (error instanceof ApiError && ["conflict", "permission_denied", "unauthenticated", "reauth_required"].includes(error.code)) this.taskSaveError = error;
+        if (error instanceof ApiError && ["conflict", "permission_denied", "unauthenticated", "management_session_expired", "reauth_required"].includes(error.code)) this.taskSaveError = error;
         throw error;
       }
     };

@@ -68,3 +68,28 @@ describe("MVP shared task panel settings", () => {
     expect(backend.capabilities.taskPanel).toMatchObject({ available: false, contract: "C7" });
   });
 });
+
+
+it("maps expired browser management credentials separately and blocks queued saves", async () => {
+  const { describeError } = await import("../src/api/errors");
+  const removeItem = vi.fn();
+  vi.stubGlobal("window", { sessionStorage: { removeItem } });
+  let patches = 0;
+  vi.stubGlobal("fetch", async (_: string, init: RequestInit) => {
+    if (init.method !== "PATCH") return response(raw());
+    patches++;
+    return response({ error: { code: "unauthenticated", request_id: "fixture-request" } }, 401);
+  });
+  const backend = new ManagementProxyBackend("/api/v1/activity", "expired-fixture");
+  const settings = await backend.getTaskPanel();
+  const results = await Promise.allSettled([backend.saveTaskPanel(settings), backend.saveTaskPanel(settings)]);
+  expect(patches).toBe(1);
+  for (const result of results) {
+    expect(result.status).toBe("rejected");
+    if (result.status === "rejected") {
+      expect(result.reason).toMatchObject({ code: "management_session_expired", requestId: "fixture-request" });
+      expect(describeError(result.reason)).toMatchObject({ title: "Войдите в настройки из amoCRM", retryable: false });
+    }
+  }
+  expect(removeItem).toHaveBeenCalled();
+});

@@ -3,6 +3,7 @@
 
 export type ApiErrorCode =
   | "invalid_argument"
+  | "management_session_expired"
   | "unauthenticated"
   | "permission_denied"
   | "not_found"
@@ -45,6 +46,8 @@ export function describeError(error: unknown): { title: string; hint: string; re
   }
   const base = { retryable: error.retryable, requestId: error.requestId };
   switch (error.code) {
+    case "management_session_expired":
+      return { ...base, retryable: false, title: "Войдите в настройки из amoCRM", hint: "Сессия администратора завершилась. В виджете «Контроль активности 2.0» откройте «Настройки виджета → Общие настройки аккаунта»." };
     case "unauthenticated":
     case "not_found":
       return { ...base, title: "Ссылка на панель недействительна", hint: "Ссылку могли перевыпустить или панель отключили. Запросите новую ссылку у администратора." };
