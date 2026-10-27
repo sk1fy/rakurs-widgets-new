@@ -102,6 +102,9 @@ function PanelsManager({ backend, notify }: { backend: SettingsBackend; notify: 
     }
   };
 
+  const authError = [panels.error, employees.error, actionError].find(error => error instanceof ApiError && error.code === "management_session_expired");
+  if (authError) return <ErrorState error={authError} />;
+
   const employeesReady = employees.status === "ready" && employees.data !== null;
 
   return (

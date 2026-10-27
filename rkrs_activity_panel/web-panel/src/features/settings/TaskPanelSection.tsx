@@ -45,7 +45,7 @@ function TaskPanelEditor({ backend, initial, employees, onReload }: { backend: S
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState<unknown>(null);
   const queue = useRef<SaveQueue>({ timer: null, pending: null, seq: 0, mounted: true, version: 0, blocked: false });
-  const blocked = error instanceof ApiError && ["conflict", "permission_denied", "unauthenticated", "reauth_required"].includes(error.code);
+  const blocked = error instanceof ApiError && ["conflict", "permission_denied", "unauthenticated", "management_session_expired", "reauth_required"].includes(error.code);
 
   const flush = useCallback(() => {
     const q = queue.current;
@@ -66,7 +66,7 @@ function TaskPanelEditor({ backend, initial, employees, onReload }: { backend: S
         }
       },
       (e: unknown) => {
-        const terminal = e instanceof ApiError && ["conflict", "permission_denied", "unauthenticated", "reauth_required"].includes(e.code);
+        const terminal = e instanceof ApiError && ["conflict", "permission_denied", "unauthenticated", "management_session_expired", "reauth_required"].includes(e.code);
         if (terminal) {
           q.blocked = true;
           q.pending = null;

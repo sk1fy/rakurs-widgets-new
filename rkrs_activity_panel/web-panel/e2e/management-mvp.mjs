@@ -15,12 +15,12 @@ export async function managementMvp(browser, check, out) {
   const bundle = readFileSync(`${widgetRoot}/dist/rkrs-activity.umd.js`);
   const context = await browser.newContext({ viewport: { width: 1360, height: 950 } });
   const credential = "m".repeat(43);
-  let admin = true, forcedStatus = 0, holdSave = false, releaseSave;
+  let admin = true, expired = false, freshTokens = 0, forcedStatus = 0, holdSave = false, releaseSave;
   let viewReads = 0, viewerAllowed = true;
   let settings = { enabled: true, employee_ids: [7], consider_future_tasks: false, include_related_deals: true, priority_keys: ["today_timed", "urgent"], revision: 3 };
   const saves = [], managementCalls = [], issued = [];
   const html = `<!doctype html><meta charset="utf-8"><title>MVP widget fixture</title><main id="app"><h1>Искусственный SDK-стенд</h1></main><script src="/fixture-widget.js"></script><script>
-    const widget={get_settings:()=>({widget_code:'fixture_activity'}),$authorizedAjax(options){let done,fail;const req={done(fn){done=fn;return req},fail(fn){fail=fn;return req}};queueMicrotask(async()=>{try{const url=new URL(options.url);const r=await fetch(url.pathname+url.search,{method:options.method,headers:{'Content-Type':'application/json',...options.headers},body:options.data});const value=await r.json();r.ok?done(value):fail({status:r.status,responseJSON:value})}catch(e){fail({status:0})}});return req}};
+    const widget={get_settings:()=>({widget_code:'fixture_activity',oauth_client_uuid:'a0ee1dca-76a6-4720-b1dc-c6a0ba52c07e'}),$authorizedAjax(){throw Error('Cached SDK must not be used')},$:{ajax(options){let done,fail;const req={done(fn){done=fn;return req},fail(fn){fail=fn;return req}};queueMicrotask(async()=>{try{const url=new URL(options.url,location.origin);const r=await fetch(url.pathname+url.search,{method:options.method,headers:{'Content-Type':'application/json',...options.headers},body:options.data});const value=await r.json();r.ok?done(value):fail({status:r.status,responseJSON:value})}catch(e){fail({status:0})}});return req}}};
     RkrsActivityPrototype.registerWidgetInstance(widget);RkrsActivityPrototype.mountPanel({widget,accountId:42,userId:7,mode:'live'});
     </script>`;
   try {
@@ -29,6 +29,7 @@ export async function managementMvp(browser, check, out) {
       const json = (body, status = 200) => route.fulfill({ status, json: body, headers: { "Access-Control-Allow-Origin": "*" } });
       if (path === "/widget-fixture") return route.fulfill({ contentType: "text/html", body: html });
       if (path === "/fixture-widget.js") return route.fulfill({ contentType: "text/javascript", body: bundle });
+      if (path.endsWith("/disposable_token")) return json({ token: `fresh-fixture-${++freshTokens}` });
       if (path.startsWith("/api/v4/")) return json({ _embedded: { tasks: [] } });
       if (path.startsWith("/api/v1/widget/activity/")) {
         if (path.endsWith("/browser-session")) {
@@ -47,6 +48,7 @@ export async function managementMvp(browser, check, out) {
         return json({ name: `Тестовая панель ${settings.revision}`, timezone: "Europe/Moscow", display_window: { from: "09:00", to: "18:00" }, employees: [{ id: 7, name: "Никита Тест", group_id: 1, group_name: "Тестовый отдел" }], task_panel_enabled: settings.enabled });
       }
       managementCalls.push({ path, method: request.method(), bearer: request.headers().authorization });
+      if (expired) return json({ error: { code: "unauthenticated", message: "browser session expired" } }, 401);
       if (request.headers().authorization !== `Bearer ${credential}` || !admin) return json({ error: { code: "permission_denied", message: "Администратор не подтверждён" } }, 403);
       if (path.endsWith("/panels")) return json({ panels: [] });
       if (path.endsWith("/employees")) return json({ users: [{ id: 7, name: "Никита Тест", group_id: 1, group_name: "Тестовый отдел" }, { id: 8, name: "Мария Тест", group_id: 1, group_name: "Тестовый отдел" }] });
@@ -73,7 +75,10 @@ export async function managementMvp(browser, check, out) {
     const panelSwitch = settingsPage.getByRole("switch", { name: "Панель задач включена в аккаунте", exact: true });
     await panelSwitch.waitFor();
     check(!settingsPage.url().includes("admin_session"), "management: widget opens React and removes its short-lived fragment credential");
-    check(await settingsPage.evaluate((opaque) => [localStorage, sessionStorage].every((store) => Object.keys(store).every((key) => !store.getItem(key)?.includes(opaque))), credential), "management: credential is never persisted in browser storage");
+    check(await settingsPage.evaluate((opaque) => Object.keys(localStorage).every(key => !localStorage.getItem(key)?.includes(opaque)) && Object.keys(sessionStorage).some(key => sessionStorage.getItem(key)?.includes(opaque)), credential), "management: credential stays in tab session storage, never localStorage");
+    await settingsPage.reload();
+    await panelSwitch.waitFor();
+    check(await panelSwitch.isEnabled(), "management: reload preserves a valid browser session");
     check(issued.length === 1 && managementCalls.every((call) => call.bearer === `Bearer ${credential}`), "management: only the browser credential authorizes shared settings");
     check((await settingsPage.locator("ol > li").first().innerText()).includes("На сегодня по времени"), "management: priority order is loaded from the server");
     await settingsPage.getByRole("button", { name: "Ниже", exact: true }).first().click();
@@ -104,6 +109,14 @@ export async function managementMvp(browser, check, out) {
     await widget.getByRole("button", { name: "Обновить / повторить запрос", exact: true }).click();
     await widget.getByRole("alert").waitFor();
     check((await widget.getByRole("alert").innerText()).includes("отключена"), "management: the employee widget consumes updated shared enablement");
+    expired = true;
+    await settingsPage.getByRole("link", { name: "Панели", exact: true }).click();
+    await settingsPage.getByText("Войдите в настройки из amoCRM", { exact: true }).waitFor();
+    check(await settingsPage.getByRole("alert").count() === 1 && await settingsPage.getByText("Ссылка на панель недействительна", { exact: true }).count() === 0, "management: expired session produces one actionable login message");
+    check(await settingsPage.evaluate(() => sessionStorage.getItem("rkrs_activity_admin_session_v1")) === null, "management: server rejection clears stored credential");
+    expired = false;
+    await settingsPage.goto(`${base}/#/settings/task-panel?admin_session=${credential}`);
+    await panelSwitch.waitFor();
     admin = false;
     forcedStatus = 403;
     await settingsPage.getByRole("switch", { name: "Включать связанные сделки", exact: true }).click();
