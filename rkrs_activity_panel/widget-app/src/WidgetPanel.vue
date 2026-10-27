@@ -140,7 +140,7 @@ async function openCompletion(event) {
   popover.value?.querySelector("textarea")?.focus();
 }
 async function complete() {
-  if (!canComplete.value || resultTooLong.value) return;
+  if (!canComplete.value || resultTooLong.value || (state.value.live && !taskResult.value.trim())) return;
   const result = await props.controller.completeTask(completionTaskId.value, taskResult.value.trim());
   if (result !== false) close();
 }
@@ -348,7 +348,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </div>
-      <p v-if="state.error || state.pending || state.completion" class="rkrs-error" role="alert">
+      <p v-if="state.error || (!state.busy && (state.pending || state.completion))" class="rkrs-error" role="alert">
         {{ state.error || "Нужно восстановить предыдущую операцию." }}
         <button v-if="state.live" type="button" class="rkrs-button" :disabled="state.busy" @click="recover">
           {{ state.pending || state.completion ? "Восстановить операцию" : "Обновить данные" }}
@@ -407,10 +407,11 @@ onBeforeUnmount(() => {
         </div>
         <form v-if="open === 'complete'" class="rkrs-completion-form" @submit.prevent="complete">
           <label for="rkrs-task-result">Результат выполнения</label>
-          <textarea id="rkrs-task-result" v-model="taskResult" rows="3" maxlength="2000" :disabled="state.busy || Boolean(state.completion)" placeholder="Можно оставить пустым" />
+          <textarea id="rkrs-task-result" v-model="taskResult" rows="3" maxlength="2000" :disabled="state.busy || Boolean(state.completion)" placeholder="Укажите результат задачи" />
           <p v-if="resultTooLong" role="alert">Результат слишком длинный. Сократите текст.</p>
           <p class="rkrs-help">{{ state.live ? "Задача будет завершена в amoCRM, а её таймер остановлен." : "Демозадача будет завершена только в этом браузере." }}</p>
-          <button type="submit" class="rkrs-button rkrs-complete" :disabled="!canComplete || resultTooLong">Завершить задачу</button>
+          <p v-if="state.live && !taskResult.trim()" class="rkrs-help">Укажите результат для завершения задачи.</p>
+          <button type="submit" class="rkrs-button rkrs-complete" :disabled="!canComplete || resultTooLong || (state.live && !taskResult.trim())">Завершить задачу</button>
         </form>
         <template v-else-if="open === 'scenario'">
           <button

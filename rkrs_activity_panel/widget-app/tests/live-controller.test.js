@@ -105,7 +105,7 @@ test('Imbox observation neither replaces nor stops another tab interval', async 
   assert.equal(fixture.writes.length, 0); fixture.controller.dispose();
 });
 
-function employeeFixture({ enabled = true, failState = 0, failStop = 0, failPatchBeforeCommit = 0, failPatchAfterCommit = 0, initial, rows, storage } = {}) {
+function employeeFixture({ enabled = true, failState = 0, failStop = 0, failPatchBeforeCommit = 0, failPatchAfterCommit = 0, rejectPatch = 0, initial, rows, storage } = {}) {
   const task = { id: 19, responsible_user_id: 7, text: 'Real task', task_type_id: 1, complete_till: 200, is_completed: false, ...initial };
   let current = { id: 'server-work', kind: 'work', started_at: 100, context: { task_id: 19, task_name: task.text, client_id: 'another-tab' } };
   const writes = [], patches = [], reads = [];
@@ -128,6 +128,7 @@ function employeeFixture({ enabled = true, failState = 0, failStop = 0, failPatc
     reads.push(url);
     if (options.method === 'PATCH') {
       const body = JSON.parse(options.body); patches.push(body);
+      if (rejectPatch) return { ok: false, status: rejectPatch };
       if (failPatchBeforeCommit-- > 0) return { ok: false, status: 503 };
       Object.assign(task, body);
       if (failPatchAfterCommit-- > 0) throw Error('CRM response lost');
@@ -163,8 +164,8 @@ test('own queue and task preflight reject other responsible users; comments are 
   assert.equal(fixture.writes.length, 0); assert.equal(fixture.patches.length, 0); controller.dispose();
 });
 
-test('CRM completion records the result and an empty result is also a successful completion', async () => {
-  for (const result of ['Решено', '']) {
+test('CRM completion records the result and stops the captured interval', async () => {
+  for (const result of ['Решено']) {
     const fixture = employeeFixture(); const controller = fixture.create(); await idle(controller);
     assert.equal(await controller.completeTask('19', result), true);
     assert.deepEqual(fixture.patches, [{ is_completed: true, result: { text: result } }]);
@@ -172,6 +173,15 @@ test('CRM completion records the result and an empty result is also a successful
     assert.equal(fixture.writes.at(-1).command.session_id, 'server-work');
     assert.equal(controller.getSnapshot().active, null); assert.equal(controller.getSnapshot().completion, null); controller.dispose();
   }
+});
+
+test('empty CRM completion result is rejected before recording an intent or changing the task', async () => {
+  const fixture = employeeFixture(); const controller = fixture.create(); await idle(controller);
+  assert.equal(await controller.completeTask('19', ''), false);
+  assert.equal(controller.getSnapshot().completion, null);
+  assert.match(controller.getSnapshot().error, /укажите результат/);
+  assert.equal(fixture.patches.length, 0); assert.equal(fixture.writes.length, 0);
+  controller.dispose();
 });
 
 test('completion rejects results over 2000 UTF-8 bytes before any CRM mutation', async () => {
@@ -208,6 +218,31 @@ test('unknown CRM PATCH response is reconciled by reading completion instead of 
   assert.equal(await controller.refresh(), true);
   assert.equal(fixture.patches.length, 1);
   assert.equal(fixture.writes[0].command.session_id, 'server-work'); controller.dispose();
+});
+
+test('CRM validation rejection clears the completion intent and leaves the active timer intact', async () => {
+  const fixture = employeeFixture({ rejectPatch: 400 }); const controller = fixture.create(); await idle(controller);
+  assert.equal(await controller.completeTask('19', 'Результат'), false);
+  assert.equal(fixture.task.is_completed, false);
+  assert.equal(controller.getSnapshot().completion, null);
+  assert.equal(controller.getSnapshot().active.serverId, 'server-work');
+  assert.match(controller.getSnapshot().error, /amoCRM отклонила завершение задачи/);
+  assert.equal(await controller.refresh(), true);
+  assert.equal(fixture.patches.length, 1, 'refresh does not replay a rejected completion');
+  assert.equal(await controller.stop(), true);
+  controller.dispose();
+});
+
+test('a stored completion rejected by CRM is released without changing the task or timer', async () => {
+  const values = new Map();
+  const storage = { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
+  storage.setItem('rkrs-activity-completion:https://api.example.test:rkrs_activity_panel:42:7', JSON.stringify({ taskId: 19, result: '', sessionId: '', phase: 'crm_pending' }));
+  const fixture = employeeFixture({ storage, rejectPatch: 400 }); const controller = fixture.create(); await idle(controller);
+  assert.equal(await controller.refresh(), false);
+  assert.equal(controller.getSnapshot().completion, null);
+  assert.equal(fixture.task.is_completed, false); assert.equal(fixture.writes.length, 0);
+  assert.equal(await controller.refresh(), true); assert.equal(fixture.patches.length, 0);
+  controller.dispose();
 });
 
 test('completion recovery never closes a different session started by another tab', async () => {

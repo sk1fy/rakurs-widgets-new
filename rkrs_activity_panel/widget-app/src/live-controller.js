@@ -177,12 +177,27 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
       const task = await crm(`tasks/${intent.taskId}`);
       assertOwnedTask(task, intent.taskId);
       if (!task.is_completed) {
+        if (!intent.result.trim()) {
+          rememberCompletion(null);
+          throw new Error('Для завершения задачи укажите результат. Задача остаётся открытой.');
+        }
         const own = await client.loadState();
         if (disposed) return;
         state.enabled = own.enabled;
         applyCurrent(own.current);
         if (!state.ready || !state.enabled) throw new Error('Панель отключена: задача не была завершена');
-        await crm(`tasks/${intent.taskId}`, { method: 'PATCH', body: JSON.stringify({ is_completed: true, result: { text: intent.result } }) });
+        try {
+          await crm(`tasks/${intent.taskId}`, { method: 'PATCH', body: JSON.stringify({ is_completed: true, result: { text: intent.result } }) });
+        } catch (error) {
+          // A validation rejection definitively means CRM did not apply the PATCH.
+          // Keep uncertain failures for reconciliation, but do not trap the user
+          // in a retry loop for a request CRM has explicitly rejected.
+          if ([400, 422].includes(error.status)) {
+            rememberCompletion(null);
+            throw new Error(`amoCRM отклонила завершение задачи (${error.status}). Проверьте задачу и результат, затем повторите действие.`);
+          }
+          throw error;
+        }
       }
       rememberCompletion({ ...intent, phase: 'stop_pending' });
     }
@@ -224,6 +239,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     completeTask(id, result = '') { return run(async () => {
       assertAvailable();
       result = validateText(result, 'Результат задачи');
+      if (!result) throw new Error('Для завершения задачи укажите результат.');
       const task = await crm(`tasks/${Number(id)}`);
       assertOwnedTask(task, id);
       const own = await client.loadState();
