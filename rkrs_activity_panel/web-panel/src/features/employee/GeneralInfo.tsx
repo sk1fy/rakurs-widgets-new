@@ -27,7 +27,7 @@ export function GeneralInfo({ today, yesterday, timeZone, workEndMinutes, nowUni
   };
   const count = (side: DaySide, type: string) => (side.events ? String(side.events.filter((e) => e.type === type).length) : "—");
   const ses = (side: DaySide, isTodaySide: boolean) =>
-    side.sessions?.kind === "ok" ? profileSessionMetrics({ sessions: side.sessions.data.items, timeZone, isToday: isTodaySide, nowUnix, workEndMinutes }) : null;
+    side.sessions?.kind === "ok" ? profileSessionMetrics({ sessions: side.sessions.data.items, dayKey: side.dayKey, timeZone, isToday: isTodaySide, nowUnix, workEndMinutes }) : null;
   const s = ses(today, isToday);
   const sy = ses(yesterday, false);
   const sessionsSynthetic = today.sessions?.kind === "ok" && today.sessions.data.meta.source === "fixture";

@@ -6,7 +6,7 @@ import { callDirection, CALL_DIRECTION_LABEL, type CallDirection } from "../../d
 import { buildExternalLane, LANE_COLORS, laneLabel, type LaneItem, type LaneSegment } from "../../domain/formulas/externalLane";
 import type { IdleSegment, TimelineGroup, TimelineRow } from "../../domain/formulas/timelineRow";
 import { phoneDisplay } from "../../domain/phone";
-import { formatCallDuration, formatSpan, formatSpanSeconds, hhmm, hhmmss, isoToUnix, minutesToHHMM } from "../../domain/time";
+import { formatCallDuration, formatSpan, formatSpanSeconds, hhmmss, minutesToHHMM } from "../../domain/time";
 import type { CrmEvent, WorkSession } from "../../domain/types";
 import type { EventCard } from "../../api/source";
 import { Icon } from "../../ui/Icon";
@@ -103,7 +103,6 @@ export function TimelineBar({ row, startMinutes, endMinutes, isToday, dayKey, ex
           const p: Popup = { kind: "group", group: g };
           return <button key={`c${i}`} type="button" className={`seg-c${isOpen(p) ? " hl" : ""}`} style={place(g.startMinutes, g.endMinutes)} title={groupTooltip(g)} aria-label={groupTooltip(g)} onClick={(e) => openAt(p, e)} />;
         })}
-        {nowM !== null && nowM > startMinutes && nowM < endMinutes && <span className="now" style={{ left: pct(nowM, startMinutes, endMinutes) }} />}
         {!hasAny && !isToday && emptyLabel && <span className="empty-l">{emptyLabel}</span>}
       </div>
       {external && <ExternalLaneBar sessions={external} dayKey={dayKey} startMinutes={startMinutes} endMinutes={endMinutes} nowMinutes={nowM} isOpen={isOpen} onOpen={openAt} />}
@@ -144,7 +143,7 @@ function ExternalLaneBar({
         {lane.segments.filter(visible).map((seg, i) => {
           const p: Popup = { kind: "lane", segment: seg };
           const single = seg.items.length === 1 ? seg.items[0] : undefined;
-          const title = single ? `${laneRange(single, panel.timezone)}\n≈${formatSpanSeconds(single.session.workTimeSeconds)}` : `${seg.items.length} событий · ${range(seg.startMinutes, seg.endMinutes)}`;
+          const title = single ? `${laneRange(single)}\n≈${formatSpanSeconds(single.seconds)}` : `${seg.items.length} событий · ${range(seg.startMinutes, seg.endMinutes)}`;
           return (
             <button key={`s${i}`} type="button" className={`seg${single ? "" : " cl"}${single?.active ? " live" : ""}${isOpen(p) ? " hl" : ""}`} style={{ ...place(seg.startMinutes, seg.endMinutes), background: seg.color }} title={title} aria-label={title} onClick={(e) => onOpen(p, e)}>
               {!single && <span>{seg.items.length}</span>}
@@ -164,10 +163,8 @@ function ExternalLaneBar({
   );
 }
 
-function laneRange(item: LaneItem, timeZone: string): string {
-  const a = isoToUnix(item.session.startedAt);
-  const b = isoToUnix(item.session.stoppedAt);
-  return `${a !== null ? hhmm(a, timeZone) : "--:--"} — ${item.active ? "В процессе..." : b !== null ? hhmm(b, timeZone) : "--:--"}`;
+function laneRange(item: LaneItem): string {
+  return `${minutesToHHMM(item.startMinutes)} — ${item.active ? "В процессе..." : minutesToHHMM(item.endMinutes)}`;
 }
 
 function LaneItemView({ item }: { item: LaneItem }) {
@@ -184,9 +181,9 @@ function LaneItemView({ item }: { item: LaneItem }) {
       </div>
       <dl>
         <dt>Время</dt>
-        <dd>{laneRange(item, panel.timezone)}</dd>
+        <dd>{laneRange(item)}</dd>
         <dt>Длительность</dt>
-        <dd style={{ color }}>{formatSpanSeconds(s.workTimeSeconds)}</dd>
+        <dd style={{ color }}>{formatSpanSeconds(item.seconds)}</dd>
         {s.activityType !== "imbox" && (
           <>
             <dt>{s.taskName ? "Описание" : "Задача"}</dt>

@@ -36,7 +36,7 @@ export function EmployeePage({ employeeId, date }: { employeeId: number; date: s
   const crmBase = panel.crmBaseUrl;
   const sessions = data.sessions.data ?? null;
   const filtered = useMemo(() => events ?? [], [events]);
-  const [previewEnabled, setPreviewEnabled] = useState(import.meta.env.DEV && source.mode !== "fixtures");
+  const [previewEnabled, setPreviewEnabled] = useState(false);
   const sample = useMemo(() => profilePreview(employeeId, dayKey, tz, win.startMinutes, win.endMinutes), [employeeId, dayKey, tz, win.startMinutes, win.endMinutes]);
   const needs = previewNeeds(events, sessions);
   const canPreview = import.meta.env.DEV && source.mode !== "fixtures";
@@ -118,15 +118,18 @@ export function EmployeePage({ employeeId, date }: { employeeId: number; date: s
             <EventAnalysis events={preview.analysis ? sample.events : filtered} sessions={preview.analysis ? sample.sessions : sessions} dayKey={dayKey} timeZone={tz} startMinutes={win.startMinutes} endMinutes={win.endMinutes} nowUnix={preview.analysis ? sample.now : now} crmBase={preview.analysis ? null : crmBase} employeeId={employeeId} demo={preview.analysis} />
           </>
         )}
-        {data.sessions.status === "error" && <ErrorState error={data.sessions.error} onRetry={data.sessions.reload} compact />}
-        {events && data.sessions.status === "loading" && (
+        {data.sessions.error !== null && <ErrorState error={data.sessions.error} onRetry={data.sessions.reload} compact />}
+        {data.sessions.data?.kind === "ok" && <MetaBadges meta={data.sessions.data.data.meta} timeZone={tz} />}
+        {data.sessions.error !== null && data.sessions.data && <div className="banner">История сессий временно устарела: последнее обновление не удалось.</div>}
+        {data.sessions.refreshing && <div className="refreshing"><span className="spin" /> Обновление интервалов сотрудника…</div>}
+        {data.sessions.status === "loading" && (
           <>
             <SectionSkeleton title="Суммарное время" tiles={0} rows={5} />
-            <SectionSkeleton title="История выполненных задач" />
+            <SectionSkeleton title="История задач" />
             <SectionSkeleton title="История посещений в Imbox" />
           </>
         )}
-        {events && data.sessions.status !== "loading" && (
+        {data.sessions.status !== "loading" && (
           <>
             <TotalTime sessions={preview.totals ? sample.sessions : sessions} events={preview.totals ? sample.events : filtered} dayKey={dayKey} timeZone={tz} nowUnix={preview.totals ? sample.now : now} crmBase={preview.totals ? null : crmBase} employeeId={employeeId} taskPanelEnabled={preview.totals ? true : panel.taskPanelEnabled} />
             <TaskHistory sessions={preview.tasks ? sample.sessions : sessions} dayKey={dayKey} timeZone={tz} nowUnix={preview.tasks ? sample.now : now} startMinutes={win.startMinutes} endMinutes={win.endMinutes} taskPanelEnabled={preview.tasks ? true : panel.taskPanelEnabled} />

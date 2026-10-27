@@ -212,8 +212,6 @@ const fromManaged = (p: RawManaged): PanelSettings => ({
   extensions: panelOptionsFromAPI(p.options),
 });
 
-const C5 = "amocrm-pro хранит только название, сотрудников, окно и признак включения; воронки, операторы, пороги и Telegram не поддерживаются";
-
 export class ManagementProxyBackend implements SettingsBackend {
   readonly kind = "amocrm-pro" as const;
   readonly capabilities: SettingsCapabilities = {
@@ -222,8 +220,9 @@ export class ManagementProxyBackend implements SettingsBackend {
     telegram: no("C5", "Telegram-уведомления не реализованы в amocrm-pro"),
     taskPanel: yes,
   };
-  private taskRevision = 0;
+  private taskRevision: number | null = null;
   private taskSaveQueue: Promise<unknown> = Promise.resolve();
+  private taskSaveError: ApiError | null = null;
   constructor(private readonly base = "/dev-management/api/v1/activity", private readonly bearer?: string) {}
 
   private call<T>(path: string, method = "GET", body?: unknown): Promise<T> {
@@ -268,16 +267,26 @@ export class ManagementProxyBackend implements SettingsBackend {
   }
 
   async getTaskPanel(): Promise<TaskPanelSettings> {
+    // A reload observes the result of earlier queued saves before resetting CAS.
+    await this.taskSaveQueue.catch(() => undefined);
     const raw = await this.call<RawTaskPanel>("/task-panel");
     this.taskRevision = raw.revision;
+    this.taskSaveError = null;
     return taskPanelFromAPI(raw);
   }
 
   saveTaskPanel(value: TaskPanelSettings): Promise<TaskPanelSettings> {
     const save = async () => {
-      const raw = await this.call<RawTaskPanel>("/task-panel", "PATCH", { enabled: value.enabled, employee_ids: value.enabledEmployees, consider_future_tasks: value.considerFutureTasks, include_related_deals: value.includeRelatedDeals, priority_keys: value.priorities.filter((p) => p.enabled).map((p) => p.key), revision: this.taskRevision });
-      this.taskRevision = raw.revision;
-      return taskPanelFromAPI(raw);
+      if (this.taskSaveError) throw this.taskSaveError;
+      if (this.taskRevision === null) throw new ApiError({ code: "conflict", message: "Сначала загрузите актуальные настройки" });
+      try {
+        const raw = await this.call<RawTaskPanel>("/task-panel", "PATCH", { enabled: value.enabled, employee_ids: value.enabledEmployees, consider_future_tasks: value.considerFutureTasks, include_related_deals: value.includeRelatedDeals, priority_keys: value.priorities.filter((p) => p.enabled).map((p) => p.key), revision: this.taskRevision });
+        this.taskRevision = raw.revision;
+        return taskPanelFromAPI(raw);
+      } catch (error) {
+        if (error instanceof ApiError && ["conflict", "permission_denied", "unauthenticated", "reauth_required"].includes(error.code)) this.taskSaveError = error;
+        throw error;
+      }
     };
     const pending = this.taskSaveQueue.then(save, save);
     this.taskSaveQueue = pending;
@@ -298,10 +307,10 @@ export class ManagementProxyBackend implements SettingsBackend {
 export class UnavailableSettingsBackend implements SettingsBackend {
   readonly kind = "unavailable" as const;
   readonly capabilities: SettingsCapabilities = {
-    managePanels: no("C7", "Нет браузерной авторизации администратора: management API принимает только серверный токен"),
-    extensions: no("C5", C5),
+    managePanels: no("C7", "Откройте общие настройки из виджета amoCRM с правами администратора"),
+    extensions: no("C7", "Для общих настроек нужен вход администратора из виджета amoCRM"),
     telegram: no("C5", "Telegram-уведомления не реализованы в amocrm-pro"),
-    taskPanel: no("C6", "Глобальные настройки панели задач не реализованы в amocrm-pro"),
+    taskPanel: no("C7", "Для настроек панели задач нужен вход администратора из виджета amoCRM"),
   };
   private fail<T>(): Promise<T> {
     return Promise.reject(new ApiError({ code: "permission_denied", message: "C7" }));
@@ -322,11 +331,15 @@ export function createSettingsBackend(mode: "live" | "hybrid" | "fixtures" = __D
   if (mode === "fixtures") return new FixtureSettingsBackend();
   if (session) return new ManagementProxyBackend(`${import.meta.env.VITE_ACTIVITY_API_BASE ?? ""}/api/v1/activity`, session);
   if (__DEV_MANAGEMENT__) return new ManagementProxyBackend();
-  if (mode === "hybrid") return new FixtureSettingsBackend();
   return new UnavailableSettingsBackend();
 }
 
 interface RawTaskPanel { enabled: boolean; employee_ids: number[] | null; consider_future_tasks: boolean; include_related_deals: boolean; priority_keys: string[] | null; revision: number }
 function taskPanelFromAPI(raw: RawTaskPanel): TaskPanelSettings {
-  return { ...defaultTaskPanel(), revision: raw.revision, enabled: raw.enabled, enabledEmployees: raw.employee_ids ?? [], considerFutureTasks: raw.consider_future_tasks, includeRelatedDeals: raw.include_related_deals, priorities: defaultTaskPanel().priorities.map((p) => ({ ...p, enabled: (raw.priority_keys ?? []).includes(p.key) })) };
+  const defaults = defaultTaskPanel().priorities;
+  const ordered = [...new Set(raw.priority_keys ?? [])].flatMap((key) => {
+    const rule = defaults.find((p) => p.key === key);
+    return rule ? [{ ...rule, enabled: true }] : [];
+  });
+  return { ...defaultTaskPanel(), revision: raw.revision, enabled: raw.enabled, enabledEmployees: raw.employee_ids ?? [], considerFutureTasks: raw.consider_future_tasks, includeRelatedDeals: raw.include_related_deals, priorities: [...ordered, ...defaults.filter((p) => !ordered.some((r) => r.key === p.key)).map((p) => ({ ...p, enabled: false }))] };
 }

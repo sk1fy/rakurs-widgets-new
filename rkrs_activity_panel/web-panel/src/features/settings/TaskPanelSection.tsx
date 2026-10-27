@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useResource } from "../../app/hooks";
+import { ApiError } from "../../api/errors";
 import type { Employee } from "../../domain/types";
 import type { SettingsBackend } from "../../settings/api";
 import type { TaskPanelSettings } from "../../settings/models";
@@ -20,13 +21,14 @@ export function TaskPanelSection({ backend }: { backend: SettingsBackend }) {
 }
 
 function TaskPanelLoader({ backend }: { backend: SettingsBackend }) {
+  const readSequence = useRef(0);
   const res = useResource(`settings:task-panel:${backend.kind}`, async () => {
     const [settings, employees] = await Promise.all([backend.getTaskPanel(), backend.listEmployees()]);
-    return { settings: { ...settings, priorities: normalizePriorities(settings.priorities) }, employees };
+    return { settings: { ...settings, priorities: normalizePriorities(settings.priorities) }, employees, readId: ++readSequence.current };
   });
   if (res.status === "error") return <ErrorState error={res.error} onRetry={res.reload} />;
   if (!res.data) return <Spinner label="Загрузка настроек панели задач…" />;
-  return <TaskPanelEditor backend={backend} initial={res.data.settings} employees={res.data.employees} />;
+  return <>{res.error !== null && <ErrorState compact error={res.error} onRetry={res.reload} />}<TaskPanelEditor key={res.data.readId} backend={backend} initial={res.data.settings} employees={res.data.employees} onReload={res.reload} /></>;
 }
 
 interface SaveQueue {
@@ -34,32 +36,44 @@ interface SaveQueue {
   pending: TaskPanelSettings | null;
   seq: number;
   mounted: boolean;
+  version: number;
+  blocked: boolean;
 }
 
-function TaskPanelEditor({ backend, initial, employees }: { backend: SettingsBackend; initial: TaskPanelSettings; employees: Employee[] }) {
+function TaskPanelEditor({ backend, initial, employees, onReload }: { backend: SettingsBackend; initial: TaskPanelSettings; employees: Employee[]; onReload: () => void }) {
   const [value, setValue] = useState<TaskPanelSettings>(initial);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState<unknown>(null);
-  const queue = useRef<SaveQueue>({ timer: null, pending: null, seq: 0, mounted: true });
+  const queue = useRef<SaveQueue>({ timer: null, pending: null, seq: 0, mounted: true, version: 0, blocked: false });
+  const blocked = error instanceof ApiError && ["conflict", "permission_denied", "unauthenticated", "reauth_required"].includes(error.code);
 
   const flush = useCallback(() => {
     const q = queue.current;
     if (q.timer) clearTimeout(q.timer);
     q.timer = null;
     const next = q.pending;
-    if (!next) return;
+    if (!next || q.blocked) return;
     q.pending = null;
     const id = ++q.seq;
+    const version = q.version;
     if (q.mounted) setStatus("saving");
     backend.saveTaskPanel(next).then(
-      () => {
-        if (q.mounted && id === q.seq) {
+      (saved) => {
+        if (q.mounted && id === q.seq && version === q.version) {
+          setValue(saved);
           setStatus("saved");
           setError(null);
         }
       },
       (e: unknown) => {
-        if (q.mounted && id === q.seq) {
+        const terminal = e instanceof ApiError && ["conflict", "permission_denied", "unauthenticated", "reauth_required"].includes(e.code);
+        if (terminal) {
+          q.blocked = true;
+          q.pending = null;
+          if (q.timer) clearTimeout(q.timer);
+          q.timer = null;
+        }
+        if (q.mounted && (terminal || id === q.seq && version === q.version)) {
           setStatus("error");
           setError(e);
         }
@@ -78,9 +92,11 @@ function TaskPanelEditor({ backend, initial, employees }: { backend: SettingsBac
   }, [flush]);
 
   const change = (next: TaskPanelSettings) => {
+    if (queue.current.blocked) return;
     setValue(next);
     const q = queue.current;
     q.pending = next;
+    q.version++;
     setStatus("pending");
     if (q.timer) clearTimeout(q.timer);
     q.timer = setTimeout(flush, TASK_PANEL_SAVE_DEBOUNCE_MS);
@@ -95,14 +111,15 @@ function TaskPanelEditor({ backend, initial, employees }: { backend: SettingsBac
     <div className="form">
       <div className="row-f" aria-live="polite">
         <SaveIndicator status={status} />
-        {status === "error" && (
+        {status === "error" && !blocked && (
           <button type="button" className="tool-btn" onClick={retry}>
             Повторить сохранение
           </button>
         )}
       </div>
       {status === "error" && error !== null && <ErrorState compact error={error} />}
-      <TaskPanelForm value={value} onChange={change} employees={employees} />
+      {blocked && <div className="state compact"><div><b>{error.code === "conflict" ? "Настройки изменены в другом окне." : "Доступ к общим настройкам изменился."}</b><p>Загрузите актуальные настройки. Несохранённые изменения будут заменены данными сервера. Если вход истёк, откройте настройки заново из виджета amoCRM.</p><button type="button" className="tool-btn" onClick={onReload}>Загрузить актуальные настройки</button></div></div>}
+      <fieldset disabled={blocked} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}><TaskPanelForm value={value} onChange={change} employees={employees} /></fieldset>
     </div>
   );
 }

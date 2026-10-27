@@ -84,7 +84,7 @@ export function EventAnalysis({
   const calls = unique ? uniqueCalls(byTab) : byTab;
   const unknown = a.calls.filter((c) => !c.durationKnown).length;
   const lanes = useMemo(() => layoutCallLanes(a.calls, startMinutes, endMinutes, a.visibleEndMinutes), [a, startMinutes, endMinutes]);
-  const taskSeconds = sessions?.kind === "ok" ? completedTaskSeconds(sessions.data.items) : null;
+  const taskSeconds = sessions?.kind === "ok" ? completedTaskSeconds(sessions.data.items, { dayKey, timeZone, nowUnix }) : null;
   const typeLink = (key: string) => eventsListLink(crmBase, employeeId, dayKey, key);
   const callLink = (e: CrmEvent) => entityLink(crmBase, e.call?.entityType, e.call?.entityId) ?? e.call?.link ?? null;
   const toggleType = (key: string) => setSelectedType((t) => (t === key ? null : key));
