@@ -74,7 +74,8 @@ npm run package:widget -- --assets-url https://assets.example.invalid/activity
 
 Живой SDK-режим способен изменять задачи amoCRM. ZIP с адресом-заглушкой
 не устанавливается в CRM. HTTPS-размещение, тестовый ZIP и установка
-на согласованный аккаунт `amotehrkrs` относятся к КА-01.04.
+на согласованный тестовый аккаунт относятся к КА-01.04.
+Порядок выпуска и отката — [mvp-release.md](../../docs/activity/mvp-release.md).
 
 ## Границы MVP
 

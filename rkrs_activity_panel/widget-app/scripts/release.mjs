@@ -29,7 +29,7 @@ const { version } = JSON.parse(
 );
 const manifest =
   JSON.stringify(
-    { version, js, built_at: new Date().toISOString(), mode: "prototype" },
+    { version, js, built_at: new Date().toISOString(), mode: "live" },
     null,
     2
   ) + "\n";
