@@ -1,6 +1,6 @@
 import { createActivitySessionClient } from './session-client.js';
 
-// The widget SDK signs every request; credentials never leave its transport.
+// authorizedAjax caches tokens; Core requires a fresh disposable JWT for each call.
 export function createLiveActivityController({ context, apiOrigin, appOrigin, fetchImpl = fetch, documentImpl = document, locationImpl = location, storageImpl }) {
   const listeners = new Set();
   const abort = new AbortController();
@@ -35,15 +35,27 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
   const emit = () => { if (!disposed) listeners.forEach(fn => fn(snapshot())); };
   const sdkRequest = options => new Promise((resolve, reject) => {
     if (disposed) return reject(new Error('Виджет закрыт'));
-    const request = context.widget.$authorizedAjax({ ...options, type: options.method });
-    requests.add(request);
-    request.done(value => { requests.delete(request); if (disposed) reject(new Error('Виджет закрыт')); else resolve(value); }).fail(xhr => {
-      requests.delete(request);
+    const ajax = context.widget.$?.ajax || globalThis.jQuery?.ajax || globalThis.$?.ajax;
+    const clientUUID = context.widget.get_settings?.().oauth_client_uuid;
+    if (typeof ajax !== 'function' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientUUID || '')) return reject(new Error('Недоступна авторизация amoCRM: нет OAuth UUID интеграции'));
+    const fail = xhr => {
       const error = new Error(xhr?.responseJSON?.error?.message || 'Не удалось получить данные Activity');
       error.status = xhr?.status;
       error.code = xhr?.responseJSON?.error?.code;
       reject(error);
-    });
+    };
+    const tokenRequest = ajax({ url: `/ajax/v2/integrations/${encodeURIComponent(clientUUID)}/disposable_token`, method: 'GET', dataType: 'json', cache: false, timeout: 20000 });
+    requests.add(tokenRequest);
+    tokenRequest.done(value => {
+      requests.delete(tokenRequest);
+      if (disposed) return reject(new Error('Виджет закрыт'));
+      if (typeof value?.token !== 'string' || !value.token) return reject(new Error('Не получен токен amoCRM'));
+      let request;
+      try { request = ajax({ ...options, type: options.method, timeout: 20000, processData: false, xhrFields: { withCredentials: false }, headers: { ...options.headers, 'X-Auth-Token': value.token } }); }
+      catch { return reject(new Error('Не удалось отправить запрос Activity')); }
+      requests.add(request);
+      request.done(result => { requests.delete(request); if (disposed) reject(new Error('Виджет закрыт')); else resolve(result); }).fail(xhr => { requests.delete(request); fail(xhr); });
+    }).fail(xhr => { requests.delete(tokenRequest); fail(xhr); });
   });
   try { client = createActivitySessionClient({ baseURL: apiOrigin, authorizedRequest: sdkRequest, storage, storageKey: `rkrs-activity-command:${identity}` }); }
   catch { state.error = 'Не настроен адрес API Activity (VITE_ACTIVITY_API_ORIGIN)'; }

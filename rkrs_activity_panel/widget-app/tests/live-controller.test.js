@@ -1,6 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createLiveActivityController } from '../src/live-controller.js';
+import { createLiveActivityController as createController } from '../src/live-controller.js';
+
+function createLiveActivityController(options) {
+  const widget = options.context.widget;
+  const settings = widget.get_settings?.() || {};
+  widget.get_settings = () => ({ ...settings, oauth_client_uuid: 'a0ee1dca-76a6-4720-b1dc-c6a0ba52c07e' });
+  let count = 0;
+  widget.$ = { ajax(request) {
+    if (request.url.includes('/disposable_token')) {
+      assert.equal(request.cache, false);
+      const result = { done(fn) { fn({ token: `fresh-${++count}` }); return result; }, fail() { return result; }, abort() {} };
+      return result;
+    }
+    assert.equal(request.headers['X-Auth-Token'], `fresh-${count}`);
+    assert.equal(request.xhrFields.withCredentials, false);
+    return widget.$authorizedAjax(request);
+  } };
+  return createController(options);
+}
 
 test('live controller loads real CRM task and context, writes through SDK and restores interval', async () => {
   let current={}, written;
@@ -263,4 +281,21 @@ test('reloading an owned Imbox interval keeps it whole until the visible dialog 
   assert.equal(controller.getSnapshot().active.serverId, 'restored-imbox');
   route.pathname = '/imbox/88'; controller.tick(); await settleImbox();
   assert.equal(writes.length, 1); assert.equal(writes[0].context.activity_name, 'Imbox 88'); controller.dispose();
+});
+
+
+test('missing OAuth metadata fails closed without using cached SDK credentials', async () => {
+  let calls = 0;
+  const controller = createController({ context: { widget: { $authorizedAjax() { calls++; }, $: { ajax() { calls++; } } }, userId: 7 }, apiOrigin: 'https://api.example.test', appOrigin: 'https://panel.example.test', documentImpl: { querySelectorAll: () => [] }, locationImpl: { pathname: '/' }, fetchImpl: async () => { throw Error('unexpected CRM'); } });
+  await settleImbox();
+  assert.equal(calls, 0); assert.equal(controller.getSnapshot().ready, false); assert.match(controller.getSnapshot().error, /OAuth UUID/); controller.dispose();
+});
+
+test('disposal aborts pending token and ignores its late result', async () => {
+  let callback, aborted = 0, calls = 0;
+  const pending = { done(fn) { callback = fn; return pending; }, fail() { return pending; }, abort() { aborted++; } };
+  const widget = { get_settings: () => ({ oauth_client_uuid: 'a0ee1dca-76a6-4720-b1dc-c6a0ba52c07e' }), $: { ajax() { calls++; return pending; } } };
+  const controller = createController({ context: { widget, userId: 7 }, apiOrigin: 'https://api.example.test', appOrigin: 'https://panel.example.test', documentImpl: { querySelectorAll: () => [] }, locationImpl: { pathname: '/' } });
+  controller.dispose(); callback({ token: 'late-proof' }); await settleImbox();
+  assert.equal(aborted, 1); assert.equal(calls, 1); assert.equal(controller.getSnapshot().ready, false);
 });
