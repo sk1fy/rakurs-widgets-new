@@ -154,6 +154,7 @@ onMounted(() => {
     (Constructor) => {
       if (disposed) return;
       widget = new Constructor();
+      widget.__rkrsActivityPreview = true;
       widget.get_settings = () => ({
         widget_code: "rkrs_activity_prototype",
         version: "0.1.0",

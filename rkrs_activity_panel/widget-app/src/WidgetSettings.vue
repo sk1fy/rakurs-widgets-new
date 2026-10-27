@@ -25,7 +25,7 @@ defineProps({ controller: Object, snapshot: Object });
         ></span
       >
     </div>
-    <template v-if="snapshot.live"><button type="button" class="rkrs-reset" :disabled="snapshot.busy" @click="controller.refresh()">Обновить / повторить запрос</button><button type="button" class="rkrs-reset" :disabled="snapshot.busy" @click="controller.openManagement()">Общие настройки аккаунта</button></template>
+    <template v-if="snapshot.live"><button type="button" class="rkrs-reset" :disabled="snapshot.busy" @click="controller.refresh()">Обновить / повторить запрос</button><button type="button" class="rkrs-reset" :disabled="snapshot.busy || snapshot.ready === false || snapshot.pending || Boolean(snapshot.completion)" @click="controller.openManagement()">Общие настройки аккаунта</button></template>
     <button v-else class="rkrs-reset" type="button" @click="controller.reset()">
       Сбросить таймер, историю и демозадачи
     </button>

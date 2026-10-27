@@ -6,7 +6,7 @@ test('live controller loads real CRM task and context, writes through SDK and re
   let current={}, written;
   const listeners=[];
   const context={userId:7,widget:{$authorizedAjax(options){const result={done(fn){queueMicrotask(()=>{let value;if(options.url.endsWith('/state'))value={current,enabled:true,settings:{consider_future_tasks:true}};else if(options.method==='GET')value={items:[]};else {written=JSON.parse(options.data);current={id:'session',kind:'work',started_at:100,context:written.context};value=current;}fn(value);});return result;},fail(){return result;}};return result;}}};
-  const fetchImpl=async url=>({ok:true,status:200,json:async()=>url.includes('tasks?')?{_embedded:{tasks:[{id:19,text:'CRM task',task_type_id:1,complete_till:200}]}}:url.endsWith('tasks/19')?{id:19,text:'CRM task',task_type_id:1,entity_type:'leads',entity_id:12}:url.endsWith('leads/12')?{name:'Real deal',pipeline_id:2,status_id:3}:url.includes('pipelines')?{name:'Sales',_embedded:{statuses:[{id:3,name:'New',color:'#fff'}]}}:{_embedded:{task_types:[{id:1,name:'Call'}]}}});
+  const fetchImpl=async url=>({ok:true,status:200,json:async()=>url.includes('tasks?')?{_embedded:{tasks:[{id:19,responsible_user_id:7,text:'CRM task',task_type_id:1,complete_till:200}]}}:url.endsWith('tasks/19')?{id:19,responsible_user_id:7,text:'CRM task',task_type_id:1,entity_type:'leads',entity_id:12}:url.endsWith('leads/12')?{name:'Real deal',pipeline_id:2,status_id:3}:url.includes('pipelines')?{name:'Sales',_embedded:{statuses:[{id:3,name:'New',color:'#fff'}]}}:{_embedded:{task_types:[{id:1,name:'Call'}]}}});
   const controller=createLiveActivityController({context,apiOrigin:'https://api.example.test',appOrigin:'https://panel.example.test',fetchImpl,documentImpl:{querySelectorAll(){return[];}},locationImpl:{pathname:'/'}});
   await new Promise(resolve=>{const unsubscribe=controller.subscribe(state=>{listeners.push(state);if(!state.busy){unsubscribe();resolve();}});});
   assert.equal(controller.getSnapshot().tasks[0].title,'CRM task');
@@ -85,4 +85,182 @@ test('Imbox observation neither replaces nor stops another tab interval', async 
   fixture.show(); await settleImbox(); fixture.controller.tick(); await settleImbox();
   fixture.route.pathname = '/leads'; fixture.controller.tick(); await settleImbox();
   assert.equal(fixture.writes.length, 0); fixture.controller.dispose();
+});
+
+function employeeFixture({ enabled = true, failState = 0, failStop = 0, failPatchBeforeCommit = 0, failPatchAfterCommit = 0, initial, rows, storage } = {}) {
+  const task = { id: 19, responsible_user_id: 7, text: 'Real task', task_type_id: 1, complete_till: 200, is_completed: false, ...initial };
+  let current = { id: 'server-work', kind: 'work', started_at: 100, context: { task_id: 19, task_name: task.text, client_id: 'another-tab' } };
+  const writes = [], patches = [], reads = [];
+  const values = new Map();
+  storage ||= { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
+  const widget = { get_settings: () => ({ widget_code: 'rkrs_activity_panel' }), $authorizedAjax(options) {
+    let onFailure;
+    const request = { done(fn) { queueMicrotask(() => {
+      if (options.url.endsWith('/state')) { if (failState-- > 0) return onFailure({ status: 503 }); return fn({ current, enabled, settings: { consider_future_tasks: true } }); }
+      if (options.method === 'GET') return fn({ items: [{ id: 'history', kind: 'work', stopped_at: 200, work_time_seconds: 100, context: { task_result: 'comment is not completion' } }] });
+      const command = JSON.parse(options.data); writes.push({ command, id: options.headers['Idempotency-Key'] });
+      if (command.action === 'stop' && failStop-- > 0) return onFailure({ status: 503 });
+      if (command.action === 'stop') { current = {}; return fn({ id: command.session_id, stopped_at: 200 }); }
+      current = { id: 'new-session', kind: command.action, started_at: 200, context: command.context };
+      fn(current);
+    }); return request; }, fail(fn) { onFailure = fn; return request; }, abort() {} };
+    return request;
+  } };
+  const fetchImpl = async (url, options = {}) => {
+    reads.push(url);
+    if (options.method === 'PATCH') {
+      const body = JSON.parse(options.body); patches.push(body);
+      if (failPatchBeforeCommit-- > 0) return { ok: false, status: 503 };
+      Object.assign(task, body);
+      if (failPatchAfterCommit-- > 0) throw Error('CRM response lost');
+      return { ok: true, status: 200, json: async () => ({ ...task }) };
+    }
+    return { ok: true, status: 200, json: async () => url.includes('tasks?') ? { _embedded: { tasks: rows || (task.is_completed ? [] : [{ ...task }]) } } : url.endsWith('tasks/19') ? { ...task } : { _embedded: { task_types: [{ id: 1, name: 'Call' }] } } };
+  };
+  const create = () => createLiveActivityController({ context: { widget, accountId: 42, userId: 7 }, apiOrigin: 'https://api.example.test', appOrigin: 'https://panel.example.test', fetchImpl, storageImpl: storage, documentImpl: { hidden: false, querySelectorAll: () => [] }, locationImpl: { pathname: '/' } });
+  return { create, task, writes, patches, reads, setEnabled(value) { enabled = value; }, failNextState() { failState = 1; }, replaceCurrent(value) { current = value; } };
+}
+async function idle(controller) {
+  if (!controller.getSnapshot().busy) return;
+  await new Promise(resolve => { const unsubscribe = controller.subscribe(state => { if (!state.busy) { unsubscribe(); resolve(); } }); });
+}
+
+test('disabled panel blocks every new mutation and CRM completion, but allows stopping an existing interval', async () => {
+  const fixture = employeeFixture({ enabled: false }); const controller = fixture.create(); await idle(controller);
+  assert.equal(controller.getSnapshot().active.serverId, 'server-work');
+  for (const action of [() => controller.startTask('19'), () => controller.startOther('Work'), () => controller.startImbox('77'), () => controller.pause(), () => controller.completeTask('19', 'Done')]) assert.equal(await action(), false);
+  assert.equal(fixture.writes.length, 0); assert.equal(fixture.patches.length, 0); assert.equal(fixture.reads.length, 0);
+  assert.equal(await controller.stop(), true);
+  assert.equal(fixture.writes[0].command.action, 'stop');
+  assert.equal(controller.getSnapshot().active, null); controller.dispose();
+});
+
+test('own queue and task preflight reject other responsible users; comments are not a completed counter', async () => {
+  const fixture = employeeFixture({ initial: { responsible_user_id: 8 }, rows: [{ id: 19, responsible_user_id: 8 }, { id: 20, responsible_user_id: 7, complete_till: 200 }, { id: 21, responsible_user_id: 7, is_completed: true }] });
+  const controller = fixture.create(); await idle(controller);
+  assert.deepEqual(controller.getSnapshot().tasks.map(row => row.id), ['20']);
+  assert.equal(controller.getSnapshot().completedCount, null);
+  assert.equal(await controller.startTask('19'), false);
+  await controller.refresh(); assert.equal(await controller.completeTask('19', 'Done'), false);
+  assert.equal(fixture.writes.length, 0); assert.equal(fixture.patches.length, 0); controller.dispose();
+});
+
+test('CRM completion records the result and an empty result is also a successful completion', async () => {
+  for (const result of ['Решено', '']) {
+    const fixture = employeeFixture(); const controller = fixture.create(); await idle(controller);
+    assert.equal(await controller.completeTask('19', result), true);
+    assert.deepEqual(fixture.patches, [{ is_completed: true, result: { text: result } }]);
+    assert.equal(fixture.writes.at(-1).command.context.task_result, result);
+    assert.equal(fixture.writes.at(-1).command.session_id, 'server-work');
+    assert.equal(controller.getSnapshot().active, null); assert.equal(controller.getSnapshot().completion, null); controller.dispose();
+  }
+});
+
+test('completion rejects results over 2000 UTF-8 bytes before any CRM mutation', async () => {
+  const fixture = employeeFixture(); const controller = fixture.create(); await idle(controller);
+  assert.equal(await controller.completeTask('19', 'я'.repeat(1001)), false);
+  assert.equal(fixture.patches.length, 0); assert.equal(fixture.writes.length, 0); controller.dispose();
+});
+
+test('partial CRM success survives reload and explicitly retries one captured stop command', async () => {
+  const fixture = employeeFixture({ failStop: 1 }); let controller = fixture.create(); await idle(controller);
+  assert.equal(await controller.completeTask('19', 'Сделано'), false);
+  assert.equal(fixture.patches.length, 1);
+  assert.equal(controller.getSnapshot().completion.phase, 'stop_pending'); assert.equal(controller.getSnapshot().pending, true);
+  assert.match(controller.getSnapshot().error, /Задача завершена в amoCRM/);
+  assert.equal(await controller.startOther('Another action'), false);
+  fixture.setEnabled(false);
+  controller.dispose(); controller = fixture.create(); await idle(controller);
+  assert.equal(controller.getSnapshot().enabled, false);
+  assert.equal(fixture.writes.length, 1, 'reload only reads, without silently resending');
+  assert.equal(controller.getSnapshot().pending, true);
+  assert.equal(await controller.refresh(), true);
+  assert.equal(fixture.patches.length, 1, 'successful CRM PATCH is not repeated');
+  assert.equal(fixture.writes[0].id, fixture.writes[1].id);
+  assert.deepEqual(fixture.writes[0].command, fixture.writes[1].command);
+  assert.equal(controller.getSnapshot().active, null); assert.equal(controller.getSnapshot().completion, null); controller.dispose();
+});
+
+test('unknown CRM PATCH response is reconciled by reading completion instead of repeating PATCH', async () => {
+  const fixture = employeeFixture({ failPatchAfterCommit: 1 }); let controller = fixture.create(); await idle(controller);
+  assert.equal(await controller.completeTask('19', 'Сделано'), false);
+  assert.equal(controller.getSnapshot().completion.phase, 'crm_pending');
+  controller.dispose(); controller = fixture.create(); await idle(controller);
+  assert.equal(fixture.patches.length, 1); assert.equal(fixture.writes.length, 0);
+  assert.equal(await controller.refresh(), true);
+  assert.equal(fixture.patches.length, 1);
+  assert.equal(fixture.writes[0].command.session_id, 'server-work'); controller.dispose();
+});
+
+test('completion recovery never closes a different session started by another tab', async () => {
+  const fixture = employeeFixture({ failPatchAfterCommit: 1 }); const controller = fixture.create(); await idle(controller);
+  await controller.completeTask('19', 'Сделано');
+  fixture.replaceCurrent({ id: 'foreign-new', kind: 'activity', started_at: 200, context: { activity_type: 'other', activity_name: 'Other' } });
+  assert.equal(await controller.refresh(), true);
+  assert.equal(fixture.patches.length, 1); assert.equal(fixture.writes.length, 0);
+  assert.equal(controller.getSnapshot().active.serverId, 'foreign-new'); assert.equal(controller.getSnapshot().completion, null); controller.dispose();
+});
+
+test('disposing a pending SDK read prevents late callbacks from issuing more reads or mutations', async () => {
+  let resolve;
+  const calls = [];
+  const widget = { $authorizedAjax(options) { calls.push(options); const request = { done(fn) { resolve = fn; return request; }, fail() { return request; }, abort() {} }; return request; } };
+  const controller = createLiveActivityController({ context: { widget, accountId: 42, userId: 7 }, apiOrigin: 'https://api.example.test', appOrigin: 'https://panel.example.test', storageImpl: null, documentImpl: { querySelectorAll: () => [] }, locationImpl: { pathname: '/' }, fetchImpl: async () => { throw Error('unexpected CRM request'); } });
+  let emitted = 0; controller.subscribe(() => emitted++);
+  controller.dispose(); resolve({ enabled: true, current: {}, settings: {} }); await settleImbox();
+  assert.equal(calls.length, 1); assert.equal(emitted, 0); assert.equal(controller.getSnapshot().ready, false);
+});
+
+
+test('failed fresh server state blocks new commands instead of using previously healthy state', async () => {
+  const fixture = employeeFixture(); const controller = fixture.create(); await idle(controller);
+  assert.equal(controller.getSnapshot().ready, true);
+  fixture.failNextState(); assert.equal(await controller.refresh(), false);
+  assert.equal(controller.getSnapshot().ready, false);
+  assert.equal(await controller.startOther('Must not start'), false);
+  assert.equal(fixture.writes.length, 0);
+  assert.equal(await controller.refresh(), true);
+  assert.equal(await controller.startOther('Available again'), true);
+  assert.equal(fixture.writes.length, 1); controller.dispose();
+});
+
+test('initial server failure does not load a CRM queue or permit writes', async () => {
+  const fixture = employeeFixture({ failState: 1 }); const controller = fixture.create(); await idle(controller);
+  assert.equal(controller.getSnapshot().ready, false); assert.equal(fixture.reads.length, 0);
+  assert.equal(await controller.completeTask('19', 'Must not close'), false);
+  assert.equal(fixture.patches.length, 0); assert.equal(fixture.writes.length, 0); controller.dispose();
+});
+
+
+test('disabled CRM completion recovery makes no new PATCH and an explicit stop abandons the intent', async () => {
+  const fixture = employeeFixture({ failPatchBeforeCommit: 1 }); const controller = fixture.create(); await idle(controller);
+  assert.equal(await controller.completeTask('19', 'Сделано'), false);
+  assert.equal(controller.getSnapshot().completion.phase, 'crm_pending');
+  fixture.setEnabled(false);
+  assert.equal(await controller.refresh(), false);
+  assert.equal(fixture.patches.length, 1); assert.equal(fixture.task.is_completed, false);
+  assert.equal(await controller.stop(), true);
+  assert.equal(controller.getSnapshot().completion, null);
+  assert.equal(controller.getSnapshot().active, null); controller.dispose();
+});
+
+test('reloading an owned Imbox interval keeps it whole until the visible dialog changes', async () => {
+  const values = new Map(); const storage = { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
+  const identity = 'https://api.example.test:rkrs_activity_panel:42:7';
+  const clientId = '11111111-1111-4111-8111-111111111111';
+  storage.setItem(`rkrs-activity-client:${identity}`, clientId);
+  // The controller's observer sees a real numeric dialog from the CRM DOM.
+  let current = { id: 'restored-imbox', kind: 'activity', started_at: 100, context: { activity_type: 'imbox', activity_name: 'Imbox 77', client_id: clientId } };
+  const writes = [], route = { pathname: '/imbox/77' };
+  const widget = { $authorizedAjax(options) { const request = { done(fn) { queueMicrotask(() => {
+    if (options.url.endsWith('/state')) return fn({ current, enabled: true, settings: {} });
+    if (options.method === 'GET') return fn({ items: [] });
+    const command = JSON.parse(options.data); writes.push(command); current = { id: 'next', kind: command.action, started_at: 200, context: command.context }; fn(current);
+  }); return request; }, fail() { return request; } }; return request; } };
+  const controller = createLiveActivityController({ context: { widget, accountId: 42, userId: 7 }, apiOrigin: 'https://api.example.test', appOrigin: 'https://panel.example.test', storageImpl: storage, documentImpl: { hidden: false, querySelectorAll: selector => selector.includes('notification') ? ['77', '88'].map(id => ({ dataset: { id }, querySelector: () => null })) : [] }, locationImpl: route, fetchImpl: async () => ({ ok: true, status: 204 }) });
+  await idle(controller); controller.tick(); await settleImbox();
+  assert.equal(writes.length, 0);
+  assert.equal(controller.getSnapshot().active.serverId, 'restored-imbox');
+  route.pathname = '/imbox/88'; controller.tick(); await settleImbox();
+  assert.equal(writes.length, 1); assert.equal(writes[0].context.activity_name, 'Imbox 88'); controller.dispose();
 });

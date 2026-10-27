@@ -53,5 +53,5 @@ execFileSync(
   { cwd: staging }
 );
 console.log(
-  `Created ${zip}\nPrototype only; no backend authorization or live CRM writes.`
+  `Created ${zip}\nEmployee MVP: live SDK mode writes to Activity and amoCRM. Demo requires the explicit simulator context. Verify the test installation before release.`
 );

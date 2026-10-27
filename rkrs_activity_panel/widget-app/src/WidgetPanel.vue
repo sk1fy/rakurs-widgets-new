@@ -18,6 +18,9 @@ const state = shallowRef(props.controller.getSnapshot());
 const panel = ref(null);
 const popover = ref(null);
 const open = ref(null);
+const completionTaskId = ref(null);
+const taskResult = ref("");
+const resultTooLong = computed(() => new TextEncoder().encode(taskResult.value).length > 2000);
 const otherName = ref(
   state.value.active?.kind === "other" ? state.value.active.title : ""
 );
@@ -47,9 +50,16 @@ const activeTask = computed(
   () =>
     state.value.active?.kind === "tasks" || state.value.active?.kind === "task"
 );
+const canMutate = computed(() =>
+  !state.value.busy && state.value.enabled !== false && state.value.ready !== false &&
+  !state.value.pending && !state.value.completion
+);
+const canComplete = computed(() => canMutate.value &&
+  (activeTask.value || (!state.value.active && selectedTask.value && !selectedTask.value.completed))
+);
 const canStart = computed(
   () =>
-    !state.value.busy && state.value.enabled !== false && !state.value.active &&
+    canMutate.value && !state.value.active &&
     (state.value.scenario === "tasks"
       ? selectedTask.value && !selectedTask.value.completed
       : state.value.scenario === "other"
@@ -58,7 +68,7 @@ const canStart = computed(
 );
 const contextTitle = computed(() =>
   state.value.scenario === "tasks"
-    ? selectedTask.value?.title || "Все задачи завершены"
+    ? selectedTask.value?.title || (state.value.live && !state.value.ready ? "Задачи недоступны" : "Очередь пуста")
     : dialog.value?.name || "Выберите диалог"
 );
 let unsubscribe;
@@ -122,10 +132,22 @@ function start() {
     props.controller.startOther(otherName.value.trim());
   else props.controller.startImbox(selectedDialog.value);
 }
-function complete() {
-  props.controller.completeTask(
-    activeTask.value ? state.value.active.id : state.value.selectedTaskId
-  );
+async function openCompletion(event) {
+  if (!canComplete.value) return;
+  completionTaskId.value = activeTask.value ? state.value.active.id : state.value.selectedTaskId;
+  taskResult.value = "";
+  await toggle("complete", event);
+  popover.value?.querySelector("textarea")?.focus();
+}
+async function complete() {
+  if (!canComplete.value || resultTooLong.value) return;
+  const result = await props.controller.completeTask(completionTaskId.value, taskResult.value.trim());
+  if (result !== false) close();
+}
+async function recover() {
+  const completing = Boolean(state.value.completion);
+  const result = await props.controller.refresh();
+  if (result !== false && completing && !state.value.completion && !state.value.pending && open.value === "complete") close();
 }
 onMounted(() => {
   unsubscribe = props.controller.subscribe((snapshot) => {
@@ -276,7 +298,7 @@ onBeforeUnmount(() => {
             v-if="state.active"
             type="button"
             class="rkrs-button rkrs-stop"
-            :disabled="state.busy" @click="controller.stop()"
+            :disabled="state.busy || state.pending" @click="controller.stop()"
           >
             <WidgetIcon name="stop" :size="14" />Стоп
           </button>
@@ -293,17 +315,14 @@ onBeforeUnmount(() => {
             v-if="state.scenario === 'tasks' || activeTask"
             type="button"
             class="rkrs-button rkrs-complete"
-            :disabled="
-              state.busy || (!activeTask &&
-              (Boolean(state.active) || !selectedTask || selectedTask.completed))
-            "
-            @click="complete"
+            :disabled="!canComplete"
+            @click="openCompletion($event)"
           >
             <WidgetIcon name="check" :size="15" /><span>Завершить</span>
           </button>
         </div>
         <div class="rkrs-utilities">
-          <button v-if="state.live" type="button" class="rkrs-button" :disabled="state.busy || !state.enabled" @click="controller.pause()">Пауза</button>
+          <button v-if="state.live" type="button" class="rkrs-button" :disabled="!canMutate" @click="controller.pause()">Пауза</button>
           <button
             type="button"
             class="rkrs-icon-button"
@@ -329,9 +348,13 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </div>
-      <p v-if="state.error" class="rkrs-error" role="alert">
-        {{ state.error }}
+      <p v-if="state.error || state.pending || state.completion" class="rkrs-error" role="alert">
+        {{ state.error || "Нужно восстановить предыдущую операцию." }}
+        <button v-if="state.live" type="button" class="rkrs-button" :disabled="state.busy" @click="recover">
+          {{ state.pending || state.completion ? "Восстановить операцию" : "Обновить данные" }}
+        </button>
       </p>
+      <p v-else-if="state.live && !state.ready" class="rkrs-active-note" role="status">Загрузка данных сотрудника…</p>
       <div
         v-if="
           state.active &&
@@ -356,6 +379,7 @@ onBeforeUnmount(() => {
             imbox: 'Диалоги Imbox',
             history: 'История активности',
             settings: 'Настройки виджета',
+            complete: 'Завершение задачи',
           }[open]
         "
       >
@@ -368,6 +392,7 @@ onBeforeUnmount(() => {
                 imbox: "Диалоги Imbox",
                 history: "История активности",
                 settings: "Настройки",
+                complete: "Завершение задачи",
               }[open]
             }}
           </h2>
@@ -380,7 +405,14 @@ onBeforeUnmount(() => {
             <WidgetIcon name="close" :size="17" />
           </button>
         </div>
-        <template v-if="open === 'scenario'">
+        <form v-if="open === 'complete'" class="rkrs-completion-form" @submit.prevent="complete">
+          <label for="rkrs-task-result">Результат выполнения</label>
+          <textarea id="rkrs-task-result" v-model="taskResult" rows="3" maxlength="2000" :disabled="state.busy || Boolean(state.completion)" placeholder="Можно оставить пустым" />
+          <p v-if="resultTooLong" role="alert">Результат слишком длинный. Сократите текст.</p>
+          <p class="rkrs-help">{{ state.live ? "Задача будет завершена в amoCRM, а её таймер остановлен." : "Демозадача будет завершена только в этом браузере." }}</p>
+          <button type="submit" class="rkrs-button rkrs-complete" :disabled="!canComplete || resultTooLong">Завершить задачу</button>
+        </form>
+        <template v-else-if="open === 'scenario'">
           <button
             v-for="(name, kind) in scenarioNames"
             :key="kind"
@@ -401,7 +433,7 @@ onBeforeUnmount(() => {
         <template v-else-if="open === 'queue'">
           <p class="rkrs-popover-caption">
             {{ pending.length }} в очереди ·
-            {{ state.completedCount }} завершено
+            {{ state.completedCount ?? "—" }} завершено
           </p>
           <div class="rkrs-scroll-list">
             <button
@@ -467,13 +499,14 @@ onBeforeUnmount(() => {
         <template v-else-if="open === 'history'">
           <div class="rkrs-history-summary">
             <span
-              >Учтено за сессию<strong>{{
+              >{{ state.live ? "Учтено сегодня" : "Учтено за сессию" }}<strong>{{
                 duration(state.totalSeconds)
               }}</strong></span
             ><span
-              >Завершено задач<strong>{{ state.completedCount }}</strong></span
+              >Завершено задач<strong>{{ state.completedCount ?? "—" }}</strong></span
             >
           </div>
+          <p v-if="state.completedCount == null" class="rkrs-help">Счётчик завершённых задач пока недоступен.</p>
           <div v-if="!state.history.length" class="rkrs-empty">
             <WidgetIcon name="clock" :size="28" /><strong
               >История пока пуста</strong

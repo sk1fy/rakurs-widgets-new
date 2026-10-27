@@ -31,3 +31,47 @@ test('definitive conflict releases command for a refresh, network errors remain 
   await assert.rejects(client.startTask({task_id:3}));assert.equal(client.getState().pending,false);
   fail=false;await client.startTask({task_id:4});client.dispose();
 });
+
+test('pending identity survives reload and a state read without storing credentials', async () => {
+  const values = new Map();
+  const storage = { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
+  const calls = [];
+  const first = createActivitySessionClient({ baseURL: 'https://api.example.test', storage, storageKey: 'employee-7', authorizedRequest: async options => { calls.push(options); throw Error('response lost'); } });
+  await assert.rejects(first.startTask({ task_id: 7 }));
+  first.dispose();
+  const second = createActivitySessionClient({ baseURL: 'https://api.example.test', storage, storageKey: 'employee-7', authorizedRequest: async options => { calls.push(options); return options.method === 'GET' ? { current: { id: 'acknowledged' } } : { id: 'acknowledged', stopped_at: 0 }; } });
+  assert.equal(second.getState().pending, true);
+  await second.loadState();
+  assert.equal(second.getState().pending, true);
+  await second.retryPending();
+  assert.equal(calls[0].headers['Idempotency-Key'], calls[2].headers['Idempotency-Key']);
+  assert.equal(calls[0].data, calls[2].data);
+  assert.equal(values.has('employee-7'), false);
+  assert.ok(!JSON.stringify([...values]).includes('jwt'));
+  second.dispose();
+});
+
+test('late SDK responses after dispose do not acknowledge or clear a pending command', async () => {
+  let finish;
+  const client = createActivitySessionClient({ baseURL: 'https://api.example.test', authorizedRequest: () => new Promise(resolve => { finish = resolve; }) });
+  const pending = client.startTask({ task_id: 9 });
+  client.dispose();
+  finish({ id: 'late-session', stopped_at: 0 });
+  await assert.rejects(pending, /disposed/);
+  assert.equal(client.getState().active, null);
+  assert.equal(client.getState().pending, true);
+});
+
+test('recovery stop stays bound to its captured interval even after current state changes', async () => {
+  let command;
+  const client = createActivitySessionClient({ baseURL: 'https://api.example.test', authorizedRequest: async options => {
+    if (options.method === 'GET') return { current: { id: 'different-active' } };
+    command = JSON.parse(options.data);
+    return { id: command.session_id, stopped_at: 200 };
+  } });
+  await client.loadState();
+  await client.stopSession('captured-session', 'Результат');
+  assert.equal(command.session_id, 'captured-session');
+  assert.equal(command.context.task_result, 'Результат');
+  client.dispose();
+});
