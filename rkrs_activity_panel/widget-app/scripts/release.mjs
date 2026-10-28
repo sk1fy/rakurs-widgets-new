@@ -11,6 +11,18 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+// Ties the published bundle to its source: the commit, and whether the widget
+// tree had uncommitted changes when it was built.
+const git = (...args) => {
+  try {
+    return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+  } catch {
+    return "";
+  }
+};
+const commit = git("rev-parse", "HEAD") || "unknown";
+const dirty = git("status", "--porcelain", "--", "..") !== "";
+const build = `${commit.slice(0, 12)}${dirty ? "-dirty" : ""}`;
 execFileSync(
   process.execPath,
   [
@@ -19,7 +31,7 @@ execFileSync(
     "--mode",
     "widget",
   ],
-  { cwd: root, stdio: "inherit" }
+  { cwd: root, stdio: "inherit", env: { ...process.env, VITE_RKRS_BUILD: build } }
 );
 const bundle = readFileSync(path.join(root, "dist/rkrs-activity.umd.js"));
 const hash = createHash("sha256").update(bundle).digest("hex").slice(0, 12);
@@ -29,7 +41,7 @@ const { version } = JSON.parse(
 );
 const manifest =
   JSON.stringify(
-    { version, js, built_at: new Date().toISOString(), mode: "live" },
+    { version, js, commit, dirty, built_at: new Date().toISOString(), mode: "live" },
     null,
     2
   ) + "\n";
@@ -55,5 +67,5 @@ copyFileSync(
   path.join(root, "public/require.js")
 );
 console.log(
-  `Remote release: dist-remote/${js} + release.json\nLocal AMD preview: http://127.0.0.1:5174/`
+  `Remote release: dist-remote/${js} + release.json (build ${build})\nLocal AMD preview: http://127.0.0.1:5174/`
 );

@@ -1,5 +1,5 @@
 /** Employee session transport. Every request obtains a fresh disposable JWT. */
-export function createActivitySessionClient({ baseURL, getToken, authorizedRequest, fetchImpl = fetch, storage, storageKey }) {
+export function createActivitySessionClient({ baseURL, getToken, authorizedRequest, fetchImpl = fetch, storage, storageKey, onCommand }) {
   const base = new URL(baseURL);
   if (base.protocol !== 'https:' && !(base.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(base.hostname))) throw new Error('Activity API requires HTTPS');
   if (base.username || base.password || base.search || base.hash) throw new Error('Invalid Activity API origin');
@@ -63,7 +63,11 @@ export function createActivitySessionClient({ baseURL, getToken, authorizedReque
     } catch (error) {
       if ([400, 401, 403, 404, 409, 422].includes(error.status)) { pending = null; remember(); }
       throw error;
-    } finally { running = false; }
+    } finally {
+      running = false;
+      // Even a failed write may have reached the server: let other tabs reread.
+      onCommand?.();
+    }
   }
   function command(body) {
     assertAlive();

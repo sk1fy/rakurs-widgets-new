@@ -136,7 +136,7 @@ function employeeFixture({ enabled = true, failState = 0, failStop = 0, failPatc
     }
     return { ok: true, status: 200, json: async () => url.includes('tasks?') ? { _embedded: { tasks: rows || (task.is_completed ? [] : [{ ...task }]) } } : url.endsWith('tasks/19') ? { ...task } : { _embedded: { task_types: [{ id: 1, name: 'Call' }] } } };
   };
-  const create = () => createLiveActivityController({ context: { widget, accountId: 42, userId: 7 }, apiOrigin: 'https://api.example.test', appOrigin: 'https://panel.example.test', fetchImpl, storageImpl: storage, documentImpl: { hidden: false, querySelectorAll: () => [] }, locationImpl: { pathname: '/' } });
+  const create = (extra = {}) => createLiveActivityController({ context: { widget, accountId: 42, userId: 7 }, apiOrigin: 'https://api.example.test', appOrigin: 'https://panel.example.test', fetchImpl, storageImpl: storage, documentImpl: { hidden: false, querySelectorAll: () => [] }, locationImpl: { pathname: '/' }, broadcastImpl: null, ...extra });
   return { create, task, writes, patches, reads, setEnabled(value) { enabled = value; }, failNextState() { failState = 1; }, replaceCurrent(value) { current = value; } };
 }
 async function idle(controller) {
@@ -425,4 +425,96 @@ test('compact view survives a new controller and a busy controller opens no mana
   controller = fixture.create();
   assert.equal(controller.getSnapshot().settings.compact, true);
   await idle(controller); controller.dispose();
+});
+
+const settled = controller => new Promise(resolve => { const check = () => controller.getSnapshot().busy ? setImmediate(check) : resolve(); setImmediate(check); });
+
+test('a task completed in amoCRM outside the panel closes exactly its interval on queue refresh', async () => {
+  const fixture = employeeFixture();
+  const controller = fixture.create(); await settled(controller);
+  assert.equal(controller.getSnapshot().active.id, '19');
+  Object.assign(fixture.task, { is_completed: true, result: { text: 'Done in CRM' } });
+  assert.equal(await controller.refresh(), true);
+  assert.deepEqual(fixture.writes.map(row => row.command), [{ action: 'stop', session_id: 'server-work', context: { task_result: 'Done in CRM' } }]);
+  assert.equal(controller.getSnapshot().active, null);
+  controller.dispose();
+});
+
+test('an active task that only left the queue (reassigned, still open) keeps its interval', async () => {
+  const fixture = employeeFixture({ rows: [] });
+  const controller = fixture.create(); await settled(controller);
+  assert.equal(await controller.refresh(), true);
+  assert.equal(fixture.writes.length, 0);
+  assert.equal(controller.getSnapshot().active.id, '19');
+  controller.dispose();
+});
+
+test('amoCRM completion button is only intent: the interval stops after CRM confirms completion', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1800000000000 });
+  const handlers = {};
+  const documentImpl = { hidden: false, querySelectorAll: () => [], addEventListener(type, fn) { handlers[type] = fn; }, removeEventListener() {} };
+  const fixture = employeeFixture();
+  const controller = fixture.create({ documentImpl }); await settled(controller);
+  const card = { dataset: { id: '19' } };
+  handlers.click({ target: { closest: () => ({ closest: () => card }) } });
+  t.mock.timers.tick(2000); controller.tick(); await settled(controller);
+  assert.equal(fixture.writes.length, 0, 'task still open in CRM: the click alone stops nothing');
+  assert.equal(controller.getSnapshot().active.id, '19');
+  Object.assign(fixture.task, { is_completed: true });
+  t.mock.timers.tick(3000); controller.tick(); await settled(controller);
+  assert.deepEqual(fixture.writes.map(row => [row.command.action, row.command.session_id]), [['stop', 'server-work']]);
+  assert.equal(controller.getSnapshot().active, null);
+  controller.dispose();
+});
+
+test('a write in one tab makes the other tabs reread state and queue at once', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1800000000000 });
+  const channels = [];
+  class FakeChannel {
+    constructor(name) { this.name = name; channels.push(this); }
+    postMessage(data) { for (const peer of channels) if (peer !== this && peer.name === this.name) peer.onmessage?.({ data }); }
+    close() { channels.splice(channels.indexOf(this), 1); }
+  }
+  const fixture = employeeFixture();
+  const first = fixture.create({ broadcastImpl: FakeChannel }), second = fixture.create({ broadcastImpl: FakeChannel });
+  await settled(first); await settled(second);
+  assert.equal(new Set(channels.map(channel => channel.name)).size, 1);
+  const queueReads = () => fixture.reads.filter(url => url.includes('tasks?')).length;
+  const before = queueReads();
+  second.tick(); await settled(second);
+  assert.equal(queueReads(), before, 'no reread without a change');
+  await first.stop();
+  const afterStop = queueReads();
+  second.tick(); await settled(second);
+  assert.equal(queueReads(), afterStop + 1);
+  assert.equal(second.getSnapshot().active, null);
+  first.dispose(); second.dispose();
+  assert.equal(channels.length, 0);
+});
+
+test('today total includes the running interval but not pauses', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1800000000000 });
+  const now = 1800000000;
+  let current = { id: 'run', kind: 'work', started_at: now - 600, context: { task_id: 19, task_name: 'Task' } };
+  const widget = { $authorizedAjax(options) { const request = { done(fn) { queueMicrotask(() => fn(options.url.endsWith('/state') ? { current, enabled: true, settings: {} } : { items: [{ id: 'h', kind: 'work', started_at: now - 1000, stopped_at: now - 900, context: {} }] })); return request; }, fail() { return request; } }; return request; } };
+  const controller = createLiveActivityController({ context: { widget, userId: 7 }, apiOrigin: 'https://api.example.test', appOrigin: 'https://panel.example.test', fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ _embedded: { tasks: [], task_types: [] } }) }), documentImpl: { hidden: false, querySelectorAll: () => [] }, locationImpl: { pathname: '/' }, broadcastImpl: null });
+  await settled(controller);
+  controller.tick();
+  assert.equal(controller.getSnapshot().totalSeconds, 700);
+  current = { id: 'p', kind: 'pause', started_at: now - 300, context: {} };
+  await controller.refresh(); controller.tick();
+  assert.equal(controller.getSnapshot().totalSeconds, 100);
+  controller.dispose();
+});
+
+test('the running task is the initial selection, so no switch is offered until the user picks another task', async () => {
+  const fixture = employeeFixture({ rows: [{ id: 5, responsible_user_id: 7, text: 'Earlier task', task_type_id: 1, complete_till: 100, is_completed: false }, { id: 19, responsible_user_id: 7, text: 'Real task', task_type_id: 1, complete_till: 200, is_completed: false }] });
+  const controller = fixture.create(); await settled(controller);
+  assert.equal(controller.getSnapshot().tasks[0].id, '5');
+  assert.equal(controller.getSnapshot().selectedTaskId, '19');
+  controller.selectTask('5');
+  await controller.refresh();
+  assert.equal(controller.getSnapshot().selectedTaskId, '5', 'a resync keeps the explicit selection');
+  assert.equal(controller.getSnapshot().active.id, '19');
+  controller.dispose();
 });

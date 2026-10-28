@@ -18,7 +18,7 @@ const state = shallowRef(props.controller.getSnapshot());
 const panel = ref(null);
 const popover = ref(null);
 const open = ref(null);
-const completionTaskId = ref(null);
+const completionTask = ref(null);
 const taskResult = ref("");
 const resultTooLong = computed(() => new TextEncoder().encode(taskResult.value).length > 2000);
 const otherName = ref(
@@ -54,13 +54,28 @@ const activeTask = computed(
   () =>
     state.value.active?.kind === "tasks" || state.value.active?.kind === "task"
 );
+// The running task owns the panel: the timer, its title and «Завершить» all
+// refer to it. A different queue selection waits for an explicit switch.
+const activeTaskView = computed(() => {
+  if (!activeTask.value) return null;
+  const { id, title, entityName } = state.value.active;
+  return state.value.tasks.find((task) => task.id === id) || { id, title, entityName };
+});
+const focusTask = computed(() => activeTaskView.value || selectedTask.value);
+const nextTask = computed(() =>
+  activeTaskView.value && selectedTask.value && !selectedTask.value.completed &&
+  selectedTask.value.id !== activeTaskView.value.id ? selectedTask.value : null
+);
+const completionTarget = computed(() =>
+  activeTask.value ? activeTaskView.value
+    : (!state.value.active || paused.value) && selectedTask.value && !selectedTask.value.completed ? selectedTask.value
+    : null
+);
 const canMutate = computed(() =>
   !state.value.busy && state.value.enabled !== false && state.value.ready !== false &&
   !state.value.pending && !state.value.completion
 );
-const canComplete = computed(() => canMutate.value &&
-  (activeTask.value || ((!state.value.active || paused.value) && selectedTask.value && !selectedTask.value.completed))
-);
+const canComplete = computed(() => canMutate.value && Boolean(completionTarget.value));
 const canStart = computed(
   () =>
     canMutate.value && (!state.value.active || paused.value) &&
@@ -72,7 +87,7 @@ const canStart = computed(
 );
 const contextTitle = computed(() =>
   state.value.scenario === "tasks"
-    ? selectedTask.value?.title || (state.value.live && !state.value.ready ? "Задачи недоступны" : "Очередь пуста")
+    ? focusTask.value?.title || (state.value.live && !state.value.ready ? "Задачи недоступны" : "Очередь пуста")
     : dialog.value?.name || "Выберите диалог"
 );
 let unsubscribe;
@@ -124,11 +139,19 @@ function selectTask(id) {
   props.controller.selectTask(id);
   close();
 }
-function selectImbox(id) {
-  if (state.value.active?.kind === "imbox" && state.value.active.id !== id)
-    props.controller.stop();
+// The selection changes only after the server confirmed the previous dialog's
+// stop; on failure the list stays open with the error and can be retried.
+async function selectImbox(id) {
+  if (state.value.busy) return;
+  if (state.value.active?.kind === "imbox" && state.value.active.id !== id) {
+    const stopped = await props.controller.stop();
+    if (stopped !== true) return;
+  }
   selectedDialog.value = id;
   close();
+}
+function switchTask() {
+  if (nextTask.value && canMutate.value) props.controller.startTask(nextTask.value.id);
 }
 function start() {
   if (state.value.scenario === "tasks") props.controller.startTask();
@@ -138,14 +161,15 @@ function start() {
 }
 async function openCompletion(event) {
   if (!canComplete.value) return;
-  completionTaskId.value = activeTask.value ? state.value.active.id : state.value.selectedTaskId;
+  const { id, title, entityName } = completionTarget.value;
+  completionTask.value = { id, title, entityName };
   taskResult.value = "";
   await toggle("complete", event);
   popover.value?.querySelector("textarea")?.focus();
 }
 async function complete() {
   if (!canComplete.value || resultTooLong.value || (state.value.live && !taskResult.value.trim())) return;
-  const result = await props.controller.completeTask(completionTaskId.value, taskResult.value.trim());
+  const result = await props.controller.completeTask(completionTask.value.id, taskResult.value.trim());
   if (result !== false) close();
 }
 async function recover() {
@@ -233,16 +257,16 @@ onBeforeUnmount(() => {
               <span
                 :class="{
                   'rkrs-overdue':
-                    state.scenario === 'tasks' && selectedTask?.overdue,
+                    state.scenario === 'tasks' && focusTask?.overdue,
                 }"
                 >{{
                   state.scenario === "tasks"
-                    ? selectedTask?.dueLabel || "На сегодня"
+                    ? focusTask?.dueLabel || "На сегодня"
                     : dialog?.channel || "Входящие сообщения"
                 }}</span
               ><span class="rkrs-context-entity">{{
                 state.scenario === "tasks"
-                  ? selectedTask?.entityName
+                  ? focusTask?.entityName
                   : dialog?.preview
               }}</span>
             </div>
@@ -361,6 +385,10 @@ onBeforeUnmount(() => {
         </button>
       </p>
       <p v-else-if="state.live && !state.ready" class="rkrs-active-note" role="status">Загрузка данных сотрудника…</p>
+      <div v-if="nextTask && state.scenario === 'tasks'" class="rkrs-active-note rkrs-next-note">
+        Выбрана: {{ nextTask.title }}
+        <button type="button" class="rkrs-button" :disabled="!canMutate" @click="switchTask">Переключиться на неё</button>
+      </div>
       <div
         v-if="
           state.active && !paused &&
@@ -412,6 +440,10 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <form v-if="open === 'complete'" class="rkrs-completion-form" @submit.prevent="complete">
+          <p v-if="completionTask" class="rkrs-completion-target">
+            <strong>{{ completionTask.title }}</strong>
+            <small v-if="completionTask.entityName">{{ completionTask.entityName }}</small>
+          </p>
           <label for="rkrs-task-result">Результат выполнения</label>
           <textarea id="rkrs-task-result" v-model="taskResult" rows="3" maxlength="2000" :disabled="state.busy || Boolean(state.completion)" placeholder="Укажите результат задачи" />
           <p v-if="resultTooLong" role="alert">Результат слишком длинный. Сократите текст.</p>
@@ -439,8 +471,8 @@ onBeforeUnmount(() => {
         </template>
         <template v-else-if="open === 'queue'">
           <p class="rkrs-popover-caption">
-            {{ pending.length }} в очереди ·
-            {{ state.completedCount ?? "—" }} завершено
+            {{ pending.length }} в очереди<template v-if="state.completedCount != null">
+            · {{ state.completedCount }} завершено</template>
           </p>
           <div class="rkrs-scroll-list">
             <button
@@ -461,6 +493,7 @@ onBeforeUnmount(() => {
               ><span class="rkrs-item-copy"
                 ><strong>{{ task.title }}</strong
                 ><small>{{ task.entityName }}</small
+                ><small v-if="activeTask && task.id === state.active.id" class="rkrs-running-label">Идёт учёт</small
                 ><small v-if="task.related">Связано: {{ task.related }}</small
                 ><span
                   class="rkrs-item-meta"
@@ -476,11 +509,11 @@ onBeforeUnmount(() => {
             </button>
           </div>
           <p class="rkrs-popover-footer">
-            Выберите задачу, затем нажмите «Старт» на панели.
+            {{ activeTask ? "Выбранная задача не прервёт текущую: переключитесь на неё отдельной кнопкой." : "Выберите задачу, затем нажмите «Старт» на панели." }}
           </p>
         </template>
         <template v-else-if="open === 'imbox'">
-          <p class="rkrs-popover-caption">Выберите диалог для учёта времени</p>
+          <p class="rkrs-popover-caption" role="status">{{ state.busy ? "Останавливаем учёт текущего диалога…" : "Выберите диалог для учёта времени" }}</p>
           <div class="rkrs-scroll-list">
             <button
               v-for="item in state.dialogs"
@@ -489,6 +522,7 @@ onBeforeUnmount(() => {
               class="rkrs-list-item"
               :class="{ 'rkrs-selected': selectedDialog === item.id }"
               :aria-pressed="selectedDialog === item.id"
+              :disabled="state.busy"
               @click="selectImbox(item.id)"
             >
               <span class="rkrs-avatar">{{ item.name.charAt(0) }}</span
@@ -510,11 +544,10 @@ onBeforeUnmount(() => {
               >{{ state.live ? "Учтено сегодня" : "Учтено за сессию" }}<strong>{{
                 duration(state.totalSeconds)
               }}</strong></span
-            ><span
-              >Завершено задач<strong>{{ state.completedCount ?? "—" }}</strong></span
+            ><span v-if="state.completedCount != null"
+              >Завершено задач<strong>{{ state.completedCount }}</strong></span
             >
           </div>
-          <p v-if="state.completedCount == null" class="rkrs-help">Счётчик завершённых задач пока недоступен.</p>
           <div v-if="!state.history.length" class="rkrs-empty">
             <WidgetIcon name="clock" :size="28" /><strong
               >История пока пуста</strong
