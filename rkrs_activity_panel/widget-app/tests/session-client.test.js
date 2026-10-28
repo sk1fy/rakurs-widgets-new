@@ -75,3 +75,13 @@ test('recovery stop stays bound to its captured interval even after current stat
   assert.equal(command.context.task_result, 'Результат');
   client.dispose();
 });
+test('task reads and completion go only to the server task endpoints, carrying Retry-After', async () => {
+  const calls=[];
+  const client=createActivitySessionClient({baseURL:'https://api.example.test',getToken:async()=>'jwt',fetchImpl:async(url,options)=>{calls.push({url,options});if(url.endsWith('/tasks'))return {ok:false,status:429,headers:{get:name=>name==='Retry-After'?'13':null},json:async()=>({error:{code:'resource_exhausted',message:'later'}})};return {ok:true,json:async()=>({id:9})};}});
+  await assert.rejects(client.loadTasks(),error=>error.status===429&&error.retryAfter===13&&error.code==='resource_exhausted');
+  await client.loadTasks(5);await client.loadTask(9,{context:true});await client.completeTask(9,'Готово');await client.loadLead(5);
+  assert.deepEqual(calls.map(row=>[row.options.method,row.url.replace('https://api.example.test/api/v1/widget/activity/','')]),[['GET','tasks'],['GET','tasks?lead_id=5'],['GET','tasks/9?context=true'],['POST','tasks/9/complete'],['GET','leads/5']]);
+  assert.deepEqual(JSON.parse(calls[3].options.body),{result:'Готово'});
+  assert.equal(calls[3].options.headers['Idempotency-Key'],undefined);
+  assert.equal(client.getState().pending,false,'completion is not a session command');client.dispose();
+});

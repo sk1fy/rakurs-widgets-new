@@ -2,6 +2,60 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createLiveActivityController as createController } from '../src/live-controller.js';
 
+// The server owns every amoCRM call. This emulates its task contract on top
+// of each test's CRM fixture, so CRM reads and PATCHes stay observable.
+async function serverTasks(fetchImpl, request, userId, queueMeta = () => ({})) {
+  const url = new URL(request.url);
+  const path = url.pathname.replace('/api/v1/widget/activity/', '');
+  const fail = status => { throw { status, responseJSON: { error: { code: status === 403 ? 'permission_denied' : 'unavailable', message: `HTTP ${status}` } }, getResponseHeader: () => null }; };
+  const crm = async (target, options = {}) => {
+    let response;
+    try { response = await fetchImpl(`/api/v4/${target}`, options); } catch { fail(503); }
+    if (!response.ok) fail(response.status);
+    return response.status === 204 ? {} : response.json();
+  };
+  const types = async () => { try { return Object.fromEntries(((await crm('account?with=task_types'))._embedded?.task_types || []).map(row => [row.id, row.name])); } catch { return {}; } };
+  const detail = (task, names = {}) => ({ id: task.id, responsible_user_id: task.responsible_user_id, text: task.text || '', task_type_id: task.task_type_id, task_type_name: names[task.task_type_id] || '', entity_type: task.entity_type, entity_id: task.entity_id, complete_till: task.complete_till, is_completed: !!task.is_completed, result_text: task.result?.text || '' });
+  const own = async id => { const task = await crm(`tasks/${id}`); if (task.responsible_user_id !== userId) fail(403); return task; };
+  let match;
+  if (path === 'tasks') {
+    const rows = ((await crm(`tasks?limit=250&page=1&filter[responsible_user_id]=${userId}&filter[is_completed]=0`))._embedded?.tasks || []).filter(row => row.responsible_user_id === userId && !row.is_completed);
+    const names = {};
+    for (const type of ['leads', 'contacts', 'companies', 'customers']) {
+      const ids = [...new Set(rows.filter(row => row.entity_type === type && row.entity_id).map(row => row.entity_id))];
+      if (ids.length) try { for (const entity of (await crm(`${type}?limit=50&${ids.map(id => `filter[id][]=${id}`).join('&')}`))._embedded?.[type] || []) names[`${type}:${entity.id}`] = entity.name; } catch { /* Names are best effort. */ }
+    }
+    const typeNames = await types();
+    return { tasks: rows.map(row => ({ ...detail(row, typeNames), entity_name: names[`${row.entity_type}:${row.entity_id}`] || '', related: '' })), fetched_at: 1, fresh_until: 31, complete: true, stale: false, ...queueMeta() };
+  }
+  if ((match = path.match(/^tasks\/(\d+)$/))) {
+    const task = await own(match[1]);
+    const out = detail(task, await types());
+    if (url.searchParams.get('context') === 'true' && task.entity_id) {
+      const entity = await crm(`${task.entity_type}/${task.entity_id}`);
+      out.entity = { id: task.entity_id, entity_type: task.entity_type, name: entity.name || '', pipeline_id: entity.pipeline_id || 0, status_id: entity.status_id || 0 };
+      if (entity.pipeline_id) {
+        const pipeline = await crm(`leads/pipelines/${entity.pipeline_id}`);
+        const status = pipeline._embedded?.statuses?.find(row => row.id === entity.status_id);
+        Object.assign(out.entity, { pipeline_name: pipeline.name, status_name: status?.name || '', status_color: status?.color || '' });
+      }
+    }
+    return out;
+  }
+  if ((match = path.match(/^tasks\/(\d+)\/complete$/))) {
+    const task = await own(match[1]);
+    if (task.is_completed) return detail(task);
+    const { result } = JSON.parse(request.data);
+    await crm(`tasks/${match[1]}`, { method: 'PATCH', body: JSON.stringify({ is_completed: true, result: { text: result } }) });
+    return { ...detail(task), is_completed: true, result_text: result };
+  }
+  if ((match = path.match(/^leads\/(\d+)$/))) {
+    const lead = await crm(`leads/${match[1]}`);
+    return { id: Number(match[1]), entity_type: 'leads', name: lead.name || '', pipeline_id: lead.pipeline_id || 0, status_id: lead.status_id || 0, restricted: false };
+  }
+  return fail(404);
+}
+
 function createLiveActivityController(options) {
   const widget = options.context.widget;
   const settings = widget.get_settings?.() || {};
@@ -15,10 +69,28 @@ function createLiveActivityController(options) {
     }
     assert.equal(request.headers['X-Auth-Token'], `fresh-${count}`);
     assert.equal(request.xhrFields.withCredentials, false);
+    if (/\/api\/v1\/widget\/activity\/(tasks|leads)\b/.test(request.url)) {
+      const outcome = serverTasks(options.fetchImpl || (async () => { throw Error('unexpected CRM'); }), request, Number(options.context.userId), options.queueMeta).then(value => ({ value }), xhr => ({ xhr }));
+      const result = { done(fn) { outcome.then(r => { if (!r.xhr) fn(r.value); }); return result; }, fail(fn) { outcome.then(r => { if (r.xhr) fn(r.xhr); }); return result; }, abort() {} };
+      return result;
+    }
     return widget.$authorizedAjax(request);
   } };
   return createController(options);
 }
+
+test('the panel never calls amoCRM from the browser', async () => {
+  const fixture = employeeFixture();
+  const direct = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async url => { direct.push(url); throw Error('direct browser request'); };
+  try {
+    const controller = fixture.create(); await idle(controller);
+    assert.equal(await controller.completeTask('19', 'Готово'), true);
+    assert.deepEqual(direct, []);
+    controller.dispose();
+  } finally { globalThis.fetch = original; }
+});
 
 test('live controller loads real CRM task and context, writes through SDK and restores interval', async () => {
   let current={}, written;
@@ -363,7 +435,7 @@ test('unenrolled employee without work is hidden, skips history and remembers en
   await idle(controller); controller.dispose();
 });
 
-test('queue shows task type and entity names, caches them and survives an unavailable entity API', async t => {
+test('queue shows server-provided task type and entity names and falls back when a name is unavailable', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 9, 28, 12) });
   const due = Date.UTC(2026, 9, 28, 12) / 1000 + 60;
   const reads = [];
@@ -384,8 +456,39 @@ test('queue shows task type and entity names, caches them and survives an unavai
   assert.deepEqual(tasks.map(task => [task.type, task.entityName]), [['Звонок', 'Крупная сделка'], ['Письмо', 'Контакт #5']]);
   assert.match(tasks[0].dueLabel, /^Сегодня, \d\d:\d\d$/);
   assert.equal(await controller.refresh(), true);
-  assert.equal(reads.filter(url => url.includes('leads?')).length, 1, 'entity names are cached between queue reloads');
-  assert.equal(reads.filter(url => url.includes('account?')).length, 1, 'task types are cached');
+  assert.equal(controller.getSnapshot().tasks[0].entityName, 'Крупная сделка');
+  controller.dispose();
+});
+
+test('queue completeness and freshness are shown with the list without blocking the panel', async t => {
+  const now = Date.UTC(2026, 9, 28, 12);
+  t.mock.timers.enable({ apis: ['Date'], now });
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ _embedded: { tasks: [{ id: 1, responsible_user_id: 7, text: 'Позвонить', entity_type: 'leads', entity_id: 12, complete_till: now / 1000 - 60 }], leads: [], task_types: [] } }) });
+  let meta = { complete: false, stale: false, fetched_at: now / 1000 - 90 }, limited = null;
+  const widget = stateWidget(() => ({ current: {}, enabled: true, settings: {} }));
+  const controller = createLiveActivityController({ ...base, context: { widget, accountId: 42, userId: 7 }, storageImpl: null, fetchImpl, queueMeta: () => { if (limited) throw limited; return meta; } });
+  await idle(controller);
+  let snapshot = controller.getSnapshot();
+  assert.equal(snapshot.ready, true); assert.equal(snapshot.error, ''); assert.equal(snapshot.tasks.length, 1);
+  assert.equal(snapshot.queue.warning, true);
+  assert.match(snapshot.queue.note, /^Показаны не все задачи · обновлено \d\d:\d\d$/);
+  meta = { complete: true, stale: true, fetched_at: now / 1000 - 600 };
+  assert.equal(await controller.refresh(), true);
+  snapshot = controller.getSnapshot();
+  assert.equal(snapshot.error, '', 'stale data is a notice, not a blocking error');
+  assert.match(snapshot.queue.note, /^Данные могут быть устаревшими · обновлено/);
+  meta = { complete: true, stale: false, fetched_at: now / 1000 };
+  assert.equal(await controller.refresh(), true);
+  snapshot = controller.getSnapshot();
+  assert.equal(snapshot.queue.warning, false);
+  assert.match(snapshot.queue.note, /^обновлено \d\d:\d\d$/);
+  // A rejected reload keeps the last snapshot and marks it as old.
+  limited = { status: 429, responseJSON: { error: { code: 'resource_exhausted', message: 'later' } }, getResponseHeader: () => '20' };
+  assert.equal(await controller.refresh(), false);
+  snapshot = controller.getSnapshot();
+  assert.equal(snapshot.ready, true); assert.equal(snapshot.tasks.length, 1);
+  assert.equal(snapshot.queue.warning, true);
+  assert.match(snapshot.queue.note, /^Данные могут быть устаревшими: amoCRM временно ограничила запросы · обновлено/);
   controller.dispose();
 });
 
@@ -461,7 +564,9 @@ test('amoCRM completion button is only intent: the interval stops after CRM conf
   assert.equal(fixture.writes.length, 0, 'task still open in CRM: the click alone stops nothing');
   assert.equal(controller.getSnapshot().active.id, '19');
   Object.assign(fixture.task, { is_completed: true });
-  t.mock.timers.tick(3000); controller.tick(); await settled(controller);
+  t.mock.timers.tick(4000); controller.tick(); await settled(controller);
+  assert.equal(fixture.writes.length, 0, 'rechecks are spaced to save the shared amoCRM budget');
+  t.mock.timers.tick(1000); controller.tick(); await settled(controller);
   assert.deepEqual(fixture.writes.map(row => [row.command.action, row.command.session_id]), [['stop', 'server-work']]);
   assert.equal(controller.getSnapshot().active, null);
   controller.dispose();

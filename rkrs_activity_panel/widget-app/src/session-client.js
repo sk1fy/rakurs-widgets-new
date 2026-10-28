@@ -43,6 +43,7 @@ export function createActivitySessionClient({ baseURL, getToken, authorizedReque
       const error = new Error(failure.error?.message || 'Activity request failed');
       error.code = failure.error?.code;
       error.status = response.status;
+      error.retryAfter = Number(response.headers?.get?.('Retry-After')) || 0;
       throw error;
     }
     const result = await response.json();
@@ -96,6 +97,13 @@ export function createActivitySessionClient({ baseURL, getToken, authorizedReque
     retryPending: sendPending,
     async loadState() { const state = await request('state', undefined, undefined, 'GET'); active = state.current?.id ? state.current : null; return state; },
     loadHistory(query) { return request(`sessions?${new URLSearchParams(query)}`, undefined, undefined, 'GET'); },
+    // amoCRM is reached only through the server: it binds tasks to the verified
+    // employee, shares one queue snapshot across tabs and owns the request budget.
+    loadTasks(leadId) { return request(`tasks${leadId ? `?${new URLSearchParams({ lead_id: String(leadId) })}` : ''}`, undefined, undefined, 'GET'); },
+    loadTask(id, { context = false } = {}) { return request(`tasks/${encodeURIComponent(id)}${context ? '?context=true' : ''}`, undefined, undefined, 'GET'); },
+    // Safe to repeat: the server rereads the task and never completes it twice.
+    completeTask(id, result) { return request(`tasks/${encodeURIComponent(id)}/complete`, { result }); },
+    loadLead(id) { return request(`leads/${encodeURIComponent(id)}`, undefined, undefined, 'GET'); },
     getState() { return { active: active ? structuredClone(active) : null, pending: !!pending, running }; },
     createManagementLink(appOrigin) { return request('browser-session', { app_origin: appOrigin }); },
     dispose() { disposed = true; abort.abort(); },

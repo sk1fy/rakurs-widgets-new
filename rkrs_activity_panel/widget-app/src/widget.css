@@ -545,6 +545,15 @@
   color: #a5c9ed;
   flex: none;
 }
+.rkrs-queue-note {
+  margin-top: -6px;
+  padding: 0 16px 10px !important;
+  font-size: 11px;
+  color: var(--rkrs-muted);
+}
+.rkrs-queue-warning {
+  color: #f2c26b;
+}
 .rkrs-empty {
   display: flex;
   align-items: center;
