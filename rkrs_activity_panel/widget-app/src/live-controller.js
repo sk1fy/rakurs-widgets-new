@@ -12,8 +12,22 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
   const completionKey = `rkrs-activity-completion:${identity}`;
   let clientId = crypto.randomUUID();
   try { const key = `rkrs-activity-client:${identity}`; const stored = storage?.getItem(key); if (/^[0-9a-f-]{36}$/.test(stored || '')) clientId = stored; else storage?.setItem(key, clientId); } catch { /* CAS still guards other tabs. */ }
-  const state = { live: true, enabled: false, ready: false, completion: null, busy: false, scenario: 'tasks', tasks: [], dialogs: [], selectedTaskId: null, active: null, history: [], settings: { compact: false }, error: '', elapsedSeconds: 0, totalSeconds: 0, completedCount: null };
-  let disposed = false, lastSync = 0, lastTasks = 0, serverSettings = {}, client, lastDialog = null, dialogTransition = null;
+  // View preferences and the last known enrolment outlive the tab; server state stays authoritative.
+  let prefs = storageImpl;
+  try { if (prefs === undefined) prefs = globalThis.localStorage; } catch { /* Preferences are optional. */ }
+  const viewKey = `rkrs-activity-view:${identity}`;
+  let view = {};
+  try { view = JSON.parse(prefs?.getItem(viewKey) || '{}') || {}; } catch { /* Ignore malformed preferences. */ }
+  function rememberView(patch) {
+    view = { ...view, ...patch };
+    try { prefs?.setItem(viewKey, JSON.stringify(view)); } catch { /* Preferences stay in memory. */ }
+  }
+  const state = { live: true, enabled: view.enabled === true, ready: false, completion: null, busy: false, scenario: 'tasks', tasks: [], dialogs: [], selectedTaskId: null, active: null, history: [], settings: { compact: view.compact === true }, error: '', elapsedSeconds: 0, totalSeconds: 0, completedCount: null };
+  let disposed = false, lastSync = 0, lastTasks = 0, serverSettings = {}, client, lastDialog = null, dialogTransition = null, taskTypes = null, queueLead = '';
+  const entityNames = new Map();
+  const entityLabels = { leads: 'Сделка', contacts: 'Контакт', companies: 'Компания', customers: 'Покупатель' };
+  // Local validation failures are not uncertain writes: the panel stays usable.
+  const invalid = message => Object.assign(new Error(message), { keepReady: true });
   const buttons = new Set();
   const requests = new Set();
   try {
@@ -31,7 +45,9 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
   try { formatter = new Intl.DateTimeFormat('en-CA', { timeZone: zone || undefined, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }); } catch { formatter = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }); }
   const parts = timestamp => Object.fromEntries(formatter.formatToParts(new Date(timestamp)).map(part => [part.type, part.value]));
   const dayKey = value => `${value.year}-${value.month}-${value.day}`;
-  const snapshot = () => structuredClone({ ...state, pending: client?.getState().pending || false });
+  // Employees outside the panel settings get no bar unless they still own unfinished work.
+  const hidden = () => Boolean(client) && !state.enabled && !state.active && !state.completion && !client.getState().pending;
+  const snapshot = () => structuredClone({ ...state, pending: client?.getState().pending || false, hidden: hidden() });
   const emit = () => { if (!disposed) listeners.forEach(fn => fn(snapshot())); };
   const sdkRequest = options => new Promise((resolve, reject) => {
     if (disposed) return reject(new Error('Виджет закрыт'));
@@ -70,16 +86,47 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
   }
   function assertAvailable() {
     if (!state.ready) throw new Error('Обновите данные перед действием');
-    if (!state.enabled) throw new Error('Панель задач отключена');
-    if (client.getState().pending || state.completion) throw new Error('Сначала восстановите незавершённое действие кнопкой обновления');
+    if (!state.enabled) throw invalid('Панель задач отключена');
+    if (client.getState().pending || state.completion) throw invalid('Сначала восстановите незавершённое действие кнопкой обновления');
   }
   function assertOwnedTask(task, id) {
-    if (!Number.isSafeInteger(Number(id)) || Number(id) <= 0 || task.id !== Number(id)) throw new Error('Некорректная задача amoCRM');
-    if (task.responsible_user_id !== Number(context.userId)) throw new Error('Задача назначена другому сотруднику');
+    if (!Number.isSafeInteger(Number(id)) || Number(id) <= 0 || task.id !== Number(id)) throw invalid('Некорректная задача amoCRM');
+    if (task.responsible_user_id !== Number(context.userId)) throw invalid('Задача назначена другому сотруднику');
   }
   function validateText(value, label, required = false) {
-    if (typeof value !== 'string' || (required && !value.trim()) || new TextEncoder().encode(value).length > 2000) throw new Error(`${label}: максимум 2000 байт`);
+    if (typeof value !== 'string' || (required && !value.trim())) throw invalid(`${label}: заполните поле`);
+    if (new TextEncoder().encode(value).length > 2000) throw invalid(`${label}: максимум 2000 байт`);
     return value.trim();
+  }
+  async function loadTaskTypes(id) {
+    if (!taskTypes || (id !== undefined && !taskTypes.has(id))) {
+      const account = await crm('account?with=task_types');
+      taskTypes = new Map((account._embedded?.task_types || []).map(row => [row.id, row.name]));
+    }
+    return taskTypes;
+  }
+  async function loadEntityNames(rows) {
+    for (const type of Object.keys(entityLabels)) {
+      const missing = [...new Set(rows.filter(row => row.entity_type === type && row.entity_id > 0 && !entityNames.has(`${type}:${row.entity_id}`)).map(row => row.entity_id))];
+      for (let i = 0; i < missing.length && !disposed; i += 50) {
+        const ids = missing.slice(i, i + 50);
+        // Names only decorate the queue: an unavailable entity API must not block tasks.
+        try {
+          const result = await crm(`${type}?limit=50&${ids.map(id => `filter[id][]=${id}`).join('&')}`);
+          for (const entity of result._embedded?.[type] || []) entityNames.set(`${type}:${entity.id}`, entity.name || '');
+        } catch (error) { if (disposed) throw error; }
+        for (const id of ids) if (!entityNames.has(`${type}:${id}`)) entityNames.set(`${type}:${id}`, '');
+      }
+    }
+  }
+  function entityName(row) {
+    if (!row.entity_id || !entityLabels[row.entity_type]) return '';
+    return entityNames.get(`${row.entity_type}:${row.entity_id}`) || `${entityLabels[row.entity_type]} #${row.entity_id}`;
+  }
+  function dueLabel(timestamp) {
+    const due = parts(timestamp), now = parts(Date.now());
+    const day = dayKey(due) === dayKey(now) ? 'Сегодня' : `${due.day}.${due.month}${due.year === now.year ? '' : `.${due.year}`}`;
+    return due.hour === '23' && due.minute === '59' ? day : `${day}, ${due.hour}:${due.minute}`;
   }
   function applyCurrent(raw) {
     state.active = raw?.id ? { kind: raw.kind === 'work' ? 'tasks' : raw.kind === 'pause' ? 'pause' : raw.context.activity_type === 'imbox' ? 'imbox' : 'other', id: raw.kind === 'work' ? String(raw.context.task_id) : raw.context.activity_name?.replace(/^Imbox /, '') || raw.id, title: raw.context.task_name || raw.context.activity_name || 'Пауза', entityName: raw.context.entity_name, startedAt: raw.started_at * 1000, serverId: raw.id, clientId: raw.context.client_id } : null;
@@ -90,14 +137,22 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     if (disposed) return;
     serverSettings = own.settings;
     state.enabled = own.enabled;
+    if (view.enabled !== own.enabled) rememberView({ enabled: own.enabled });
     applyCurrent(own.current);
     if (!own.enabled) state.error = 'Панель задач отключена для сотрудника в общих настройках';
+    if (!own.enabled && !state.active) {
+      // A hidden panel has nothing to show: skip the history pages entirely.
+      state.history = []; state.totalSeconds = 0; state.ready = true; lastSync = Date.now();
+      return;
+    }
     const today = dayKey(parts(Date.now())); let low = Math.floor(Date.now()/1000)-48*3600, high = Math.floor(Date.now()/1000); while (low < high) { const mid = Math.floor((low+high)/2); if (dayKey(parts(mid*1000)) < today) low=mid+1; else high=mid; } const midnight = new Date(low*1000);
     const from = Math.floor(midnight.getTime() / 1000), to = Math.floor(Date.now() / 1000);
     let cursor = '', items = [];
     do { const page = await client.loadHistory({ from, to, ...(cursor ? { cursor } : {}) }); items.push(...(page.items || [])); cursor = page.next_cursor || ''; } while (cursor && !disposed);
-    state.history = items.filter(row => row.stopped_at).map(row => ({ id: row.id, kind: row.kind === 'work' ? 'tasks' : row.kind === 'pause' ? 'pause' : row.context.activity_type || 'other', title: row.context.task_name || row.context.activity_name || 'Пауза', seconds: row.work_time_seconds, finishedAt: row.stopped_at * 1000 }));
-    state.totalSeconds = state.history.reduce((sum, row) => sum + row.seconds, 0);
+    const closed = items.filter(row => row.stopped_at);
+    state.history = closed.map(row => ({ id: row.id, kind: row.kind === 'work' ? 'tasks' : row.kind === 'pause' ? 'pause' : row.context.activity_type || 'other', title: row.context.task_name || row.context.activity_name || 'Пауза', seconds: Math.max(0, row.stopped_at - row.started_at), finishedAt: row.stopped_at * 1000 }));
+    // Pauses are not work, and an interval that began yesterday counts only from midnight.
+    state.totalSeconds = closed.filter(row => row.kind !== 'pause').reduce((sum, row) => sum + Math.max(0, Math.min(row.stopped_at, to) - Math.max(row.started_at, from)), 0);
     // Session history has no explicit completion fact. A result comment is not
     // proof of CRM completion, and an empty result is a valid completion.
     state.completedCount = null;
@@ -116,30 +171,38 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     }
     const related = new Map();
     const leadId = locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1];
+    queueLead = leadId || '';
     if (serverSettings.include_related_deals && leadId) {
-      const lead = await crm(`leads/${leadId}?with=contacts`);
-      for (const type of ['contacts', 'companies']) for (const ref of lead._embedded?.[type] || []) {
-        const entity = await crm(`${type}/${ref.id}?with=leads`);
-        const label = entity.name || `${type} #${ref.id}`;
-        related.set(`${type}:${ref.id}`, label);
-        for (const linked of entity._embedded?.leads || []) if (String(linked.id) !== leadId) related.set(`leads:${linked.id}`, label);
-      }
+      // Related labels decorate the queue; a deleted contact must not block the tasks.
+      try {
+        const lead = await crm(`leads/${leadId}?with=contacts`);
+        for (const type of ['contacts', 'companies']) for (const ref of lead._embedded?.[type] || []) {
+          const entity = await crm(`${type}/${ref.id}?with=leads`);
+          const label = entity.name || `${entityLabels[type]} #${ref.id}`;
+          related.set(`${type}:${ref.id}`, label);
+          for (const linked of entity._embedded?.leads || []) if (String(linked.id) !== leadId) related.set(`leads:${linked.id}`, label);
+        }
+      } catch (error) { if (disposed) throw error; }
     }
     const priorities = serverSettings.priority_keys || ['urgent','overdue','overdue_no_time','today_no_time','today_timed','future'];
     const priority = row => { const due = new Date(row.complete_till * 1000), now = new Date(), dueParts = parts(due.getTime()), today = dayKey(dueParts) === dayKey(parts(now.getTime())), allDay = dueParts.hour === '23' && dueParts.minute === '59', overdue = due < now; const key = !allDay && today && (overdue || due-now <= 600000) ? 'urgent' : !allDay && overdue && !today ? 'overdue' : allDay && overdue && !today ? 'overdue_no_time' : allDay && today ? 'today_no_time' : !allDay && today ? 'today_timed' : 'future'; const index = priorities.indexOf(key); return index < 0 ? 99 : index; };
-    state.tasks = rows.filter(row => row.responsible_user_id === Number(context.userId) && !row.is_completed).filter(row => serverSettings.consider_future_tasks || dayKey(parts(row.complete_till * 1000)) <= dayKey(parts(Date.now()))).sort((a,b) => priority(a)-priority(b) || a.complete_till-b.complete_till).map(row => ({ id: String(row.id), title: row.text || `Задача ${row.id}`, entityName: row.entity_id ? `${row.entity_type} #${row.entity_id}` : '', related: related.get(`${row.entity_type}:${row.entity_id}`) || '', type: String(row.task_type_id), dueLabel: new Date(row.complete_till * 1000).toLocaleString('ru-RU'), overdue: row.complete_till * 1000 < Date.now(), completed: false }));
+    const queue = rows.filter(row => row.responsible_user_id === Number(context.userId) && !row.is_completed).filter(row => serverSettings.consider_future_tasks || dayKey(parts(row.complete_till * 1000)) <= dayKey(parts(Date.now())));
+    const types = await loadTaskTypes();
+    await loadEntityNames(queue);
+    if (disposed) return;
+    state.tasks = queue.sort((a,b) => priority(a)-priority(b) || a.complete_till-b.complete_till).map(row => ({ id: String(row.id), title: row.text || `Задача ${row.id}`, entityName: entityName(row), related: related.get(`${row.entity_type}:${row.entity_id}`) || '', type: types.get(row.task_type_id) || '', dueLabel: dueLabel(row.complete_till * 1000), overdue: row.complete_till * 1000 < Date.now(), completed: false }));
     if (!state.tasks.some(row => row.id === state.selectedTaskId)) state.selectedTaskId = state.tasks[0]?.id || null;
     lastTasks = Date.now();
   }
   async function run(action) {
     if (disposed || state.busy || !client) return;
     state.busy = true; state.error = ''; emit();
-    try { await action(); return !disposed; } catch (error) { if (!disposed) { state.error = state.completion?.phase === 'stop_pending' ? `Задача завершена в amoCRM; остановка учёта времени не подтверждена. Нажмите обновление для восстановления. ${error.message}` : state.completion ? `Завершение задачи не подтверждено. Обновление проверит amoCRM и восстановит учёт времени. ${error.message}` : error.message; state.ready = false; } return false; } finally { if (!disposed) { state.busy = false; emit(); } }
+    try { await action(); return !disposed; } catch (error) { if (!disposed) { state.error = state.completion?.phase === 'stop_pending' ? `Задача завершена в amoCRM; остановка учёта времени не подтверждена. Нажмите обновление для восстановления. ${error.message}` : state.completion ? `Завершение задачи не подтверждено. Обновление проверит amoCRM и восстановит учёт времени. ${error.message}` : error.message; if (!error.keepReady) state.ready = false; } return false; } finally { if (!disposed) { state.busy = false; emit(); } }
   }
   async function taskContext(id) {
     const task = await crm(`tasks/${Number(id)}`);
     assertOwnedTask(task, id);
-    if (task.is_completed) throw new Error('Задача уже завершена');
+    if (task.is_completed) throw new Error('Задача уже завершена. Обновите очередь.');
     const value = { client_id: clientId, task_id: task.id, task_name: task.text || '', task_type_id: task.task_type_id, entity_id: task.entity_id, entity_type: task.entity_type };
     if (['leads','contacts','companies','customers'].includes(task.entity_type) && task.entity_id) {
       const entity = await crm(`${task.entity_type}/${task.entity_id}`);
@@ -150,8 +213,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
         Object.assign(value, { pipeline_name: pipeline.name, status_name: status?.name || '', status_color: status?.color || '' });
       }
     }
-    const account = await crm('account?with=task_types');
-    value.task_type_name = account._embedded?.task_types?.find(row => row.id === task.task_type_id)?.name || '';
+    value.task_type_name = (await loadTaskTypes(task.task_type_id)).get(task.task_type_id) || '';
     return value;
   }
   function scanDOM() {
@@ -161,14 +223,16 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     documentImpl.querySelectorAll('.feed-note-wrapper-task[data-id]').forEach(node => {
       const existing = node.querySelector('[data-rkrs-live-start]');
       if (!state.enabled || !state.ready || state.completion || client?.getState().pending) { existing?.remove(); return; }
+      if (state.active?.kind === 'tasks' && state.active.id === node.dataset.id) { existing?.remove(); return; }
       if (existing || !/^\d+$/.test(node.dataset.id)) return;
       const button = documentImpl.createElement('button'); button.type = 'button'; button.dataset.rkrsLiveStart = ''; button.textContent = 'Начать учёт времени';
+      button.style.cssText = 'display:inline-block;margin:6px 0 0;padding:3px 10px;border:1px solid #1890ff;border-radius:4px;background:transparent;color:#1890ff;font:inherit;font-size:13px;cursor:pointer;';
       button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); controller.startTask(node.dataset.id); });
       node.append(button); buttons.add(button);
     });
   }
   async function startImboxSession(id) {
-    if (!state.dialogs.some(row => row.id === String(id))) throw new Error('Откройте диалог Imbox'); const details = { client_id: clientId }; const entityId = dialogEntities.get(String(id)); if (entityId) { const entity = await crm(`leads/${entityId}`); Object.assign(details, { entity_type: 'leads', entity_id: entityId, entity_name: entity.name, pipeline_id: entity.pipeline_id || 0, status_id: entity.status_id || 0 }); } await client.startImbox(id, details);
+    if (!state.dialogs.some(row => row.id === String(id))) throw invalid('Откройте диалог Imbox'); const details = { client_id: clientId }; const entityId = dialogEntities.get(String(id)); if (entityId) { const entity = await crm(`leads/${entityId}`); Object.assign(details, { entity_type: 'leads', entity_id: entityId, entity_name: entity.name, pipeline_id: entity.pipeline_id || 0, status_id: entity.status_id || 0 }); } await client.startImbox(id, details);
   }
   async function resumeCompletion() {
     const intent = state.completion;
@@ -239,7 +303,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     completeTask(id, result = '') { return run(async () => {
       assertAvailable();
       result = validateText(result, 'Результат задачи');
-      if (!result) throw new Error('Для завершения задачи укажите результат.');
+      if (!result) throw invalid('Для завершения задачи укажите результат.');
       const task = await crm(`tasks/${Number(id)}`);
       assertOwnedTask(task, id);
       const own = await client.loadState();
@@ -257,15 +321,20 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
       await loadTasks();
     }); },
     refresh() { return run(refresh); },
-    updateSettings(patch) { state.settings = { ...state.settings, ...patch }; emit(); }, reset() {},
+    updateSettings(patch) { state.settings = { ...state.settings, ...patch }; rememberView({ compact: state.settings.compact === true }); emit(); }, reset() {},
     openManagement() {
+      // run() would skip a busy controller and leave the blank window behind.
+      if (disposed || state.busy || !client) return false;
       const popup = window.open('about:blank', '_blank'); if (popup) popup.opener = null;
-      return run(async () => { try { const result = await client.createManagementLink(appOrigin); const url = new URL(result.url); if (url.origin !== new URL(appOrigin).origin) throw new Error('Некорректный адрес настроек'); if (!popup) throw new Error('Разрешите открытие окна настроек'); popup.location.replace(url.href); } catch (error) { popup?.close(); throw error; } });
+      return run(async () => { try { const result = await client.createManagementLink(appOrigin); const url = new URL(result.url); if (url.origin !== new URL(appOrigin).origin) throw new Error('Некорректный адрес настроек'); if (!popup) throw new Error('Разрешите открытие окна настроек'); popup.location.replace(url.href); } catch (error) { popup?.close(); error.keepReady = true; throw error; } });
     },
     tick() {
       if (disposed) return;
       state.elapsedSeconds = state.active ? Math.max(0, (Date.now() - state.active.startedAt) / 1000) : 0;
       scanDOM(); emit();
+      // The controller outlives navigation: related deals follow the opened lead card.
+      const lead = locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1] || '';
+      if (serverSettings.include_related_deals && state.ready && lead !== queueLead) { queueLead = lead; lastSync = 0; lastTasks = 0; }
       const dialog = locationImpl.pathname.match(/\/imbox\/(\d+)/)?.[1];
       if (lastDialog === null && state.active?.kind === 'imbox' && state.active.clientId === clientId && state.active.id === dialog) lastDialog = dialog;
       if (!state.busy && (state.ready || dialogTransition?.pending) && state.enabled && !state.completion && !documentImpl.hidden) {
@@ -305,7 +374,8 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
           });
         }
       }
-      if (!state.busy && !documentImpl.hidden && Date.now()-lastSync > 15000) run(async () => { await sync(); if (!client.getState().pending && !state.completion && Date.now()-lastTasks > 60000) await loadTasks(); });
+      // Unenrolled employees only need to notice being enabled; poll them rarely.
+      if (!state.busy && !documentImpl.hidden && Date.now()-lastSync > (hidden() ? 120000 : 15000)) run(async () => { await sync(); if (!client.getState().pending && !state.completion && Date.now()-lastTasks > 60000) await loadTasks(); });
     },
     dispose() { disposed = true; abort.abort(); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); buttons.forEach(button => button.remove()); listeners.clear(); },
   };

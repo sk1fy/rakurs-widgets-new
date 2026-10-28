@@ -334,3 +334,95 @@ test('disposal aborts pending token and ignores its late result', async () => {
   controller.dispose(); callback({ token: 'late-proof' }); await settleImbox();
   assert.equal(aborted, 1); assert.equal(calls, 1); assert.equal(controller.getSnapshot().ready, false);
 });
+
+function stateWidget(state, urls = []) {
+  return { $authorizedAjax(options) {
+    urls.push(options.url);
+    const request = { done(fn) { queueMicrotask(() => fn(options.url.endsWith('/state') ? state() : state.history?.() || { items: [] })); return request; }, fail() { return request; } };
+    return request;
+  } };
+}
+const memoryStorage = () => { const values = new Map(); return { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) }; };
+const base = { apiOrigin: 'https://api.example.test', appOrigin: 'https://panel.example.test', documentImpl: { hidden: false, querySelectorAll: () => [] }, locationImpl: { pathname: '/' } };
+
+test('unenrolled employee without work is hidden, skips history and remembers enrolment', async () => {
+  let enabled = false; const urls = []; const storage = memoryStorage();
+  const widget = stateWidget(() => ({ current: {}, enabled, settings: {} }), urls);
+  const make = () => createLiveActivityController({ ...base, context: { widget, accountId: 42, userId: 7 }, storageImpl: storage, fetchImpl: async () => ({ ok: true, status: 204 }) });
+  let controller = make(); await idle(controller);
+  assert.equal(controller.getSnapshot().hidden, true);
+  assert.equal(urls.some(url => url.includes('/sessions')), false);
+  controller.dispose();
+  enabled = true; controller = make();
+  assert.equal(controller.getSnapshot().hidden, true, 'the last known state applies before the first read');
+  await idle(controller);
+  assert.equal(controller.getSnapshot().hidden, false);
+  controller.dispose();
+  controller = make();
+  assert.equal(controller.getSnapshot().hidden, false, 'an enrolled employee sees the panel immediately');
+  await idle(controller); controller.dispose();
+});
+
+test('queue shows task type and entity names, caches them and survives an unavailable entity API', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 9, 28, 12) });
+  const due = Date.UTC(2026, 9, 28, 12) / 1000 + 60;
+  const reads = [];
+  const fetchImpl = async url => {
+    reads.push(url);
+    if (url.includes('contacts?')) return { ok: false, status: 403 };
+    const body = url.includes('tasks?') ? { _embedded: { tasks: [
+      { id: 1, responsible_user_id: 7, text: 'Позвонить', task_type_id: 1, entity_type: 'leads', entity_id: 12, complete_till: due },
+      { id: 2, responsible_user_id: 7, text: 'Написать', task_type_id: 3, entity_type: 'contacts', entity_id: 5, complete_till: due + 60 },
+    ] } } : url.includes('leads?') ? { _embedded: { leads: [{ id: 12, name: 'Крупная сделка' }] } } : { _embedded: { task_types: [{ id: 1, name: 'Звонок' }, { id: 3, name: 'Письмо' }] } };
+    return { ok: true, status: 200, json: async () => body };
+  };
+  const widget = stateWidget(() => ({ current: {}, enabled: true, settings: { consider_future_tasks: true } }));
+  const controller = createLiveActivityController({ ...base, context: { widget, accountId: 42, userId: 7 }, storageImpl: null, fetchImpl });
+  await idle(controller);
+  const { tasks, ready } = controller.getSnapshot();
+  assert.equal(ready, true);
+  assert.deepEqual(tasks.map(task => [task.type, task.entityName]), [['Звонок', 'Крупная сделка'], ['Письмо', 'Контакт #5']]);
+  assert.match(tasks[0].dueLabel, /^Сегодня, \d\d:\d\d$/);
+  assert.equal(await controller.refresh(), true);
+  assert.equal(reads.filter(url => url.includes('leads?')).length, 1, 'entity names are cached between queue reloads');
+  assert.equal(reads.filter(url => url.includes('account?')).length, 1, 'task types are cached');
+  controller.dispose();
+});
+
+test('today total excludes pauses and the part of an interval before midnight', async t => {
+  const now = Date.UTC(2026, 9, 28, 12);
+  t.mock.timers.enable({ apis: ['Date'], now });
+  const midnight = new Date(now).setHours(0, 0, 0, 0) / 1000, at = now / 1000;
+  const state = () => ({ current: {}, enabled: true, settings: {} });
+  state.history = () => ({ items: [
+    { id: 'night', kind: 'work', started_at: midnight - 600, stopped_at: midnight + 600, work_time_seconds: 1200, context: { task_name: 'Ночная задача' } },
+    { id: 'pause', kind: 'pause', started_at: at - 3000, stopped_at: at - 2400, work_time_seconds: 0, context: {} },
+    { id: 'call', kind: 'work', started_at: at - 2400, stopped_at: at - 1800, work_time_seconds: 600, context: { task_name: 'Звонок' } },
+  ] });
+  const controller = createLiveActivityController({ ...base, context: { widget: stateWidget(state), accountId: 42, userId: 7 }, storageImpl: null, fetchImpl: async () => ({ ok: true, status: 204 }) });
+  await idle(controller);
+  const snapshot = controller.getSnapshot();
+  assert.equal(snapshot.totalSeconds, 1200);
+  assert.deepEqual(snapshot.history.find(row => row.id === 'pause'), { id: 'pause', kind: 'pause', title: 'Пауза', seconds: 600, finishedAt: (at - 2400) * 1000 });
+  controller.dispose();
+});
+
+test('local validation errors keep the panel usable', async () => {
+  const fixture = employeeFixture(); const controller = fixture.create(); await idle(controller);
+  assert.equal(await controller.startOther('  '), false);
+  assert.match(controller.getSnapshot().error, /заполните поле/);
+  assert.equal(controller.getSnapshot().ready, true);
+  assert.equal(await controller.startOther('Подготовка отчёта'), true);
+  assert.equal(fixture.writes.length, 1); controller.dispose();
+});
+
+test('compact view survives a new controller and a busy controller opens no management window', async () => {
+  const storage = memoryStorage();
+  const fixture = employeeFixture({ storage }); let controller = fixture.create();
+  assert.equal(controller.openManagement(), false);
+  await idle(controller);
+  controller.updateSettings({ compact: true }); controller.dispose();
+  controller = fixture.create();
+  assert.equal(controller.getSnapshot().settings.compact, true);
+  await idle(controller); controller.dispose();
+});

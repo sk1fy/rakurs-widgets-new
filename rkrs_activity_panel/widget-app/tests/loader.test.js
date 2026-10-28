@@ -168,7 +168,7 @@ test("destroy cancels pending init/render/settings without touching another widg
   assert.equal(calls.unmount.length, 0);
 });
 
-test("destroy cleans up only its own instance and init starts a new generation", async () => {
+test("destroy cleans up only its own instance and the next render starts a new generation", async () => {
   const { Widget, calls } = setup();
   const first = new Widget();
   const second = new Widget();
@@ -177,15 +177,27 @@ test("destroy cleans up only its own instance and init starts a new generation",
   await tick();
   first.callbacks.destroy();
   first.callbacks.destroy();
-  first.callbacks.render();
-  await tick();
   assert.deepEqual(calls.unmount, [first]);
-  assert.equal(calls.mount.length, 2);
+  // amoCRM area change: destroy → render → init on the same instance.
+  first.callbacks.render();
   first.callbacks.init();
   await tick();
   assert.equal(calls.register.length, 3);
-  assert.equal(calls.mount.length, 3);
+  assert.equal(calls.mount.length, 4);
   assert.equal(calls.fetch.length, 1);
+});
+
+test("render alone after destroy mounts the panel again", async () => {
+  const { Widget, calls } = setup();
+  const widget = new Widget();
+  widget.callbacks.init();
+  await tick();
+  widget.callbacks.destroy();
+  widget.callbacks.render();
+  await tick();
+  assert.deepEqual(calls.unmount, [widget]);
+  assert.equal(calls.register.length, 2);
+  assert.equal(calls.mount.length, 2);
 });
 
 test("reinit while load is pending discards callbacks from the old generation", async () => {

@@ -7,6 +7,29 @@ import { createActivityController } from "./model.js";
 const registered = new WeakSet();
 const records = new Map();
 const storagePrefix = "rkrs_activity_prototype_v1";
+const fixedHosts = new Set();
+// amoCRM calls destroy and render again on every area change. A detached
+// controller waits briefly so its server state and in-flight command survive.
+const parked = new Map();
+const reuseWindow = 10000;
+const layoutStyleId = "rkrs-activity-layout";
+const layoutClass = "rkrs-activity-panel-active";
+const heightVar = "--rkrs-activity-panel-height";
+// Same screens as the previous widget: their layouts do not shift below a top bar.
+const hiddenRoutes = ["/dashboard", "/events/list", "/stats", "/amo-market", "/settings"];
+// amoCRM positions its page containers from top:0, so a fixed bar must push them down.
+const shifted = [
+  ...["dashboard-search", "dashboard-superlog", "inbox-wrapper", "list-catalogs",
+    "list-contacts", "list-customers", "list-digital-pipeline", "list-events",
+    "list-helpbot", "list-helpbot-dataset", "list-leads", "list-mail",
+    "list-pipeline", "list-todo", "list-todo-calendar", "list-todo-line",
+    "list-user_rights", "list-widget"].map((name) => `.${name} .list__body-right__top`),
+  "#page_holder", "#sidebar", "#card_holder", "#widgets_block",
+  "#widget_page_sidebar", ".content__card-holder-mail_thread", ".card-cf",
+];
+const layoutCss = `${shifted
+  .map((selector) => `body.${layoutClass} ${selector}`)
+  .join(",")}{top:var(${heightVar},76px) !important;}`;
 
 function safeStorage() {
   try {
@@ -52,8 +75,16 @@ function recordFor(context) {
   const mode = demo ? "demo" : authenticated ? "live" : "unavailable";
   let record = records.get(context.widget);
   if (record && (record.storageKey !== key || record.mode !== mode)) {
-    unmountAll(context.widget);
+    release(context.widget, false);
     record = null;
+  }
+  if (!record) {
+    record = parked.get(`${mode}:${key}`);
+    if (record) {
+      parked.delete(`${mode}:${key}`);
+      window.clearTimeout(record.disposeTimer);
+      record.disposeTimer = null;
+    }
   }
   if (!record) {
     record = {
@@ -64,17 +95,79 @@ function recordFor(context) {
         storageKey: key,
       }) : authenticated ? createLiveActivityController({ context, apiOrigin: import.meta.env.VITE_ACTIVITY_API_ORIGIN, appOrigin: import.meta.env.VITE_ACTIVITY_APP_ORIGIN }) : unavailableController("Виджет не подключён: недоступны авторизация amoCRM или данные сотрудника. Обновите страницу CRM."),
       panel: null,
+      panelWanted: false,
       settings: null,
       timer: null,
       bridgeTarget: null,
       bridgeHandler: null,
       previewUnsubscribe: null,
+      disposeTimer: null,
+      hidden: false,
     };
+    const created = record;
+    created.hidden = created.controller.getSnapshot().hidden === true;
+    created.controller.subscribe((snapshot) => {
+      created.hidden = snapshot?.hidden === true;
+    });
+  }
+  if (!records.has(context.widget)) {
     records.set(context.widget, record);
+    const current = record;
     // One clock for both the panel and its settings; display time derives from a timestamp.
-    record.timer = window.setInterval(() => record.controller.tick(), 1000);
+    // The same clock restores the panel after amoCRM rebuilds the page on navigation.
+    current.timer = window.setInterval(() => {
+      current.controller.tick();
+      placePanel(current);
+    }, 1000);
   }
   return record;
+}
+
+function hiddenRoute() {
+  const path = window.location.pathname;
+  return hiddenRoutes.some((route) => path === route || path.startsWith(`${route}/`));
+}
+
+function syncLayout() {
+  for (const host of fixedHosts) if (!host.isConnected) fixedHosts.delete(host);
+  const style = document.getElementById(layoutStyleId);
+  if (!fixedHosts.size) {
+    style?.remove();
+    document.body.classList.remove(layoutClass);
+    document.documentElement.style.removeProperty(heightVar);
+    return;
+  }
+  if (!style) {
+    const node = document.createElement("style");
+    node.id = layoutStyleId;
+    node.textContent = layoutCss;
+    document.head.append(node);
+  }
+  document.body.classList.add(layoutClass);
+}
+
+function fixPanel(view) {
+  const { host } = view;
+  host.style.cssText = "display:block;position:fixed;top:0;left:64px;right:0;z-index:200;";
+  fixedHosts.add(host);
+  const measure = () => {
+    if (host.isConnected && host.offsetHeight)
+      document.documentElement.style.setProperty(heightVar, `${host.offsetHeight}px`);
+  };
+  const observer = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
+  observer?.observe(host);
+  measure();
+  view.cleanup = () => {
+    observer?.disconnect();
+    fixedHosts.delete(host);
+  };
+  syncLayout();
+}
+
+function removePanel(record) {
+  removeSurface(record.panel);
+  record.panel = null;
+  syncLayout();
 }
 
 function surface(target, controller, settingsOnly = false) {
@@ -114,13 +207,23 @@ export function registerWidgetInstance(widget) {
 
 export function mountPanel(context) {
   const record = recordFor(context);
+  record.panelWanted = true;
+  placePanel(record);
+}
+
+function placePanel(record) {
+  if (!record.panelWanted) return;
+  const slot = record.mode === "demo" && document.querySelector("[data-rkrs-activity-panel-slot]");
+  if (!slot && (record.hidden || hiddenRoute())) {
+    if (record.panel) removePanel(record);
+    return;
+  }
   if (record.panel?.host.isConnected) return;
-  removeSurface(record.panel);
-  const target =
-    (record.mode === "demo" && document.querySelector("[data-rkrs-activity-panel-slot]")) ||
-    document.querySelector("#app") ||
-    document.body;
+  removePanel(record);
+  // amoCRM replaces page containers on navigation; body survives it.
+  const target = slot || document.body;
   record.panel = surface(target, record.controller);
+  if (!slot) fixPanel(record.panel);
   if (record.bridgeTarget)
     record.bridgeTarget.removeEventListener(
       "rkrs-activity-demo-action",
@@ -188,18 +291,43 @@ export function openSettings(context) {
   else dialog.setAttribute("open", "");
 }
 
-export function unmountAll(widget) {
+function release(widget, keep) {
   const record = records.get(widget);
   if (!record) return;
   window.clearInterval(record.timer);
+  record.timer = null;
   record.previewUnsubscribe?.();
+  record.previewUnsubscribe = null;
   record.bridgeTarget?.removeEventListener(
     "rkrs-activity-demo-action",
     record.bridgeHandler
   );
-  removeSurface(record.panel);
+  record.bridgeTarget = null;
+  removePanel(record);
   removeSurface(record.settings);
-  record.controller.dispose();
+  record.settings = null;
+  record.panelWanted = false;
   records.delete(widget);
   registered.delete(widget);
+  const key = `${record.mode}:${record.storageKey}`;
+  const previous = parked.get(key);
+  if (previous) {
+    parked.delete(key);
+    window.clearTimeout(previous.disposeTimer);
+    previous.controller.dispose();
+  }
+  if (!keep) {
+    record.controller.dispose();
+    return;
+  }
+  parked.set(key, record);
+  record.disposeTimer = window.setTimeout(() => {
+    if (parked.get(key) !== record) return;
+    parked.delete(key);
+    record.controller.dispose();
+  }, reuseWindow);
+}
+
+export function unmountAll(widget) {
+  release(widget, true);
 }

@@ -9,11 +9,11 @@ const code = readFileSync(
 );
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function setup() {
+function setup(url = "http://localhost/") {
   const dom = new JSDOM(
     '<!doctype html><html><body><main id="app"><div data-rkrs-activity-panel-slot></div><div id="settings"></div></main></body></html>',
     {
-      url: "http://localhost/",
+      url,
       runScripts: "outside-only",
       pretendToBeVisual: true,
     }
@@ -231,6 +231,63 @@ test("task completion requests a result, validates UTF-8 limit and accepts an em
     assert.equal(JSON.parse(window.localStorage.getItem('rkrs_activity_prototype_v1:1:2')).completedTaskIds.length, 1);
   } finally {
     app.unmountAll(widget);
+    dom.window.close();
+  }
+});
+
+test("CRM panel is fixed in body, shifts amoCRM layout and returns after the page drops it", async () => {
+  const { dom, window, app, context, widget } = setup("http://localhost/leads/pipeline/1");
+  try {
+    delete context.mode;
+    app.mountPanel(context);
+    const host = window.document.querySelector('[data-rkrs-prototype-surface="panel"]');
+    assert.equal(host.parentNode, window.document.body);
+    assert.equal(host.style.position, "fixed");
+    assert.ok(window.document.body.classList.contains("rkrs-activity-panel-active"));
+    assert.match(window.document.getElementById("rkrs-activity-layout").textContent, /#page_holder/);
+    host.remove();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const restored = window.document.querySelectorAll('[data-rkrs-prototype-surface="panel"]');
+    assert.equal(restored.length, 1);
+    assert.notEqual(restored[0], host);
+    app.unmountAll(widget);
+    assert.equal(window.document.getElementById("rkrs-activity-layout"), null);
+    assert.equal(window.document.body.classList.contains("rkrs-activity-panel-active"), false);
+  } finally {
+    app.unmountAll(widget);
+    dom.window.close();
+  }
+});
+
+test("CRM panel stays hidden on screens without a shifted layout", () => {
+  const { dom, window, app, context, widget } = setup("http://localhost/amo-market/");
+  try {
+    delete context.mode;
+    app.mountPanel(context);
+    assert.equal(window.document.querySelector('[data-rkrs-prototype-surface="panel"]'), null);
+    assert.equal(window.document.getElementById("rkrs-activity-layout"), null);
+  } finally {
+    app.unmountAll(widget);
+    dom.window.close();
+  }
+});
+
+test("a re-render right after destroy reuses the detached controller", async () => {
+  const { dom, window, app, context, widget, slot } = setup();
+  try {
+    app.mountPanel(context);
+    slot.dispatchEvent(new window.CustomEvent("rkrs-activity-demo-action", { detail: { type: "task", id: "task-call" } }));
+    await settle();
+    app.unmountAll(widget);
+    // A fresh controller would read this empty storage and show a stopped timer.
+    window.localStorage.removeItem("rkrs_activity_prototype_v1:1:2");
+    const next = {};
+    app.mountPanel({ ...context, widget: next });
+    await settle();
+    const shadow = slot.querySelector('[data-rkrs-prototype-surface="panel"]').shadowRoot;
+    assert.match(shadow.querySelector(".rkrs-timer-status").textContent, /Идёт учёт/);
+    app.unmountAll(next);
+  } finally {
     dom.window.close();
   }
 });
