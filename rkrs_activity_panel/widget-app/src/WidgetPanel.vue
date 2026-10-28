@@ -46,6 +46,10 @@ const scenarioNames = {
 const taskTypes = { call: "Звонок", meeting: "Встреча", email: "Письмо" };
 const recentHistory = computed(() => [...state.value.history].reverse());
 const scenarioIcons = { tasks: "tasks", other: "activity", imbox: "message" };
+const historyNames = { ...scenarioNames, pause: "Пауза" };
+const historyIcons = { ...scenarioIcons, pause: "clock" };
+// A pause is an open interval, but any start replaces it on the server.
+const paused = computed(() => state.value.active?.kind === "pause");
 const activeTask = computed(
   () =>
     state.value.active?.kind === "tasks" || state.value.active?.kind === "task"
@@ -55,11 +59,11 @@ const canMutate = computed(() =>
   !state.value.pending && !state.value.completion
 );
 const canComplete = computed(() => canMutate.value &&
-  (activeTask.value || (!state.value.active && selectedTask.value && !selectedTask.value.completed))
+  (activeTask.value || ((!state.value.active || paused.value) && selectedTask.value && !selectedTask.value.completed))
 );
 const canStart = computed(
   () =>
-    canMutate.value && !state.value.active &&
+    canMutate.value && (!state.value.active || paused.value) &&
     (state.value.scenario === "tasks"
       ? selectedTask.value && !selectedTask.value.completed
       : state.value.scenario === "other"
@@ -186,6 +190,7 @@ onBeforeUnmount(() => {
         <h2>Настройки панели активности</h2>
         <span v-if="!state.live" class="rkrs-demo">ДЕМО</span>
       </div>
+      <p v-if="state.live && state.error" class="rkrs-error" role="alert">{{ state.error }}</p>
       <WidgetSettings :controller="controller" :snapshot="state" />
     </template>
     <template v-else>
@@ -278,14 +283,14 @@ onBeforeUnmount(() => {
         </button>
         <div
           class="rkrs-timer"
-          :class="{ 'rkrs-timer-running': state.active }"
+          :class="{ 'rkrs-timer-running': state.active && !paused }"
           :title="
             state.active ? `Сейчас: ${state.active.title}` : 'Таймер остановлен'
           "
         >
           <span class="rkrs-timer-status"
             ><i class="rkrs-status-dot"></i
-            >{{ state.active ? "Идёт учёт" : "Остановлен" }}</span
+            >{{ paused ? "Пауза" : state.active ? "Идёт учёт" : "Остановлен" }}</span
           ><span
             class="rkrs-time"
             role="timer"
@@ -295,7 +300,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="rkrs-actions">
           <button
-            v-if="state.active"
+            v-if="state.active && !paused"
             type="button"
             class="rkrs-button rkrs-stop"
             :disabled="state.busy || state.pending" @click="controller.stop()"
@@ -322,7 +327,8 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <div class="rkrs-utilities">
-          <button v-if="state.live" type="button" class="rkrs-button" :disabled="!canMutate" @click="controller.pause()">Пауза</button>
+          <button v-if="state.live && paused" type="button" class="rkrs-button" :disabled="state.busy || state.pending" @click="controller.stop()">Завершить паузу</button>
+          <button v-else-if="state.live" type="button" class="rkrs-button" :disabled="!canMutate" @click="controller.pause()">Пауза</button>
           <button
             type="button"
             class="rkrs-icon-button"
@@ -357,7 +363,7 @@ onBeforeUnmount(() => {
       <p v-else-if="state.live && !state.ready" class="rkrs-active-note" role="status">Загрузка данных сотрудника…</p>
       <div
         v-if="
-          state.active &&
+          state.active && !paused &&
           ((state.scenario === 'tasks' && !activeTask) ||
             (state.scenario !== 'tasks' &&
               state.active.kind !== state.scenario))
@@ -455,6 +461,7 @@ onBeforeUnmount(() => {
               ><span class="rkrs-item-copy"
                 ><strong>{{ task.title }}</strong
                 ><small>{{ task.entityName }}</small
+                ><small v-if="task.related">Связано: {{ task.related }}</small
                 ><span
                   class="rkrs-item-meta"
                   :class="{ 'rkrs-overdue': task.overdue && !task.completed }"
@@ -518,13 +525,13 @@ onBeforeUnmount(() => {
             <li v-for="entry in recentHistory" :key="entry.id">
               <span class="rkrs-history-mark"
                 ><WidgetIcon
-                  :name="scenarioIcons[entry.kind] || 'tasks'"
+                  :name="historyIcons[entry.kind] || 'tasks'"
                   :size="16" /></span
               ><span class="rkrs-item-copy"
                 ><strong>{{ entry.title }}</strong
                 ><small
                   >{{ finishedTime(entry.finishedAt) }} ·
-                  {{ scenarioNames[entry.kind] || "Мои задачи" }}</small
+                  {{ historyNames[entry.kind] || "Мои задачи" }}</small
                 ></span
               ><span class="rkrs-history-duration">{{
                 duration(entry.seconds)

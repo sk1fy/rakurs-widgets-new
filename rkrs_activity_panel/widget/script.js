@@ -147,17 +147,23 @@ define([], function () {
             });
         }
 
+        // При смене области amoCRM вызывает destroy, затем render: панель должна вернуться без init.
+        function revive() {
+            if (!alive) { alive = true; generation += 1; }
+        }
+
         this.callbacks = {
             init: function () {
-                if (!alive) { alive = true; generation += 1; }
+                revive();
                 run('mountPanel');
                 return true;
             },
-            render: function () { run('mountPanel'); return true; },
+            render: function () { revive(); run('mountPanel'); return true; },
             bind_actions: function () { return true; },
             settings: function (modalBody) {
                 var target = modalBody && (modalBody.nodeType === 1 ? modalBody : modalBody[0]);
                 if (!target || typeof target.appendChild !== 'function') { target = null; }
+                revive();
                 run('openSettings', target);
                 return true;
             },
