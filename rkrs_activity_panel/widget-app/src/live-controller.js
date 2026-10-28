@@ -1,7 +1,7 @@
 import { createActivitySessionClient } from './session-client.js';
 
 // authorizedAjax caches tokens; Core requires a fresh disposable JWT for each call.
-export function createLiveActivityController({ context, apiOrigin, appOrigin, fetchImpl = fetch, documentImpl = document, locationImpl = location, storageImpl }) {
+export function createLiveActivityController({ context, apiOrigin, appOrigin, fetchImpl = fetch, documentImpl = document, locationImpl = location, storageImpl, broadcastImpl = globalThis.BroadcastChannel }) {
   const listeners = new Set();
   const abort = new AbortController();
   let storage = storageImpl;
@@ -23,7 +23,26 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     try { prefs?.setItem(viewKey, JSON.stringify(view)); } catch { /* Preferences stay in memory. */ }
   }
   const state = { live: true, enabled: view.enabled === true, ready: false, completion: null, busy: false, scenario: 'tasks', tasks: [], dialogs: [], selectedTaskId: null, active: null, history: [], settings: { compact: view.compact === true }, error: '', elapsedSeconds: 0, totalSeconds: 0, completedCount: null };
-  let disposed = false, lastSync = 0, lastTasks = 0, serverSettings = {}, client, lastDialog = null, dialogTransition = null, taskTypes = null, queueLead = '';
+  let disposed = false, lastSync = 0, lastTasks = 0, serverSettings = {}, client, lastDialog = null, dialogTransition = null, taskTypes = null, queueLead = '', closedSeconds = 0, dayStart = 0;
+  // Other tabs of the same employee only hear that something changed; each one
+  // rereads the server, which stays the source of truth.
+  let channel = null;
+  try { if (typeof broadcastImpl === 'function') { channel = new broadcastImpl(`rkrs-activity:${identity}`); channel.onmessage = () => { if (!disposed) { lastSync = 0; lastTasks = 0; } }; } } catch { channel = null; }
+  const announce = () => { try { if (!disposed) channel?.postMessage({ type: 'changed' }); } catch { /* Other tabs still poll. */ } };
+  // Returning to the tab rereads state at once; hidden tabs do not poll at all.
+  const onVisible = () => { if (disposed || documentImpl.hidden) return; if (Date.now() - lastSync > 3000) lastSync = 0; if (Date.now() - lastTasks > 10000) lastTasks = 0; };
+  const windowRef = documentImpl.defaultView;
+  documentImpl.addEventListener?.('visibilitychange', onVisible);
+  windowRef?.addEventListener?.('focus', onVisible);
+  // amoCRM's own completion button: a click is only intent, CRM confirms it.
+  const nativeCompletion = '.card-task__actions .js-complete-task, .feed-note-wrapper-task .js-switcher-complete, .js-task-result-button, .card-task__button';
+  const completionChecks = new Map();
+  const onNativeComplete = event => {
+    const target = event.target?.nodeType === 3 ? event.target.parentNode : event.target;
+    const id = target?.closest?.(nativeCompletion)?.closest?.('.feed-note-wrapper-task[data-id]')?.dataset?.id;
+    if (!disposed && state.active?.kind === 'tasks' && state.active.id === id) completionChecks.set(id, { until: Date.now() + 180000, next: Date.now() + 2000 });
+  };
+  documentImpl.addEventListener?.('click', onNativeComplete, true);
   const entityNames = new Map();
   const entityLabels = { leads: 'Сделка', contacts: 'Контакт', companies: 'Компания', customers: 'Покупатель' };
   // Local validation failures are not uncertain writes: the panel stays usable.
@@ -73,7 +92,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
       request.done(result => { requests.delete(request); if (disposed) reject(new Error('Виджет закрыт')); else resolve(result); }).fail(xhr => { requests.delete(request); fail(xhr); });
     }).fail(xhr => { requests.delete(tokenRequest); fail(xhr); });
   });
-  try { client = createActivitySessionClient({ baseURL: apiOrigin, authorizedRequest: sdkRequest, storage, storageKey: `rkrs-activity-command:${identity}` }); }
+  try { client = createActivitySessionClient({ baseURL: apiOrigin, authorizedRequest: sdkRequest, storage, storageKey: `rkrs-activity-command:${identity}`, onCommand: announce }); }
   catch { state.error = 'Не настроен адрес API Activity (VITE_ACTIVITY_API_ORIGIN)'; }
   async function crm(path, options = {}) {
     if (disposed) throw new Error('Виджет закрыт');
@@ -129,7 +148,11 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     return due.hour === '23' && due.minute === '59' ? day : `${day}, ${due.hour}:${due.minute}`;
   }
   function applyCurrent(raw) {
+    const previous = state.active?.serverId;
     state.active = raw?.id ? { kind: raw.kind === 'work' ? 'tasks' : raw.kind === 'pause' ? 'pause' : raw.context.activity_type === 'imbox' ? 'imbox' : 'other', id: raw.kind === 'work' ? String(raw.context.task_id) : raw.context.activity_name?.replace(/^Imbox /, '') || raw.id, title: raw.context.task_name || raw.context.activity_name || 'Пауза', entityName: raw.context.entity_name, startedAt: raw.started_at * 1000, serverId: raw.id, clientId: raw.context.client_id } : null;
+    // A newly started task (here, from a card or in another tab) becomes the
+    // selection; a later different selection is the user's next task.
+    if (state.active?.kind === 'tasks' && state.active.serverId !== previous) state.selectedTaskId = state.active.id;
   }
   async function sync() {
     lastSync = Date.now();
@@ -142,7 +165,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     if (!own.enabled) state.error = 'Панель задач отключена для сотрудника в общих настройках';
     if (!own.enabled && !state.active) {
       // A hidden panel has nothing to show: skip the history pages entirely.
-      state.history = []; state.totalSeconds = 0; state.ready = true; lastSync = Date.now();
+      state.history = []; closedSeconds = 0; updateTotal(); state.ready = true; lastSync = Date.now();
       return;
     }
     const today = dayKey(parts(Date.now())); let low = Math.floor(Date.now()/1000)-48*3600, high = Math.floor(Date.now()/1000); while (low < high) { const mid = Math.floor((low+high)/2); if (dayKey(parts(mid*1000)) < today) low=mid+1; else high=mid; } const midnight = new Date(low*1000);
@@ -152,12 +175,37 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     const closed = items.filter(row => row.stopped_at);
     state.history = closed.map(row => ({ id: row.id, kind: row.kind === 'work' ? 'tasks' : row.kind === 'pause' ? 'pause' : row.context.activity_type || 'other', title: row.context.task_name || row.context.activity_name || 'Пауза', seconds: Math.max(0, row.stopped_at - row.started_at), finishedAt: row.stopped_at * 1000 }));
     // Pauses are not work, and an interval that began yesterday counts only from midnight.
-    state.totalSeconds = closed.filter(row => row.kind !== 'pause').reduce((sum, row) => sum + Math.max(0, Math.min(row.stopped_at, to) - Math.max(row.started_at, from)), 0);
+    closedSeconds = closed.filter(row => row.kind !== 'pause').reduce((sum, row) => sum + Math.max(0, Math.min(row.stopped_at, to) - Math.max(row.started_at, from)), 0);
+    dayStart = from * 1000;
+    updateTotal();
     // Session history has no explicit completion fact. A result comment is not
     // proof of CRM completion, and an empty result is a valid completion.
     state.completedCount = null;
     state.ready = true;
     lastSync = Date.now();
+  }
+  // Today's total includes the running interval from midnight on; pauses are not work.
+  function updateTotal() {
+    const running = state.active && state.active.kind !== 'pause' ? Math.max(0, Date.now() - Math.max(state.active.startedAt, dayStart)) / 1000 : 0;
+    state.totalSeconds = closedSeconds + Math.floor(running);
+  }
+  // Stops the interval of a task completed outside the panel (amoCRM's own
+  // button, another device). Only CRM's record proves the completion, and only
+  // the very interval observed for that task is closed.
+  async function reconcileCompletedTask(id) {
+    const active = state.active;
+    if (active?.kind !== 'tasks' || active.id !== id || client.getState().pending || state.completion) return false;
+    let task;
+    try { task = await crm(`tasks/${Number(id)}`); } catch (error) { if (disposed) throw error; return false; }
+    if (!task.is_completed) return false;
+    const own = await client.loadState();
+    if (disposed) return false;
+    applyCurrent(own.current);
+    if (own.current?.id !== active.serverId) return false;
+    const result = typeof task.result?.text === 'string' && new TextEncoder().encode(task.result.text).length <= 2000 ? task.result.text : '';
+    await client.stopSession(active.serverId, result);
+    await sync();
+    return true;
   }
   async function loadTasks() {
     if (!Number.isSafeInteger(Number(context.userId)) || Number(context.userId) <= 0) throw new Error('Не определён сотрудник amoCRM');
@@ -169,6 +217,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
       if (!result._links?.next) break;
       page++;
     }
+    if (state.active?.kind === 'tasks' && !rows.some(row => String(row.id) === state.active.id)) await reconcileCompletedTask(state.active.id);
     const related = new Map();
     const leadId = locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1];
     queueLead = leadId || '';
@@ -252,6 +301,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
         if (!state.ready || !state.enabled) throw new Error('Панель отключена: задача не была завершена');
         try {
           await crm(`tasks/${intent.taskId}`, { method: 'PATCH', body: JSON.stringify({ is_completed: true, result: { text: intent.result } }) });
+          announce();
         } catch (error) {
           // A validation rejection definitively means CRM did not apply the PATCH.
           // Keep uncertain failures for reconciliation, but do not trap the user
@@ -331,7 +381,15 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     tick() {
       if (disposed) return;
       state.elapsedSeconds = state.active ? Math.max(0, (Date.now() - state.active.startedAt) / 1000) : 0;
+      updateTotal();
       scanDOM(); emit();
+      for (const [id, check] of completionChecks) {
+        if (state.active?.kind !== 'tasks' || state.active.id !== id || Date.now() > check.until) completionChecks.delete(id);
+        else if (!state.busy && state.ready && Date.now() >= check.next) {
+          check.next = Date.now() + 3000;
+          run(async () => { if (await reconcileCompletedTask(id)) { completionChecks.delete(id); await loadTasks(); } });
+        }
+      }
       // The controller outlives navigation: related deals follow the opened lead card.
       const lead = locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1] || '';
       if (serverSettings.include_related_deals && state.ready && lead !== queueLead) { queueLead = lead; lastSync = 0; lastTasks = 0; }
@@ -377,7 +435,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
       // Unenrolled employees only need to notice being enabled; poll them rarely.
       if (!state.busy && !documentImpl.hidden && Date.now()-lastSync > (hidden() ? 120000 : 15000)) run(async () => { await sync(); if (!client.getState().pending && !state.completion && Date.now()-lastTasks > 60000) await loadTasks(); });
     },
-    dispose() { disposed = true; abort.abort(); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); buttons.forEach(button => button.remove()); listeners.clear(); },
+    dispose() { disposed = true; abort.abort(); try { channel?.close(); } catch { /* Already closed. */ } documentImpl.removeEventListener?.('visibilitychange', onVisible); windowRef?.removeEventListener?.('focus', onVisible); documentImpl.removeEventListener?.('click', onNativeComplete, true); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); buttons.forEach(button => button.remove()); listeners.clear(); },
   };
   if (client) run(async () => { await sync(); await loadTasks(); });
   return controller;

@@ -331,6 +331,27 @@
   border-radius: 0 0 0 5px;
   color: #bacddd;
 }
+.rkrs-next-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rkrs-next-note .rkrs-button {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+.rkrs-running-label {
+  color: #43d17a;
+}
+.rkrs-completion-target {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 8px;
+}
+.rkrs-completion-target small {
+  color: #a0b2c3;
+}
 .rkrs-error + .rkrs-active-note {
   top: calc(100% + 36px);
 }

@@ -256,8 +256,8 @@ export function createActivityController({
       if (disposed) return false;
       if (!state.tasks.some((task) => task.id === id && !task.completed))
         return fail("Выберите незавершённую задачу.");
-      if (state.selectedTaskId !== id || state.scenario !== "tasks")
-        stopActive();
+      // Selection never touches the running task: switching is a separate start.
+      if (state.scenario !== "tasks") stopActive();
       state.selectedTaskId = id;
       state.scenario = "tasks";
       return commit();

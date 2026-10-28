@@ -291,3 +291,37 @@ test("a re-render right after destroy reuses the detached controller", async () 
     dom.window.close();
   }
 });
+
+test("a queue selection never retargets the running task: title, completion and switch stay explicit", async () => {
+  const { dom, window, app, context, widget, slot } = setup();
+  try {
+    app.mountPanel(context);
+    await settle();
+    const shadow = slot.querySelector('[data-rkrs-prototype-surface="panel"]').shadowRoot;
+    const title = () => shadow.querySelector(".rkrs-task-title").textContent.trim();
+    shadow.querySelector(".rkrs-start").click();
+    await settle();
+    const running = title();
+    shadow.querySelector(".rkrs-queue-trigger").click();
+    await settle();
+    const other = [...shadow.querySelectorAll(".rkrs-list-item")].find((item) => !item.querySelector(".rkrs-running-label"));
+    const otherTitle = other.querySelector("strong").textContent.trim();
+    other.click();
+    await settle();
+    assert.equal(title(), running, "the panel keeps showing the running task");
+    const note = shadow.querySelector(".rkrs-next-note");
+    assert.match(note.textContent, new RegExp(otherTitle));
+    shadow.querySelector(".rkrs-complete").click();
+    await settle();
+    assert.equal(shadow.querySelector(".rkrs-completion-target strong").textContent.trim(), running);
+    shadow.querySelector('[aria-label="Закрыть панель"]').click();
+    await settle();
+    note.querySelector("button").click();
+    await settle();
+    assert.equal(title(), otherTitle);
+    assert.equal(shadow.querySelector(".rkrs-next-note"), null);
+  } finally {
+    app.unmountAll(widget);
+    dom.window.close();
+  }
+});

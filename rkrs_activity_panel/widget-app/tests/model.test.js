@@ -83,15 +83,18 @@ test("switching creates one history record and only one running activity", () =>
   );
 });
 
-test("selecting another task stops the running task without starting a timer", () => {
+test("selecting another task keeps the running task until an explicit switch", () => {
   const f = fixture();
   const controller = f.create();
   controller.startTask();
+  const running = controller.getSnapshot().active.id;
   f.advance(6000);
   controller.selectTask("task-email");
-  assert.equal(controller.getSnapshot().active, null);
+  assert.equal(controller.getSnapshot().active.id, running);
   assert.equal(controller.getSnapshot().selectedTaskId, "task-email");
-  assert.equal(controller.getSnapshot().totalSeconds, 6);
+  controller.startTask("task-email");
+  assert.equal(controller.getSnapshot().active.id, "task-email");
+  assert.equal(controller.getSnapshot().history.at(-1).seconds, 6);
 });
 
 test("completing advances to next pending task without auto-start and persists completion", () => {

@@ -176,6 +176,8 @@ function surface(target, controller, settingsOnly = false) {
     "data-rkrs-prototype-surface",
     settingsOnly ? "settings" : "panel"
   );
+  // Shows which commit the installed bundle came from (see release.json).
+  host.setAttribute("data-rkrs-build", import.meta.env.VITE_RKRS_BUILD || "dev");
   host.style.cssText = settingsOnly
     ? "display:block;width:100%;"
     : "display:block;position:relative;z-index:200;width:100%;";
