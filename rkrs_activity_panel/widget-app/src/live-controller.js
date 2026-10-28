@@ -1,9 +1,8 @@
 import { createActivitySessionClient } from './session-client.js';
 
 // authorizedAjax caches tokens; Core requires a fresh disposable JWT for each call.
-export function createLiveActivityController({ context, apiOrigin, appOrigin, fetchImpl = fetch, documentImpl = document, locationImpl = location, storageImpl, broadcastImpl = globalThis.BroadcastChannel }) {
+export function createLiveActivityController({ context, apiOrigin, appOrigin, documentImpl = document, locationImpl = location, storageImpl, broadcastImpl = globalThis.BroadcastChannel }) {
   const listeners = new Set();
-  const abort = new AbortController();
   let storage = storageImpl;
   try { if (storage === undefined && Number(context.accountId) > 0 && Number(context.userId) > 0) storage = globalThis.sessionStorage; } catch { /* Browser storage can be disabled. */ }
   let widgetCode = context.widgetCode || 'rkrs_activity_panel';
@@ -22,8 +21,8 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     view = { ...view, ...patch };
     try { prefs?.setItem(viewKey, JSON.stringify(view)); } catch { /* Preferences stay in memory. */ }
   }
-  const state = { live: true, enabled: view.enabled === true, ready: false, completion: null, busy: false, scenario: 'tasks', tasks: [], dialogs: [], selectedTaskId: null, active: null, history: [], settings: { compact: view.compact === true }, error: '', elapsedSeconds: 0, totalSeconds: 0, completedCount: null };
-  let disposed = false, lastSync = 0, lastTasks = 0, serverSettings = {}, client, lastDialog = null, dialogTransition = null, taskTypes = null, queueLead = '', closedSeconds = 0, dayStart = 0;
+  const state = { live: true, enabled: view.enabled === true, ready: false, completion: null, busy: false, scenario: 'tasks', tasks: [], dialogs: [], selectedTaskId: null, active: null, history: [], settings: { compact: view.compact === true }, error: '', queue: { complete: true, stale: false, fetchedAt: 0, warning: false, note: '' }, elapsedSeconds: 0, totalSeconds: 0, completedCount: null };
+  let disposed = false, lastSync = 0, lastTasks = 0, tasksRetryAt = 0, serverSettings = {}, client, lastDialog = null, dialogTransition = null, queueLead = '', closedSeconds = 0, dayStart = 0;
   // Other tabs of the same employee only hear that something changed; each one
   // rereads the server, which stays the source of truth.
   let channel = null;
@@ -43,8 +42,8 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     if (!disposed && state.active?.kind === 'tasks' && state.active.id === id) completionChecks.set(id, { until: Date.now() + 180000, next: Date.now() + 2000 });
   };
   documentImpl.addEventListener?.('click', onNativeComplete, true);
-  const entityNames = new Map();
   const entityLabels = { leads: 'Сделка', contacts: 'Контакт', companies: 'Компания', customers: 'Покупатель' };
+  const errorMessages = { permission_denied: 'Нет доступа: задача другого сотрудника или панель отключена', not_found: 'Задача или карточка не найдена в amoCRM', resource_exhausted: 'amoCRM временно ограничила запросы, повторите позже', reauth_required: 'Интеграции нужна повторная авторизация в amoCRM' };
   // Local validation failures are not uncertain writes: the panel stays usable.
   const invalid = message => Object.assign(new Error(message), { keepReady: true });
   const buttons = new Set();
@@ -74,9 +73,11 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     const clientUUID = context.widget.get_settings?.().oauth_client_uuid;
     if (typeof ajax !== 'function' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientUUID || '')) return reject(new Error('Недоступна авторизация amoCRM: нет OAuth UUID интеграции'));
     const fail = xhr => {
-      const error = new Error(xhr?.responseJSON?.error?.message || 'Не удалось получить данные Activity');
+      const code = xhr?.responseJSON?.error?.code;
+      const error = new Error(errorMessages[code] || xhr?.responseJSON?.error?.message || 'Не удалось получить данные Activity');
       error.status = xhr?.status;
-      error.code = xhr?.responseJSON?.error?.code;
+      error.code = code;
+      error.retryAfter = Number(xhr?.getResponseHeader?.('Retry-After')) || 0;
       reject(error);
     };
     const tokenRequest = ajax({ url: `/ajax/v2/integrations/${encodeURIComponent(clientUUID)}/disposable_token`, method: 'GET', dataType: 'json', cache: false, timeout: 20000 });
@@ -94,15 +95,6 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
   });
   try { client = createActivitySessionClient({ baseURL: apiOrigin, authorizedRequest: sdkRequest, storage, storageKey: `rkrs-activity-command:${identity}`, onCommand: announce }); }
   catch { state.error = 'Не настроен адрес API Activity (VITE_ACTIVITY_API_ORIGIN)'; }
-  async function crm(path, options = {}) {
-    if (disposed) throw new Error('Виджет закрыт');
-    const response = await fetchImpl(`/api/v4/${path}`, { credentials: 'same-origin', signal: abort.signal, ...options, headers: { 'Content-Type': 'application/json' } });
-    if (disposed) throw new Error('Виджет закрыт');
-    if (!response.ok) { const error = new Error(`Ошибка amoCRM: ${response.status}`); error.status = response.status; throw error; }
-    const result = response.status === 204 ? {} : await response.json();
-    if (disposed) throw new Error('Виджет закрыт');
-    return result;
-  }
   function assertAvailable() {
     if (!state.ready) throw new Error('Обновите данные перед действием');
     if (!state.enabled) throw invalid('Панель задач отключена');
@@ -117,30 +109,19 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     if (new TextEncoder().encode(value).length > 2000) throw invalid(`${label}: максимум 2000 байт`);
     return value.trim();
   }
-  async function loadTaskTypes(id) {
-    if (!taskTypes || (id !== undefined && !taskTypes.has(id))) {
-      const account = await crm('account?with=task_types');
-      taskTypes = new Map((account._embedded?.task_types || []).map(row => [row.id, row.name]));
-    }
-    return taskTypes;
-  }
-  async function loadEntityNames(rows) {
-    for (const type of Object.keys(entityLabels)) {
-      const missing = [...new Set(rows.filter(row => row.entity_type === type && row.entity_id > 0 && !entityNames.has(`${type}:${row.entity_id}`)).map(row => row.entity_id))];
-      for (let i = 0; i < missing.length && !disposed; i += 50) {
-        const ids = missing.slice(i, i + 50);
-        // Names only decorate the queue: an unavailable entity API must not block tasks.
-        try {
-          const result = await crm(`${type}?limit=50&${ids.map(id => `filter[id][]=${id}`).join('&')}`);
-          for (const entity of result._embedded?.[type] || []) entityNames.set(`${type}:${entity.id}`, entity.name || '');
-        } catch (error) { if (disposed) throw error; }
-        for (const id of ids) if (!entityNames.has(`${type}:${id}`)) entityNames.set(`${type}:${id}`, '');
-      }
-    }
-  }
+  // The server names cards best effort; an unresolved name keeps the card label.
   function entityName(row) {
     if (!row.entity_id || !entityLabels[row.entity_type]) return '';
-    return entityNames.get(`${row.entity_type}:${row.entity_id}`) || `${entityLabels[row.entity_type]} #${row.entity_id}`;
+    return row.entity_name || `${entityLabels[row.entity_type]} #${row.entity_id}`;
+  }
+  // Completeness and freshness come from the shared server snapshot and are
+  // shown with the list, never as a blocking error.
+  function describeQueue(meta) {
+    const notes = [];
+    if (!meta.complete) notes.push('Показаны не все задачи');
+    if (meta.stale) notes.push(meta.errorCode === 'resource_exhausted' ? 'Данные могут быть устаревшими: amoCRM временно ограничила запросы' : 'Данные могут быть устаревшими');
+    if (meta.fetchedAt) { const at = parts(meta.fetchedAt); notes.push(`обновлено ${dayKey(at) === dayKey(parts(Date.now())) ? '' : `${at.day}.${at.month} `}${at.hour}:${at.minute}`); }
+    state.queue = { ...meta, warning: !meta.complete || meta.stale, note: notes.join(' · ') };
   }
   function dueLabel(timestamp) {
     const due = parts(timestamp), now = parts(Date.now());
@@ -196,50 +177,41 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     const active = state.active;
     if (active?.kind !== 'tasks' || active.id !== id || client.getState().pending || state.completion) return false;
     let task;
-    try { task = await crm(`tasks/${Number(id)}`); } catch (error) { if (disposed) throw error; return false; }
+    try { task = await client.loadTask(Number(id)); } catch (error) { if (disposed) throw error; return false; }
     if (!task.is_completed) return false;
     const own = await client.loadState();
     if (disposed) return false;
     applyCurrent(own.current);
     if (own.current?.id !== active.serverId) return false;
-    const result = typeof task.result?.text === 'string' && new TextEncoder().encode(task.result.text).length <= 2000 ? task.result.text : '';
+    const result = typeof task.result_text === 'string' && new TextEncoder().encode(task.result_text).length <= 2000 ? task.result_text : '';
     await client.stopSession(active.serverId, result);
     await sync();
     return true;
   }
   async function loadTasks() {
     if (!Number.isSafeInteger(Number(context.userId)) || Number(context.userId) <= 0) throw new Error('Не определён сотрудник amoCRM');
-    if (!state.enabled) { state.tasks = []; state.selectedTaskId = null; return; }
-    let page = 1, rows = [];
-    while (!disposed) {
-      const result = await crm(`tasks?limit=250&page=${page}&filter[responsible_user_id]=${Number(context.userId)}&filter[is_completed]=0`);
-      rows.push(...(result._embedded?.tasks || []));
-      if (!result._links?.next) break;
-      page++;
-    }
-    if (state.active?.kind === 'tasks' && !rows.some(row => String(row.id) === state.active.id)) await reconcileCompletedTask(state.active.id);
-    const related = new Map();
+    if (!state.enabled) { state.tasks = []; state.selectedTaskId = null; describeQueue({ complete: true, stale: false, errorCode: '', fetchedAt: 0 }); return; }
     const leadId = locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1];
     queueLead = leadId || '';
-    if (serverSettings.include_related_deals && leadId) {
-      // Related labels decorate the queue; a deleted contact must not block the tasks.
-      try {
-        const lead = await crm(`leads/${leadId}?with=contacts`);
-        for (const type of ['contacts', 'companies']) for (const ref of lead._embedded?.[type] || []) {
-          const entity = await crm(`${type}/${ref.id}?with=leads`);
-          const label = entity.name || `${entityLabels[type]} #${ref.id}`;
-          related.set(`${type}:${ref.id}`, label);
-          for (const linked of entity._embedded?.leads || []) if (String(linked.id) !== leadId) related.set(`leads:${linked.id}`, label);
-        }
-      } catch (error) { if (disposed) throw error; }
+    let queue;
+    // The server shares one snapshot per employee across tabs and labels tasks
+    // related to the open lead itself.
+    try { queue = await client.loadTasks(serverSettings.include_related_deals ? leadId : undefined); }
+    catch (error) {
+      // amoCRM is busy: keep the last queue and wait for the server's delay.
+      if ([429, 503].includes(error.status)) { tasksRetryAt = Date.now() + Math.max(error.retryAfter, 5) * 1000; if (lastTasks) { error.keepReady = true; describeQueue({ ...state.queue, stale: true, errorCode: error.code || '' }); } }
+      throw error;
     }
+    if (disposed) return;
+    tasksRetryAt = queue.retry_after_seconds > 0 ? Date.now() + queue.retry_after_seconds * 1000 : 0;
+    const rows = queue.tasks || [];
+    if (state.active?.kind === 'tasks' && !rows.some(row => String(row.id) === state.active.id)) await reconcileCompletedTask(state.active.id);
     const priorities = serverSettings.priority_keys || ['urgent','overdue','overdue_no_time','today_no_time','today_timed','future'];
     const priority = row => { const due = new Date(row.complete_till * 1000), now = new Date(), dueParts = parts(due.getTime()), today = dayKey(dueParts) === dayKey(parts(now.getTime())), allDay = dueParts.hour === '23' && dueParts.minute === '59', overdue = due < now; const key = !allDay && today && (overdue || due-now <= 600000) ? 'urgent' : !allDay && overdue && !today ? 'overdue' : allDay && overdue && !today ? 'overdue_no_time' : allDay && today ? 'today_no_time' : !allDay && today ? 'today_timed' : 'future'; const index = priorities.indexOf(key); return index < 0 ? 99 : index; };
-    const queue = rows.filter(row => row.responsible_user_id === Number(context.userId) && !row.is_completed).filter(row => serverSettings.consider_future_tasks || dayKey(parts(row.complete_till * 1000)) <= dayKey(parts(Date.now())));
-    const types = await loadTaskTypes();
-    await loadEntityNames(queue);
-    if (disposed) return;
-    state.tasks = queue.sort((a,b) => priority(a)-priority(b) || a.complete_till-b.complete_till).map(row => ({ id: String(row.id), title: row.text || `Задача ${row.id}`, entityName: entityName(row), related: related.get(`${row.entity_type}:${row.entity_id}`) || '', type: types.get(row.task_type_id) || '', dueLabel: dueLabel(row.complete_till * 1000), overdue: row.complete_till * 1000 < Date.now(), completed: false }));
+    const visible = rows.filter(row => serverSettings.consider_future_tasks || dayKey(parts(row.complete_till * 1000)) <= dayKey(parts(Date.now())));
+    state.tasks = visible.sort((a,b) => priority(a)-priority(b) || a.complete_till-b.complete_till).map(row => ({ id: String(row.id), title: row.text || `Задача ${row.id}`, entityName: entityName(row), related: row.related || '', type: row.task_type_name || '', dueLabel: dueLabel(row.complete_till * 1000), overdue: row.complete_till * 1000 < Date.now(), completed: false }));
+    // An older server omits the metadata: its queue is a complete live read.
+    describeQueue({ complete: queue.complete !== false, stale: queue.stale === true, errorCode: queue.error_code || '', fetchedAt: queue.fetched_at > 0 ? queue.fetched_at * 1000 : 0 });
     if (!state.tasks.some(row => row.id === state.selectedTaskId)) state.selectedTaskId = state.tasks[0]?.id || null;
     lastTasks = Date.now();
   }
@@ -249,20 +221,17 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     try { await action(); return !disposed; } catch (error) { if (!disposed) { state.error = state.completion?.phase === 'stop_pending' ? `Задача завершена в amoCRM; остановка учёта времени не подтверждена. Нажмите обновление для восстановления. ${error.message}` : state.completion ? `Завершение задачи не подтверждено. Обновление проверит amoCRM и восстановит учёт времени. ${error.message}` : error.message; if (!error.keepReady) state.ready = false; } return false; } finally { if (!disposed) { state.busy = false; emit(); } }
   }
   async function taskContext(id) {
-    const task = await crm(`tasks/${Number(id)}`);
+    const task = await client.loadTask(Number(id), { context: true });
     assertOwnedTask(task, id);
     if (task.is_completed) throw new Error('Задача уже завершена. Обновите очередь.');
     const value = { client_id: clientId, task_id: task.id, task_name: task.text || '', task_type_id: task.task_type_id, entity_id: task.entity_id, entity_type: task.entity_type };
-    if (['leads','contacts','companies','customers'].includes(task.entity_type) && task.entity_id) {
-      const entity = await crm(`${task.entity_type}/${task.entity_id}`);
+    const entity = task.entity;
+    // The card summary is best effort on the server; without it only IDs are recorded.
+    if (['leads','contacts','companies','customers'].includes(task.entity_type) && task.entity_id && entity?.id === task.entity_id) {
       Object.assign(value, { entity_name: entity.name, pipeline_id: entity.pipeline_id || 0, status_id: entity.status_id || 0 });
-      if (entity.pipeline_id) {
-        const pipeline = await crm(`leads/pipelines/${entity.pipeline_id}`);
-        const status = pipeline._embedded?.statuses?.find(row => row.id === entity.status_id);
-        Object.assign(value, { pipeline_name: pipeline.name, status_name: status?.name || '', status_color: status?.color || '' });
-      }
+      if (entity.pipeline_id) Object.assign(value, { pipeline_name: entity.pipeline_name || '', status_name: entity.status_name || '', status_color: entity.status_color || '' });
     }
-    value.task_type_name = (await loadTaskTypes(task.task_type_id)).get(task.task_type_id) || '';
+    value.task_type_name = task.task_type_name || '';
     return value;
   }
   function scanDOM() {
@@ -281,13 +250,13 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
     });
   }
   async function startImboxSession(id) {
-    if (!state.dialogs.some(row => row.id === String(id))) throw invalid('Откройте диалог Imbox'); const details = { client_id: clientId }; const entityId = dialogEntities.get(String(id)); if (entityId) { const entity = await crm(`leads/${entityId}`); Object.assign(details, { entity_type: 'leads', entity_id: entityId, entity_name: entity.name, pipeline_id: entity.pipeline_id || 0, status_id: entity.status_id || 0 }); } await client.startImbox(id, details);
+    if (!state.dialogs.some(row => row.id === String(id))) throw invalid('Откройте диалог Imbox'); const details = { client_id: clientId }; const entityId = dialogEntities.get(String(id)); if (entityId) { const entity = await client.loadLead(entityId); Object.assign(details, { entity_type: 'leads', entity_id: entityId }, entity.restricted ? {} : { entity_name: entity.name, pipeline_id: entity.pipeline_id || 0, status_id: entity.status_id || 0 }); } await client.startImbox(id, details);
   }
   async function resumeCompletion() {
     const intent = state.completion;
     if (!intent) return;
     if (intent.phase === 'crm_pending') {
-      const task = await crm(`tasks/${intent.taskId}`);
+      const task = await client.loadTask(intent.taskId);
       assertOwnedTask(task, intent.taskId);
       if (!task.is_completed) {
         if (!intent.result.trim()) {
@@ -300,13 +269,13 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
         applyCurrent(own.current);
         if (!state.ready || !state.enabled) throw new Error('Панель отключена: задача не была завершена');
         try {
-          await crm(`tasks/${intent.taskId}`, { method: 'PATCH', body: JSON.stringify({ is_completed: true, result: { text: intent.result } }) });
+          await client.completeTask(intent.taskId, intent.result);
           announce();
         } catch (error) {
-          // A validation rejection definitively means CRM did not apply the PATCH.
-          // Keep uncertain failures for reconciliation, but do not trap the user
-          // in a retry loop for a request CRM has explicitly rejected.
-          if ([400, 422].includes(error.status)) {
+          // A rejection (validation, access, missing task) definitively means the
+          // server did not complete the task. Keep uncertain failures for
+          // reconciliation, but do not trap the user in a retry loop.
+          if ([400, 403, 404, 422].includes(error.status)) {
             rememberCompletion(null);
             throw new Error(`amoCRM отклонила завершение задачи (${error.status}). Проверьте задачу и результат, затем повторите действие.`);
           }
@@ -354,7 +323,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
       assertAvailable();
       result = validateText(result, 'Результат задачи');
       if (!result) throw invalid('Для завершения задачи укажите результат.');
-      const task = await crm(`tasks/${Number(id)}`);
+      const task = await client.loadTask(Number(id));
       assertOwnedTask(task, id);
       const own = await client.loadState();
       if (disposed) return;
@@ -365,7 +334,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
       if (task.is_completed && !sessionId) throw new Error('Задача уже завершена');
       // Persist intent before the first CRM mutation. Reload/retry first reads
       // the task, so a lost PATCH response does not blindly repeat completion.
-      rememberCompletion({ taskId: Number(id), result: task.is_completed ? task.result?.text || result : result, sessionId, phase: 'crm_pending' });
+      rememberCompletion({ taskId: Number(id), result: task.is_completed ? task.result_text || result : result, sessionId, phase: 'crm_pending' });
       await resumeCompletion();
       await sync();
       await loadTasks();
@@ -386,7 +355,8 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
       for (const [id, check] of completionChecks) {
         if (state.active?.kind !== 'tasks' || state.active.id !== id || Date.now() > check.until) completionChecks.delete(id);
         else if (!state.busy && state.ready && Date.now() >= check.next) {
-          check.next = Date.now() + 3000;
+          // Each check is a live amoCRM read inside the shared budget.
+          check.next = Date.now() + 5000;
           run(async () => { if (await reconcileCompletedTask(id)) { completionChecks.delete(id); await loadTasks(); } });
         }
       }
@@ -433,9 +403,9 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, fe
         }
       }
       // Unenrolled employees only need to notice being enabled; poll them rarely.
-      if (!state.busy && !documentImpl.hidden && Date.now()-lastSync > (hidden() ? 120000 : 15000)) run(async () => { await sync(); if (!client.getState().pending && !state.completion && Date.now()-lastTasks > 60000) await loadTasks(); });
+      if (!state.busy && !documentImpl.hidden && Date.now()-lastSync > (hidden() ? 120000 : 15000)) run(async () => { await sync(); if (!client.getState().pending && !state.completion && Date.now()-lastTasks > 60000 && Date.now() >= tasksRetryAt) await loadTasks(); });
     },
-    dispose() { disposed = true; abort.abort(); try { channel?.close(); } catch { /* Already closed. */ } documentImpl.removeEventListener?.('visibilitychange', onVisible); windowRef?.removeEventListener?.('focus', onVisible); documentImpl.removeEventListener?.('click', onNativeComplete, true); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); buttons.forEach(button => button.remove()); listeners.clear(); },
+    dispose() { disposed = true; try { channel?.close(); } catch { /* Already closed. */ } documentImpl.removeEventListener?.('visibilitychange', onVisible); windowRef?.removeEventListener?.('focus', onVisible); documentImpl.removeEventListener?.('click', onNativeComplete, true); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); buttons.forEach(button => button.remove()); listeners.clear(); },
   };
   if (client) run(async () => { await sync(); await loadTasks(); });
   return controller;

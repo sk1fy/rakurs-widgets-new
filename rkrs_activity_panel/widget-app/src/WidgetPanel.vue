@@ -474,6 +474,7 @@ onBeforeUnmount(() => {
             {{ pending.length }} в очереди<template v-if="state.completedCount != null">
             · {{ state.completedCount }} завершено</template>
           </p>
+          <p v-if="state.queue?.note" class="rkrs-queue-note" :class="{ 'rkrs-queue-warning': state.queue.warning }" role="status">{{ state.queue.note }}</p>
           <div class="rkrs-scroll-list">
             <button
               v-for="task in state.tasks"
