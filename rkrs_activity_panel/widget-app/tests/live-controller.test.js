@@ -17,6 +17,8 @@ async function serverTasks(fetchImpl, request, userId, queueMeta = () => ({})) {
   };
   const types = async () => { try { return Object.fromEntries(((await crm('account?with=task_types'))._embedded?.task_types || []).map(row => [row.id, row.name])); } catch { return {}; } };
   const detail = (task, names = {}) => ({ id: task.id, responsible_user_id: task.responsible_user_id, text: task.text || '', task_type_id: task.task_type_id, task_type_name: names[task.task_type_id] || '', entity_type: task.entity_type, entity_id: task.entity_id, complete_till: task.complete_till, is_completed: !!task.is_completed, result_text: task.result?.text || '' });
+  // ActivityQueueTask has no owner or completion fields: only the detail read does.
+  const queueRow = (task, names) => { const { responsible_user_id: _owner, is_completed: _completed, result_text: _result, ...row } = detail(task, names); return row; };
   const own = async id => { const task = await crm(`tasks/${id}`); if (task.responsible_user_id !== userId) fail(403); return task; };
   let match;
   if (path === 'tasks') {
@@ -27,7 +29,7 @@ async function serverTasks(fetchImpl, request, userId, queueMeta = () => ({})) {
       if (ids.length) try { for (const entity of (await crm(`${type}?limit=50&${ids.map(id => `filter[id][]=${id}`).join('&')}`))._embedded?.[type] || []) names[`${type}:${entity.id}`] = entity.name; } catch { /* Names are best effort. */ }
     }
     const typeNames = await types();
-    return { tasks: rows.map(row => ({ ...detail(row, typeNames), entity_name: names[`${row.entity_type}:${row.entity_id}`] || '', related: '' })), fetched_at: 1, fresh_until: 31, complete: true, stale: false, ...queueMeta() };
+    return { tasks: rows.map(row => ({ ...queueRow(row, typeNames), entity_name: names[`${row.entity_type}:${row.entity_id}`] || '', related: '' })), fetched_at: 1, fresh_until: 31, complete: true, stale: false, ...queueMeta() };
   }
   if ((match = path.match(/^tasks\/(\d+)$/))) {
     const task = await own(match[1]);
@@ -655,15 +657,14 @@ function cardsDom(ids) {
   return { dom, doc: dom.window.document, card: id => dom.window.document.querySelector(`[data-id="${id}"]`) };
 }
 
-test('only the employee\'s own open tasks get a card action', async () => {
-  const { dom, doc, card } = cardsDom([19, 20, 30, 31]);
-  // 30 is another employee's task, 31 is completed or a note: neither is in the own queue.
-  const fixture = employeeFixture({ rows: [{ id: 19, responsible_user_id: 7, text: 'Real task', task_type_id: 1, complete_till: 200 }, { id: 20, responsible_user_id: 7, text: 'Next', task_type_id: 1, complete_till: 300 }, { id: 30, responsible_user_id: 8, text: 'Foreign', task_type_id: 1, complete_till: 300 }] });
+test('only tasks from the server queue get a card action', async () => {
+  const { dom, doc, card } = cardsDom([19, 20, 31]);
+  // 31 is a completed task, another employee's task or a note: the server's own queue omits it.
+  const fixture = employeeFixture({ rows: [{ id: 19, responsible_user_id: 7, text: 'Real task', task_type_id: 1, complete_till: 200 }, { id: 20, responsible_user_id: 7, text: 'Next', task_type_id: 1, complete_till: 300 }] });
   const controller = fixture.create({ documentImpl: doc }); await idle(controller);
   controller.tick();
   assert.ok(card(19).querySelector('.rkrs-card-btn'));
   assert.ok(card(20).querySelector('.rkrs-card-btn'));
-  assert.equal(card(30).querySelector('.rkrs-card-btn'), null);
   assert.equal(card(31).querySelector('.rkrs-card-btn'), null);
   assert.equal(card(31).querySelector('.rkrs-task-card-content'), null);
   controller.dispose(); dom.window.close();

@@ -227,7 +227,8 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     if (disposed) return;
     tasksRetryAt = queue.retry_after_seconds > 0 ? Date.now() + queue.retry_after_seconds * 1000 : 0;
     const rows = queue.tasks || [];
-    ownTaskIds = new Set(rows.filter(row => row.responsible_user_id === Number(context.userId)).map(row => String(row.id)));
+    // The server returns only this employee's unfinished tasks; a queue row carries no owner field.
+    ownTaskIds = new Set(rows.map(row => String(row.id)));
     if (state.active?.kind === 'tasks' && !rows.some(row => String(row.id) === state.active.id)) await reconcileCompletedTask(state.active.id);
     const priorities = serverSettings.priority_keys || ['urgent','overdue','overdue_no_time','today_no_time','today_timed','future'];
     const priority = row => { const due = new Date(row.complete_till * 1000), now = new Date(), dueParts = parts(due.getTime()), today = dayKey(dueParts) === dayKey(parts(now.getTime())), allDay = dueParts.hour === '23' && dueParts.minute === '59', overdue = due < now; const key = !allDay && today && (overdue || due-now <= 600000) ? 'urgent' : !allDay && overdue && !today ? 'overdue' : allDay && overdue && !today ? 'overdue_no_time' : allDay && today ? 'today_no_time' : !allDay && today ? 'today_timed' : 'future'; const index = priorities.indexOf(key); return index < 0 ? 99 : index; };
