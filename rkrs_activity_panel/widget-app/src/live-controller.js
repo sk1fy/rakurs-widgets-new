@@ -264,15 +264,16 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     documentImpl.querySelectorAll('.feed-note-wrapper-task[data-id]').forEach(renderCardAction);
   }
   function clearCardAction(node) {
-    node.querySelector('[data-rkrs-card-action]')?.remove();
-    node.querySelector('.rkrs-task-card-content')?.classList.remove('rkrs-task-card-content');
-    node.querySelector('.rkrs-active-task-card')?.classList.remove('rkrs-active-task-card');
+    node.querySelector('[data-rkrs-ap-card-action]')?.remove();
+    node.querySelector('.rkrs-ap-task-card-content')?.classList.remove('rkrs-ap-task-card-content');
+    node.querySelector('.rkrs-ap-active-task-card')?.classList.remove('rkrs-ap-active-task-card');
   }
   function cardMode(id) {
     if (state.active?.kind === 'tasks' && state.active.id === id) return 'stop';
     if (state.active?.kind === 'imbox') return 'blocked';
     return state.active && state.active.kind !== 'pause' ? 'switch' : 'start';
   }
+  // rkrs-ap DOM hooks are separate from rkrs_activity's legacy card cleanup.
   // Runs every second on amoCRM's own DOM: an unchanged card must not be written
   // to at all, and a button pressed right now must survive until the click lands.
   function renderCardAction(node) {
@@ -281,18 +282,18 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     // Feed blocks also cover completed and other employees' tasks: only the server's queue knows which are ours.
     const target = node.querySelector('.card-task__inner-content') || node.querySelector('.card-task__inner-header') || node.querySelector('.card-task');
     if (!state.enabled || !target || !(mode === 'stop' || ownTaskIds.has(id))) { clearCardAction(node); return; }
-    node.querySelector('.card-task')?.classList.toggle('rkrs-active-task-card', mode === 'stop');
-    let slot = node.querySelector('[data-rkrs-card-action]');
+    node.querySelector('.card-task')?.classList.toggle('rkrs-ap-active-task-card', mode === 'stop');
+    let slot = node.querySelector('[data-rkrs-ap-card-action]');
     if (slot && slot.parentNode !== target) { slot.remove(); slot = null; }
     if (!slot) {
-      target.classList.add('rkrs-task-card-content');
-      slot = documentImpl.createElement('div'); slot.className = 'rkrs-card-action'; slot.dataset.rkrsCardAction = '';
-      const created = documentImpl.createElement('button'); created.type = 'button'; created.className = 'rkrs-card-btn';
+      target.classList.add('rkrs-ap-task-card-content');
+      slot = documentImpl.createElement('div'); slot.className = 'rkrs-ap-card-action'; slot.dataset.rkrsApCardAction = '';
+      const created = documentImpl.createElement('button'); created.type = 'button'; created.className = 'rkrs-ap-card-btn';
       slot.append(created); target.append(slot);
     }
     const button = slot.firstChild;
-    if (slot.dataset.rkrsCardAction !== mode) {
-      slot.dataset.rkrsCardAction = mode;
+    if (slot.dataset.rkrsApCardAction !== mode) {
+      slot.dataset.rkrsApCardAction = mode;
       button.innerHTML = cardActions[mode].icon; button.append(cardActions[mode].label);
       button.title = mode === 'blocked' ? 'Сначала завершите Imbox-активность' : '';
     }
@@ -302,12 +303,12 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   // Delegated, as amoCRM may stop a click before it reaches a node inside its card.
   const onCardClick = event => {
     const target = event.target?.nodeType === 3 ? event.target.parentNode : event.target;
-    const button = target?.closest?.('.rkrs-card-action .rkrs-card-btn');
+    const button = target?.closest?.('.rkrs-ap-card-action .rkrs-ap-card-btn');
     if (!button || disposed) return;
     event.preventDefault(); event.stopPropagation();
     if (button.disabled) return;
     const id = button.closest('.feed-note-wrapper-task[data-id]')?.dataset?.id;
-    if (id) { if (button.parentNode.dataset.rkrsCardAction === 'stop') controller.stop(); else controller.startTask(id); }
+    if (id) { if (button.parentNode.dataset.rkrsApCardAction === 'stop') controller.stop(); else controller.startTask(id); }
   };
   documentImpl.addEventListener?.('click', onCardClick, true);
   async function startImboxSession(id) {

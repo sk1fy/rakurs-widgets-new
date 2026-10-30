@@ -563,7 +563,7 @@ test('amoCRM completion button is only intent: the interval stops after CRM conf
   const controller = fixture.create({ documentImpl }); await settled(controller);
   const card = { dataset: { id: '19' } };
   // A native amoCRM button matches the completion selector, not the panel's own card action.
-  const event = { target: { closest: selector => (selector.includes('rkrs-card-btn') ? null : { closest: () => card }) } };
+  const event = { target: { closest: selector => (selector.includes('rkrs-ap-card-btn') ? null : { closest: () => card }) } };
   clicks.forEach(fn => fn(event));
   t.mock.timers.tick(2000); controller.tick(); await settled(controller);
   assert.equal(fixture.writes.length, 0, 'task still open in CRM: the click alone stops nothing');
@@ -633,22 +633,22 @@ test('task cards get the action matching the running task and lose it on dispose
   const dom = new JSDOM('<!doctype html><body>' + [19, 20].map(id => `<div class="feed-note-wrapper-task" data-id="${id}"><div class="card-task"><div class="card-task__inner-content"><p>Task</p></div></div></div>`).join('') + '</body>');
   const doc = dom.window.document;
   const card = id => doc.querySelector(`[data-id="${id}"]`);
-  const label = id => card(id).querySelector('.card-task__inner-content .rkrs-card-btn')?.textContent;
+  const label = id => card(id).querySelector('.card-task__inner-content .rkrs-ap-card-btn')?.textContent;
   const fixture = employeeFixture({ rows: [{ id: 19, responsible_user_id: 7, text: 'Real task', task_type_id: 1, complete_till: 200 }, { id: 20, responsible_user_id: 7, text: 'Next', task_type_id: 1, complete_till: 300 }] });
   const controller = fixture.create({ documentImpl: doc }); await idle(controller);
   controller.tick();
   assert.equal(label(19), 'Остановить задачу');
   assert.equal(label(20), 'Переключиться на задачу');
-  assert.ok(card(19).querySelector('.card-task').classList.contains('rkrs-active-task-card'));
-  assert.equal(card(20).querySelector('.card-task').classList.contains('rkrs-active-task-card'), false);
-  card(19).querySelector('.rkrs-card-btn').click();
+  assert.ok(card(19).querySelector('.card-task').classList.contains('rkrs-ap-active-task-card'));
+  assert.equal(card(20).querySelector('.card-task').classList.contains('rkrs-ap-active-task-card'), false);
+  card(19).querySelector('.rkrs-ap-card-btn').click();
   await idle(controller);
   assert.equal(controller.getSnapshot().active, null);
   assert.equal(label(19), 'Взять в работу', 'the card follows a stop without waiting for the clock');
-  assert.equal(card(19).querySelector('.card-task').classList.contains('rkrs-active-task-card'), false);
+  assert.equal(card(19).querySelector('.card-task').classList.contains('rkrs-ap-active-task-card'), false);
   controller.dispose();
-  assert.equal(doc.querySelector('.rkrs-card-action'), null);
-  assert.equal(doc.querySelector('.rkrs-task-card-content'), null);
+  assert.equal(doc.querySelector('.rkrs-ap-card-action'), null);
+  assert.equal(doc.querySelector('.rkrs-ap-task-card-content'), null);
   dom.window.close();
 });
 
@@ -663,10 +663,10 @@ test('only tasks from the server queue get a card action', async () => {
   const fixture = employeeFixture({ rows: [{ id: 19, responsible_user_id: 7, text: 'Real task', task_type_id: 1, complete_till: 200 }, { id: 20, responsible_user_id: 7, text: 'Next', task_type_id: 1, complete_till: 300 }] });
   const controller = fixture.create({ documentImpl: doc }); await idle(controller);
   controller.tick();
-  assert.ok(card(19).querySelector('.rkrs-card-btn'));
-  assert.ok(card(20).querySelector('.rkrs-card-btn'));
-  assert.equal(card(31).querySelector('.rkrs-card-btn'), null);
-  assert.equal(card(31).querySelector('.rkrs-task-card-content'), null);
+  assert.ok(card(19).querySelector('.rkrs-ap-card-btn'));
+  assert.ok(card(20).querySelector('.rkrs-ap-card-btn'));
+  assert.equal(card(31).querySelector('.rkrs-ap-card-btn'), null);
+  assert.equal(card(31).querySelector('.rkrs-ap-task-card-content'), null);
   controller.dispose(); dom.window.close();
 });
 
@@ -675,7 +675,7 @@ test('an unchanged card is never written to and a click goes through a re-render
   const fixture = employeeFixture({ rows: [{ id: 19, responsible_user_id: 7, text: 'Real task', task_type_id: 1, complete_till: 200 }, { id: 20, responsible_user_id: 7, text: 'Next', task_type_id: 1, complete_till: 300 }] });
   const controller = fixture.create({ documentImpl: doc }); await idle(controller);
   controller.tick();
-  const button = card(20).querySelector('.rkrs-card-btn');
+  const button = card(20).querySelector('.rkrs-ap-card-btn');
   const records = [];
   const observer = new dom.window.MutationObserver(list => records.push(...list));
   observer.observe(doc.body, { subtree: true, childList: true, attributes: true, characterData: true });
@@ -683,12 +683,12 @@ test('an unchanged card is never written to and a click goes through a re-render
   await new Promise(resolve => setTimeout(resolve));
   assert.equal(records.length, 0, 'an idle clock must not touch amoCRM\'s DOM');
   observer.disconnect();
-  assert.equal(card(20).querySelector('.rkrs-card-btn'), button);
-  card(19).querySelector('.rkrs-card-btn').click();
+  assert.equal(card(20).querySelector('.rkrs-ap-card-btn'), button);
+  card(19).querySelector('.rkrs-ap-card-btn').click();
   await idle(controller);
   assert.equal(controller.getSnapshot().active, null);
   assert.equal(button.textContent, 'Взять в работу', 'the same button follows the new state');
-  assert.equal(card(20).querySelector('.rkrs-card-btn'), button);
+  assert.equal(card(20).querySelector('.rkrs-ap-card-btn'), button);
   controller.dispose(); dom.window.close();
 });
 
@@ -697,11 +697,39 @@ test('a failed start keeps the card actions in place instead of removing them', 
   const fixture = employeeFixture({ rows: [{ id: 19, responsible_user_id: 7, text: 'Real task', task_type_id: 1, complete_till: 200 }, { id: 20, responsible_user_id: 7, text: 'Next', task_type_id: 1, complete_till: 300 }] });
   const controller = fixture.create({ documentImpl: doc }); await idle(controller);
   controller.tick();
-  const button = card(20).querySelector('.rkrs-card-btn');
+  const button = card(20).querySelector('.rkrs-ap-card-btn');
   // Task 20 has no CRM record in this fixture, so starting it fails.
   button.click();
   await idle(controller);
   assert.ok(controller.getSnapshot().error);
-  assert.equal(card(20).querySelector('.rkrs-card-btn'), button);
+  assert.equal(card(20).querySelector('.rkrs-ap-card-btn'), button);
   controller.dispose(); dom.window.close();
+});
+
+test('legacy widget cleanup cannot remove the new card action or active highlight', async () => {
+  const { dom, doc, card } = cardsDom([19]);
+  const controller = employeeFixture().create({ documentImpl: doc });
+  await idle(controller);
+  const button = card(19).querySelector('button');
+  assert.ok(button);
+  const task = card(19).querySelector('.card-task');
+  for (let i = 0; i < 5; i++) {
+    // rkrs_activity/41 runs this cleanup even when its task panel is disabled.
+    card(19).querySelector('.rkrs-card-action')?.remove();
+    task.classList.remove('rkrs-active-task-card');
+    assert.equal(card(19).querySelector('button'), button);
+    assert.ok(task.classList.contains('rkrs-ap-active-task-card'));
+    controller.tick();
+    assert.equal(card(19).querySelector('button'), button);
+  }
+  const legacySlot = doc.createElement('div');
+  legacySlot.className = 'rkrs-card-action';
+  task.append(legacySlot);
+  button.click();
+  await idle(controller);
+  assert.equal(controller.getSnapshot().active, null);
+  assert.equal(button.textContent, 'Взять в работу');
+  controller.dispose();
+  assert.equal(legacySlot.isConnected, true, 'disposing the new widget preserves legacy elements');
+  dom.window.close();
 });
