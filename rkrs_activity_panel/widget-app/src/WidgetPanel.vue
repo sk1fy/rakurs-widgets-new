@@ -7,6 +7,7 @@ import {
   ref,
   shallowRef,
 } from "vue";
+import TaskQueueRow from "./TaskQueueRow.vue";
 import WidgetIcon from "./WidgetIcon.vue";
 import WidgetSettings from "./WidgetSettings.vue";
 
@@ -18,6 +19,7 @@ const state = shallowRef(props.controller.getSnapshot());
 const panel = ref(null);
 const popover = ref(null);
 const open = ref(null);
+const queueTab = ref("timed");
 const completionTask = ref(null);
 const taskResult = ref("");
 const resultTooLong = computed(() => new TextEncoder().encode(taskResult.value).length > 2000);
@@ -29,9 +31,6 @@ const selectedDialog = ref(
     ? state.value.active.id
     : state.value.dialogs[0]?.id ?? null
 );
-const selectedTask = computed(() =>
-  state.value.tasks.find((task) => task.id === state.value.selectedTaskId)
-);
 const dialog = computed(() =>
   state.value.dialogs.find((item) => item.id === selectedDialog.value)
 );
@@ -40,55 +39,94 @@ const pending = computed(() =>
 );
 const scenarioNames = {
   tasks: "Мои задачи",
-  other: "Другая активность",
+  other: "Другое",
   imbox: "Imbox",
 };
 const taskTypes = { call: "Звонок", meeting: "Встреча", email: "Письмо" };
+const allDay = "Весь день";
+const queueLimit = 5;
 const recentHistory = computed(() => [...state.value.history].reverse());
 const scenarioIcons = { tasks: "tasks", other: "activity", imbox: "message" };
 const historyNames = { ...scenarioNames, pause: "Пауза" };
 const historyIcons = { ...scenarioIcons, pause: "clock" };
 // A pause is an open interval, but any start replaces it on the server.
 const paused = computed(() => state.value.active?.kind === "pause");
+const running = computed(() => Boolean(state.value.active) && !paused.value);
+// amoCRM starts Imbox by itself when a dialog opens, whatever the scenario is.
+const view = computed(() =>
+  state.value.active?.kind === "imbox" ? "imbox" : state.value.scenario
+);
+const imboxRunning = computed(() => state.value.active?.kind === "imbox");
 const activeTask = computed(
   () =>
     state.value.active?.kind === "tasks" || state.value.active?.kind === "task"
 );
-// The running task owns the panel: the timer, its title and «Завершить» all
-// refer to it. A different queue selection waits for an explicit switch.
+// The running task owns the panel: its title, «Стоп» and «Завершить» all refer to it.
 const activeTaskView = computed(() => {
   if (!activeTask.value) return null;
-  const { id, title, entityName } = state.value.active;
-  return state.value.tasks.find((task) => task.id === id) || { id, title, entityName };
+  const { id, title, entityName, url } = state.value.active;
+  return state.value.tasks.find((task) => task.id === id) || { id, title, entityName, url };
 });
-const focusTask = computed(() => activeTaskView.value || selectedTask.value);
-const nextTask = computed(() =>
-  activeTaskView.value && selectedTask.value && !selectedTask.value.completed &&
-  selectedTask.value.id !== activeTaskView.value.id ? selectedTask.value : null
+const queue = computed(() =>
+  pending.value.filter((task) => task.id !== activeTaskView.value?.id)
 );
+const timedTasks = computed(() => queue.value.filter((task) => task.dueTime !== allDay));
+const upcoming = computed(
+  () => queue.value.find((task) => task.id === state.value.selectedTaskId) || queue.value[0] || null
+);
+const focusTask = computed(() => activeTaskView.value || upcoming.value);
+const queueList = computed(() => (queueTab.value === "timed" ? timedTasks.value : queue.value));
+const relatedTasks = computed(() => pending.value.filter((task) => task.related));
+const relatedGroups = computed(() => {
+  const groups = new Map();
+  for (const task of relatedTasks.value)
+    groups.set(task.related, [...(groups.get(task.related) || []), task]);
+  return [...groups];
+});
 const completionTarget = computed(() =>
-  activeTask.value ? activeTaskView.value
-    : (!state.value.active || paused.value) && selectedTask.value && !selectedTask.value.completed ? selectedTask.value
-    : null
+  activeTask.value ? activeTaskView.value : !running.value ? upcoming.value : null
 );
+const available = computed(() => state.value.enabled !== false && state.value.ready !== false);
 const canMutate = computed(() =>
-  !state.value.busy && state.value.enabled !== false && state.value.ready !== false &&
-  !state.value.pending && !state.value.completion
+  !state.value.busy && available.value && !state.value.pending && !state.value.completion
 );
+const canStop = computed(() => running.value && !state.value.busy && !state.value.pending);
 const canComplete = computed(() => canMutate.value && Boolean(completionTarget.value));
-const canStart = computed(
+// Polling makes the panel busy for a moment: a button only looks switched off
+// when it has nothing to do, otherwise it would blink on every refresh.
+const startReady = computed(
   () =>
-    canMutate.value && (!state.value.active || paused.value) &&
-    (state.value.scenario === "tasks"
-      ? selectedTask.value && !selectedTask.value.completed
-      : state.value.scenario === "other"
-      ? otherName.value.trim().length >= 3
-      : Boolean(dialog.value))
+    available.value && !running.value &&
+    (view.value === "other" ? otherName.value.trim().length >= 3 : Boolean(dialog.value))
 );
-const contextTitle = computed(() =>
-  state.value.scenario === "tasks"
-    ? focusTask.value?.title || (state.value.live && !state.value.ready ? "Задачи недоступны" : "Очередь пуста")
-    : dialog.value?.name || "Выберите диалог"
+const canStart = computed(() => canMutate.value && startReady.value);
+// Outside the task scenario the action only leaves a running activity for the queue.
+const smartReady = computed(() =>
+  activeTask.value ? Boolean(activeTaskView.value.url)
+    : available.value && Boolean(upcoming.value) && (view.value === "tasks" || running.value)
+);
+const canSmart = computed(() => smartReady.value && (activeTask.value || canMutate.value));
+const smartTitle = computed(() =>
+  activeTask.value ? "Перейти к активной задаче"
+    : !upcoming.value ? "Нет задач для выполнения"
+    : view.value !== "tasks" && !running.value ? "Задачи запускаются в сценарии «Мои задачи»"
+    : running.value ? "Завершить активность и начать следующую задачу"
+    : "Начать следующую задачу"
+);
+const statusText = computed(() =>
+  activeTask.value ? "В работе"
+    : paused.value ? `Пауза · ${duration(state.value.elapsedSeconds)}`
+    : running.value ? "Идёт учёт"
+    : "Следующая задача"
+);
+const emptyText = computed(() =>
+  state.value.live && !state.value.ready ? "Загрузка..." : "Нет задач в очереди"
+);
+const imboxTitle = computed(() =>
+  dialog.value?.name || (imboxRunning.value ? state.value.active.title : "Выберите диалог")
+);
+const timerCaption = computed(() =>
+  paused.value ? "время на паузе" : view.value === "imbox" ? "время в imbox" : "время в задаче"
 );
 let unsubscribe;
 let eventRoot;
@@ -107,12 +145,25 @@ function finishedTime(value) {
     ? ""
     : date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 }
-async function toggle(name, event) {
-  if (open.value === name) return close();
-  lastTrigger = event?.currentTarget;
+function typeName(task) {
+  return taskTypes[task?.type] || task?.type || "";
+}
+function taskTitle(task) {
+  return task.entityName ? `${task.title} — ${task.entityName}` : task.title;
+}
+async function show(name) {
   open.value = name;
   await nextTick();
   popover.value?.querySelector("button, input")?.focus();
+}
+async function toggle(name, event) {
+  if (open.value === name) return close();
+  lastTrigger = event?.currentTarget;
+  await show(name);
+}
+function toggleQueue(event) {
+  if (open.value !== "queue" && !timedTasks.value.length) queueTab.value = "queue";
+  return toggle("queue", event);
 }
 function close(restore = true) {
   open.value = null;
@@ -135,9 +186,11 @@ function selectScenario(kind) {
   props.controller.selectScenario(kind);
   close();
 }
-function selectTask(id) {
-  props.controller.selectTask(id);
-  close();
+// A task row opens its card when the card is known; the play button starts it.
+function openTask(task) {
+  close(false);
+  if (task.url) window.location.href = task.url;
+  else props.controller.selectTask(task.id);
 }
 // The selection changes only after the server confirmed the previous dialog's
 // stop; on failure the list stays open with the error and can be retried.
@@ -150,21 +203,31 @@ async function selectImbox(id) {
   selectedDialog.value = id;
   close();
 }
-function switchTask() {
-  if (nextTask.value && canMutate.value) props.controller.startTask(nextTask.value.id);
+function startQueued(task) {
+  if (!canMutate.value) return;
+  close(false);
+  if (state.value.scenario !== "tasks") props.controller.selectScenario("tasks");
+  props.controller.startTask(task.id);
+}
+function smartAction() {
+  if (activeTask.value) window.location.href = activeTaskView.value.url;
+  else startQueued(upcoming.value);
 }
 function start() {
-  if (state.value.scenario === "tasks") props.controller.startTask();
-  else if (state.value.scenario === "other")
-    props.controller.startOther(otherName.value.trim());
+  if (view.value === "other") props.controller.startOther(otherName.value.trim());
   else props.controller.startImbox(selectedDialog.value);
 }
-async function openCompletion(event) {
+function menuPause() {
+  close();
+  if (paused.value) props.controller.stop();
+  else props.controller.pause();
+}
+async function openCompletion() {
   if (!canComplete.value) return;
   const { id, title, entityName } = completionTarget.value;
   completionTask.value = { id, title, entityName };
   taskResult.value = "";
-  await toggle("complete", event);
+  await show("complete");
   popover.value?.querySelector("textarea")?.focus();
 }
 async function complete() {
@@ -219,10 +282,6 @@ onBeforeUnmount(() => {
     </template>
     <template v-else>
       <div class="rkrs-toolbar">
-        <div class="rkrs-identity">
-          <span class="rkrs-brand">R<span class="rkrs-brand-dot">.</span></span
-          ><span v-if="!state.live" class="rkrs-demo">ДЕМО</span>
-        </div>
         <button
           type="button"
           class="rkrs-scenario"
@@ -230,151 +289,153 @@ onBeforeUnmount(() => {
           aria-haspopup="true"
           @click="toggle('scenario', $event)"
         >
-          <span class="rkrs-label">Сценарий работы</span
-          ><span class="rkrs-scenario-value"
-            >{{ scenarioNames[state.scenario]
-            }}<WidgetIcon name="chevron" :size="15"
+          <span class="rkrs-scenario-label"
+            >Сценарий работы<span v-if="!state.live" class="rkrs-demo">ДЕМО</span></span
+          ><span class="rkrs-scenario-current"
+            >{{ scenarioNames[view] }}<WidgetIcon name="chevron" :size="16"
           /></span>
         </button>
-        <div class="rkrs-context">
-          <template v-if="state.scenario === 'other'">
-            <label class="rkrs-label" for="rkrs-other-name"
-              >Чем вы занимаетесь?</label
-            >
-            <input
-              id="rkrs-other-name"
-              v-model="otherName"
-              :readonly="state.active?.kind === 'other'"
-              class="rkrs-activity-input"
-              placeholder="Например, подготовка презентации"
-              maxlength="160"
-              @keydown.enter="canStart && start()"
-            />
-            <span class="rkrs-input-help">Минимум 3 символа</span>
-          </template>
-          <template v-else>
-            <div class="rkrs-context-meta">
-              <span
-                :class="{
-                  'rkrs-overdue':
-                    state.scenario === 'tasks' && focusTask?.overdue,
-                }"
-                >{{
-                  state.scenario === "tasks"
-                    ? focusTask?.dueLabel || "На сегодня"
-                    : dialog?.channel || "Входящие сообщения"
-                }}</span
-              ><span class="rkrs-context-entity">{{
-                state.scenario === "tasks"
-                  ? focusTask?.entityName
-                  : dialog?.preview
-              }}</span>
+        <div v-if="view === 'tasks'" class="rkrs-center">
+          <div class="rkrs-summary">
+            <div class="rkrs-summary-top">
+              <template v-if="focusTask || state.active">
+                <button
+                  type="button"
+                  class="rkrs-summary-stop"
+                  :class="{ 'rkrs-running': running }"
+                  :disabled="!canStop"
+                  @click="controller.stop()"
+                >
+                  <WidgetIcon name="stop" :size="12" />Стоп
+                </button>
+                <span
+                  class="rkrs-summary-status"
+                  :title="running ? `Время в работе: ${duration(state.elapsedSeconds)}` : undefined"
+                  >{{ statusText }}</span
+                >
+              </template>
+              <span v-else class="rkrs-center-empty">{{ emptyText }}</span>
+              <span class="rkrs-summary-right">
+                <button
+                  v-if="state.relatedEnabled || relatedTasks.length"
+                  type="button"
+                  class="rkrs-related-trigger"
+                  :aria-expanded="open === 'related'"
+                  @click="toggle('related', $event)"
+                >
+                  <WidgetIcon name="link" :size="13" /><span>Связанные</span
+                  ><span v-if="relatedTasks.length" class="rkrs-related-count">{{ relatedTasks.length }}</span>
+                </button>
+                <span v-if="focusTask?.dueDate" class="rkrs-summary-date">{{ focusTask.dueDate }}</span
+                ><span v-if="focusTask?.dueTime" class="rkrs-summary-time">{{ focusTask.dueTime }}</span>
+              </span>
             </div>
-            <button
-              type="button"
-              class="rkrs-task-title"
-              :aria-expanded="
-                open === (state.scenario === 'tasks' ? 'queue' : 'imbox')
-              "
-              @click="
-                toggle(state.scenario === 'tasks' ? 'queue' : 'imbox', $event)
-              "
-            >
-              <span>{{ contextTitle }}</span>
-            </button>
-          </template>
+            <div v-if="focusTask" class="rkrs-summary-bottom">
+              <span v-if="typeName(focusTask)" class="rkrs-task-type-badge">{{ typeName(focusTask) }}</span>
+              <button
+                type="button"
+                class="rkrs-task-title"
+                :title="taskTitle(focusTask)"
+                :aria-expanded="open === 'queue'"
+                @click="toggleQueue($event)"
+              >
+                <span>{{ focusTask.title }}</span>
+              </button>
+              <button
+                type="button"
+                class="rkrs-queue-trigger"
+                aria-label="Открыть очередь задач"
+                :aria-expanded="open === 'queue'"
+                @click="toggleQueue($event)"
+              >
+                <WidgetIcon name="chevron" :size="17" />
+              </button>
+            </div>
+          </div>
         </div>
-        <button
-          v-if="state.scenario !== 'other'"
-          type="button"
-          class="rkrs-queue-trigger"
-          :aria-label="
-            state.scenario === 'tasks'
-              ? 'Открыть очередь задач'
-              : 'Выбрать диалог Imbox'
-          "
-          :aria-expanded="
-            open === (state.scenario === 'tasks' ? 'queue' : 'imbox')
-          "
-          @click="
-            toggle(state.scenario === 'tasks' ? 'queue' : 'imbox', $event)
-          "
-        >
-          <WidgetIcon :name="scenarioIcons[state.scenario]" /><span>{{
-            state.scenario === "tasks" ? pending.length : state.dialogs.length
-          }}</span
-          ><WidgetIcon name="chevron" :size="13" />
-        </button>
-        <div
-          class="rkrs-timer"
-          :class="{ 'rkrs-timer-running': state.active && !paused }"
-          :title="
-            state.active ? `Сейчас: ${state.active.title}` : 'Таймер остановлен'
-          "
-        >
-          <span class="rkrs-timer-status"
-            ><i class="rkrs-status-dot"></i
-            >{{ paused ? "Пауза" : state.active ? "Идёт учёт" : "Остановлен" }}</span
-          ><span
-            class="rkrs-time"
-            role="timer"
-            aria-label="Время текущей активности"
-            >{{ duration(state.elapsedSeconds) }}</span
+        <div v-else-if="view === 'other'" class="rkrs-center rkrs-other-zone">
+          <input
+            v-model="otherName"
+            :readonly="state.active?.kind === 'other'"
+            class="rkrs-other-input"
+            aria-label="Чем вы занимаетесь?"
+            title="Минимум 3 символа"
+            placeholder="Напишите, что делаете..."
+            maxlength="160"
+            @keydown.enter="canStart && start()"
+          />
+        </div>
+        <div v-else class="rkrs-center rkrs-imbox-zone">
+          <div class="rkrs-imbox-label">IMBOX</div>
+          <button
+            type="button"
+            class="rkrs-task-title rkrs-imbox-title"
+            :title="imboxTitle"
+            :aria-expanded="open === 'imbox'"
+            @click="toggle('imbox', $event)"
           >
+            <span>{{ imboxTitle }}</span>
+          </button>
         </div>
         <div class="rkrs-actions">
           <button
-            v-if="state.active && !paused"
             type="button"
-            class="rkrs-button rkrs-stop"
-            :disabled="state.busy || state.pending" @click="controller.stop()"
+            class="rkrs-more-trigger"
+            aria-label="Ещё"
+            title="Ещё"
+            :aria-expanded="open === 'more'"
+            @click="toggle('more', $event)"
           >
-            <WidgetIcon name="stop" :size="14" />Стоп
+            <WidgetIcon name="more" />
           </button>
+          <template v-if="view !== 'tasks'">
+            <button
+              v-if="imboxRunning"
+              type="button"
+              class="rkrs-btn rkrs-btn-stopred"
+              title="Остановить Imbox-активность"
+              :disabled="!canStop"
+              @click="controller.stop()"
+            >
+              <WidgetIcon name="stop" />
+            </button>
+            <div v-else class="rkrs-play-group">
+              <button
+                type="button"
+                class="rkrs-btn rkrs-btn-play"
+                :class="{ 'rkrs-off': !startReady }"
+                title="Начать активность"
+                :disabled="!canStart"
+                @click="start"
+              >
+                <WidgetIcon name="play" />
+              </button>
+              <button
+                type="button"
+                class="rkrs-btn rkrs-btn-stopred"
+                :class="{ 'rkrs-off': !running }"
+                title="Остановить активность"
+                :disabled="!canStop"
+                @click="controller.stop()"
+              >
+                <WidgetIcon name="stop" />
+              </button>
+            </div>
+            <div class="rkrs-timer-block">
+              <span class="rkrs-timer-caption">{{ timerCaption }}</span
+              ><span class="rkrs-timer-value" role="timer" aria-label="Время текущей активности">{{ duration(state.elapsedSeconds) }}</span>
+            </div>
+          </template>
           <button
-            v-else
             type="button"
-            class="rkrs-button rkrs-start"
-            :disabled="!canStart"
-            @click="start"
+            class="rkrs-smart-action"
+            :class="{ 'rkrs-start': !activeTask, 'rkrs-off': !smartReady }"
+            :aria-label="smartTitle"
+            :title="smartTitle"
+            :disabled="!canSmart"
+            @click="smartAction"
           >
-            <WidgetIcon name="play" :size="14" />Старт
-          </button>
-          <button
-            v-if="state.scenario === 'tasks' || activeTask"
-            type="button"
-            class="rkrs-button rkrs-complete"
-            :disabled="!canComplete"
-            @click="openCompletion($event)"
-          >
-            <WidgetIcon name="check" :size="15" /><span>Завершить</span>
-          </button>
-        </div>
-        <div class="rkrs-utilities">
-          <button v-if="state.live && paused" type="button" class="rkrs-button" :disabled="state.busy || state.pending" @click="controller.stop()">Завершить паузу</button>
-          <button v-else-if="state.live" type="button" class="rkrs-button" :disabled="!canMutate" @click="controller.pause()">Пауза</button>
-          <button
-            type="button"
-            class="rkrs-icon-button"
-            aria-label="История активности"
-            title="История активности"
-            :aria-expanded="open === 'history'"
-            @click="toggle('history', $event)"
-          >
-            <WidgetIcon name="history" /><span
-              v-if="state.history.length"
-              class="rkrs-notification"
-            ></span>
-          </button>
-          <button
-            type="button"
-            class="rkrs-icon-button"
-            aria-label="Настройки виджета"
-            title="Настройки виджета"
-            :aria-expanded="open === 'settings'"
-            @click="toggle('settings', $event)"
-          >
-            <WidgetIcon name="settings" />
+            <WidgetIcon :name="activeTask ? 'goto' : 'play'" :size="24" />
           </button>
         </div>
       </div>
@@ -384,17 +445,11 @@ onBeforeUnmount(() => {
           {{ state.pending || state.completion ? "Восстановить операцию" : "Обновить данные" }}
         </button>
       </p>
-      <p v-else-if="state.live && !state.ready" class="rkrs-active-note" role="status">Загрузка данных сотрудника…</p>
-      <div v-if="nextTask && state.scenario === 'tasks'" class="rkrs-active-note rkrs-next-note">
-        Выбрана: {{ nextTask.title }}
-        <button type="button" class="rkrs-button" :disabled="!canMutate" @click="switchTask">Переключиться на неё</button>
-      </div>
       <div
         v-if="
-          state.active && !paused &&
-          ((state.scenario === 'tasks' && !activeTask) ||
-            (state.scenario !== 'tasks' &&
-              state.active.kind !== state.scenario))
+          running &&
+          ((view === 'tasks' && !activeTask) ||
+            (view !== 'tasks' && state.active.kind !== view))
         "
         class="rkrs-active-note"
       >
@@ -410,19 +465,20 @@ onBeforeUnmount(() => {
           {
             scenario: 'Сценарии работы',
             queue: 'Очередь задач',
+            related: 'Связанные задачи',
             imbox: 'Диалоги Imbox',
+            more: 'Дополнительные действия',
             history: 'История активности',
             settings: 'Настройки виджета',
             complete: 'Завершение задачи',
           }[open]
         "
       >
-        <div class="rkrs-popover-heading">
+        <div v-if="!['scenario', 'queue', 'more'].includes(open)" class="rkrs-popover-heading">
           <h2>
             {{
               {
-                scenario: "Сценарий работы",
-                queue: "Мои задачи",
+                related: "Связанные задачи",
                 imbox: "Диалоги Imbox",
                 history: "История активности",
                 settings: "Настройки",
@@ -449,7 +505,7 @@ onBeforeUnmount(() => {
           <p v-if="resultTooLong" role="alert">Результат слишком длинный. Сократите текст.</p>
           <p class="rkrs-help">{{ state.live ? "Задача будет завершена в amoCRM, а её таймер остановлен." : "Демозадача будет завершена только в этом браузере." }}</p>
           <p v-if="state.live && !taskResult.trim()" class="rkrs-help">Укажите результат для завершения задачи.</p>
-          <button type="submit" class="rkrs-button rkrs-complete" :disabled="!canComplete || resultTooLong || (state.live && !taskResult.trim())">Завершить задачу</button>
+          <button type="submit" class="rkrs-button rkrs-submit" :disabled="!canComplete || resultTooLong || (state.live && !taskResult.trim())">Завершить задачу</button>
         </form>
         <template v-else-if="open === 'scenario'">
           <button
@@ -457,61 +513,81 @@ onBeforeUnmount(() => {
             :key="kind"
             type="button"
             class="rkrs-scenario-option"
-            :class="{ 'rkrs-selected': state.scenario === kind }"
-            :aria-pressed="state.scenario === kind"
+            :class="{ 'rkrs-selected': view === kind }"
+            :aria-pressed="view === kind"
+            :disabled="state.live && imboxRunning && kind !== 'imbox'"
+            :title="state.live && imboxRunning && kind !== 'imbox' ? 'Сначала остановите Imbox-активность' : undefined"
             @click="selectScenario(kind)"
           >
-            <WidgetIcon :name="scenarioIcons[kind]" /><span>{{ name }}</span
-            ><WidgetIcon
-              v-if="state.scenario === kind"
-              name="check"
-              :size="15"
-            />
+            {{ name }}
+          </button>
+        </template>
+        <template v-else-if="open === 'more'">
+          <button
+            v-if="view === 'tasks' || activeTask"
+            type="button"
+            class="rkrs-menu-item rkrs-complete"
+            :disabled="!canComplete"
+            @click="openCompletion"
+          >
+            <WidgetIcon name="check" :size="16" />Завершить задачу
+          </button>
+          <button
+            v-if="state.live"
+            type="button"
+            class="rkrs-menu-item"
+            :disabled="paused ? state.busy || state.pending : !canMutate"
+            @click="menuPause"
+          >
+            <WidgetIcon name="clock" :size="16" />{{ paused ? "Завершить паузу" : "Пауза" }}
+          </button>
+          <button type="button" class="rkrs-menu-item" @click="show('history')">
+            <WidgetIcon name="history" :size="16" />История активности
+          </button>
+          <button type="button" class="rkrs-menu-item" @click="show('settings')">
+            <WidgetIcon name="settings" :size="16" />Настройки
           </button>
         </template>
         <template v-else-if="open === 'queue'">
-          <p class="rkrs-popover-caption">
-            {{ pending.length }} в очереди<template v-if="state.completedCount != null">
-            · {{ state.completedCount }} завершено</template>
-          </p>
-          <p v-if="state.queue?.note" class="rkrs-queue-note" :class="{ 'rkrs-queue-warning': state.queue.warning }" role="status">{{ state.queue.note }}</p>
-          <div class="rkrs-scroll-list">
-            <button
-              v-for="task in state.tasks"
-              :key="task.id"
-              type="button"
-              class="rkrs-list-item"
-              :class="{
-                'rkrs-selected': task.id === state.selectedTaskId,
-                'rkrs-task-done': task.completed,
-              }"
-              :aria-pressed="task.id === state.selectedTaskId"
-              :disabled="task.completed"
-              @click="selectTask(task.id)"
-            >
-              <span class="rkrs-list-icon"
-                ><WidgetIcon :name="task.completed ? 'check' : 'tasks'" /></span
-              ><span class="rkrs-item-copy"
-                ><strong>{{ task.title }}</strong
-                ><small>{{ task.entityName }}</small
-                ><small v-if="activeTask && task.id === state.active.id" class="rkrs-running-label">Идёт учёт</small
-                ><small v-if="task.related">Связано: {{ task.related }}</small
-                ><span
-                  class="rkrs-item-meta"
-                  :class="{ 'rkrs-overdue': task.overdue && !task.completed }"
-                  >{{ task.completed ? "Завершено" : task.dueLabel
-                  }}<span>{{ taskTypes[task.type] || task.type }}</span></span
-                ></span
-              ><WidgetIcon
-                v-if="task.id === state.selectedTaskId"
-                name="check"
-                :size="15"
-              />
-            </button>
+          <template v-if="timedTasks.length">
+            <div class="rkrs-q-header"><WidgetIcon name="list" :size="15" /><span>Следующая задача по времени</span></div>
+            <TaskQueueRow :task="timedTasks[0]" :type-name="typeName(timedTasks[0])" :disabled="!canMutate" @open="openTask" @start="startQueued" />
+          </template>
+          <div class="rkrs-queue-tabs" role="tablist">
+            <button type="button" class="rkrs-queue-tab" :class="{ 'rkrs-active': queueTab === 'timed' }" role="tab" :aria-selected="queueTab === 'timed'" @click="queueTab = 'timed'">Задачи по времени</button>
+            <button type="button" class="rkrs-queue-tab" :class="{ 'rkrs-active': queueTab === 'queue' }" role="tab" :aria-selected="queueTab === 'queue'" @click="queueTab = 'queue'">Очередь задач</button>
           </div>
-          <p class="rkrs-popover-footer">
-            {{ activeTask ? "Выбранная задача не прервёт текущую: переключитесь на неё отдельной кнопкой." : "Выберите задачу, затем нажмите «Старт» на панели." }}
-          </p>
+          <p v-if="state.queue?.note" class="rkrs-queue-note" :class="{ 'rkrs-queue-warning': state.queue.warning }" role="status">{{ state.queue.note }}</p>
+          <div class="rkrs-queue-list">
+            <TaskQueueRow
+              v-for="task in queueList.slice(0, queueLimit)"
+              :key="task.id"
+              :task="task"
+              :type-name="typeName(task)"
+              :disabled="!canMutate"
+              @open="openTask"
+              @start="startQueued"
+            />
+            <div v-if="!queueList.length" class="rkrs-queue-empty">Нет задач</div>
+          </div>
+          <a v-if="queueList.length > queueLimit" href="/todo/list" target="_blank" class="rkrs-queue-more">И еще {{ queueList.length - queueLimit }} задач в очереди</a>
+        </template>
+        <template v-else-if="open === 'related'">
+          <div v-if="!relatedTasks.length" class="rkrs-queue-empty">Связанных задач нет</div>
+          <div v-else class="rkrs-queue-list">
+            <template v-for="[name, tasks] in relatedGroups" :key="name">
+              <div class="rkrs-r-group"><span>{{ name }}</span><small>{{ tasks.length }}</small></div>
+              <TaskQueueRow
+                v-for="task in tasks"
+                :key="task.id"
+                :task="task"
+                :type-name="typeName(task)"
+                :disabled="!canMutate"
+                @open="openTask"
+                @start="startQueued"
+              />
+            </template>
+          </div>
         </template>
         <template v-else-if="open === 'imbox'">
           <p class="rkrs-popover-caption" role="status">{{ state.busy ? "Останавливаем учёт текущего диалога…" : "Выберите диалог для учёта времени" }}</p>

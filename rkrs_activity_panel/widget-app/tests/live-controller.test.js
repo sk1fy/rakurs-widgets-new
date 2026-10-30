@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
 import { createLiveActivityController as createController } from '../src/live-controller.js';
 
 // The server owns every amoCRM call. This emulates its task contract on top
@@ -622,4 +623,27 @@ test('the running task is the initial selection, so no switch is offered until t
   assert.equal(controller.getSnapshot().selectedTaskId, '5', 'a resync keeps the explicit selection');
   assert.equal(controller.getSnapshot().active.id, '19');
   controller.dispose();
+});
+
+test('task cards get the action matching the running task and lose it on dispose', async () => {
+  const dom = new JSDOM('<!doctype html><body>' + [19, 20].map(id => `<div class="feed-note-wrapper-task" data-id="${id}"><div class="card-task"><div class="card-task__inner-content"><p>Task</p></div></div></div>`).join('') + '</body>');
+  const doc = dom.window.document;
+  const card = id => doc.querySelector(`[data-id="${id}"]`);
+  const label = id => card(id).querySelector('.card-task__inner-content .rkrs-card-btn')?.textContent;
+  const fixture = employeeFixture({ rows: [{ id: 19, responsible_user_id: 7, text: 'Real task', task_type_id: 1, complete_till: 200 }, { id: 20, responsible_user_id: 7, text: 'Next', task_type_id: 1, complete_till: 300 }] });
+  const controller = fixture.create({ documentImpl: doc }); await idle(controller);
+  controller.tick();
+  assert.equal(label(19), 'Остановить задачу');
+  assert.equal(label(20), 'Переключиться на задачу');
+  assert.ok(card(19).querySelector('.card-task').classList.contains('rkrs-active-task-card'));
+  assert.equal(card(20).querySelector('.card-task').classList.contains('rkrs-active-task-card'), false);
+  card(19).querySelector('.rkrs-card-btn').click();
+  await idle(controller);
+  assert.equal(controller.getSnapshot().active, null);
+  assert.equal(label(19), 'Взять в работу', 'the card follows a stop without waiting for the clock');
+  assert.equal(card(19).querySelector('.card-task').classList.contains('rkrs-active-task-card'), false);
+  controller.dispose();
+  assert.equal(doc.querySelector('.rkrs-card-action'), null);
+  assert.equal(doc.querySelector('.rkrs-task-card-content'), null);
+  dom.window.close();
 });

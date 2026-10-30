@@ -43,6 +43,8 @@ export function createActivityController({
     entityName: safeText(item.entityName),
     type: ["call", "meeting", "email"].includes(item.type) ? item.type : "call",
     dueLabel: safeText(item.dueLabel),
+    dueDate: safeText(item.dueDate),
+    dueTime: safeText(item.dueTime),
     overdue: item.overdue === true,
     completed: item.completed === true,
   }));
