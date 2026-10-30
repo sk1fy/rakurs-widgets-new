@@ -38,6 +38,10 @@ const layoutCss = `${shifted
   ".rkrs-card-btn:hover{color:#2f69a3;}",
   ".rkrs-card-btn svg{flex-shrink:0;}",
   ".rkrs-card-btn:disabled{cursor:not-allowed;opacity:.9;}",
+  // Wappi sizes its mount point and chat window to the full viewport, which
+  // would run past the page once the bar pushes it down.
+  `body.${layoutClass} #wappi-embed__container{height:calc(100vh - var(${heightVar},65px)) !important;height:calc(100dvh - var(${heightVar},65px)) !important;min-height:0;}`,
+  `body.${layoutClass} #wappi-embed__container #app,body.${layoutClass} #wappi-embed__container .mainWindow,body.${layoutClass} #wappi-embed__container .vac-card-window,body.${layoutClass} #wappi-chat-target #app,body.${layoutClass} #wappi-chat-target .mainWindow,body.${layoutClass} #wappi-chat-target .vac-card-window{height:100% !important;min-height:0;}`,
   ".card-task.rkrs-active-task-card{background:linear-gradient(135deg,rgba(211,254,255,.15) 0%,rgba(211,254,255,.05) 100%) !important;border-left:3px solid #27ae60 !important;box-shadow:0 2px 8px rgba(39,174,96,.15) !important;}",
 ].join("")}`;
 
