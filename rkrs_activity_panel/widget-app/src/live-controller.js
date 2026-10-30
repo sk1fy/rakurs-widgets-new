@@ -32,7 +32,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     try { prefs?.setItem(viewKey, JSON.stringify(view)); } catch { /* Preferences stay in memory. */ }
   }
   const state = { live: true, enabled: view.enabled === true, ready: false, completion: null, busy: false, scenario: 'tasks', tasks: [], dialogs: [], selectedTaskId: null, active: null, history: [], settings: { compact: view.compact === true }, error: '', queue: { complete: true, stale: false, fetchedAt: 0, warning: false, note: '' }, elapsedSeconds: 0, totalSeconds: 0, completedCount: null };
-  let disposed = false, lastSync = 0, lastTasks = 0, tasksRetryAt = 0, serverSettings = {}, client, lastDialog = null, dialogTransition = null, queueLead = '', closedSeconds = 0, dayStart = 0;
+  let ownTaskIds = new Set(), disposed = false, lastSync = 0, lastTasks = 0, tasksRetryAt = 0, serverSettings = {}, client, lastDialog = null, dialogTransition = null, queueLead = '', closedSeconds = 0, dayStart = 0;
   // Other tabs of the same employee only hear that something changed; each one
   // rereads the server, which stays the source of truth.
   let channel = null;
@@ -211,7 +211,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   }
   async function loadTasks() {
     if (!Number.isSafeInteger(Number(context.userId)) || Number(context.userId) <= 0) throw new Error('Не определён сотрудник amoCRM');
-    if (!state.enabled) { state.tasks = []; state.selectedTaskId = null; describeQueue({ complete: true, stale: false, errorCode: '', fetchedAt: 0 }); return; }
+    if (!state.enabled) { state.tasks = []; ownTaskIds = new Set(); state.selectedTaskId = null; describeQueue({ complete: true, stale: false, errorCode: '', fetchedAt: 0 }); return; }
     const leadId = locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1];
     queueLead = leadId || '';
     state.relatedEnabled = Boolean(serverSettings.include_related_deals && queueLead);
@@ -227,6 +227,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     if (disposed) return;
     tasksRetryAt = queue.retry_after_seconds > 0 ? Date.now() + queue.retry_after_seconds * 1000 : 0;
     const rows = queue.tasks || [];
+    ownTaskIds = new Set(rows.filter(row => row.responsible_user_id === Number(context.userId)).map(row => String(row.id)));
     if (state.active?.kind === 'tasks' && !rows.some(row => String(row.id) === state.active.id)) await reconcileCompletedTask(state.active.id);
     const priorities = serverSettings.priority_keys || ['urgent','overdue','overdue_no_time','today_no_time','today_timed','future'];
     const priority = row => { const due = new Date(row.complete_till * 1000), now = new Date(), dueParts = parts(due.getTime()), today = dayKey(dueParts) === dayKey(parts(now.getTime())), allDay = dueParts.hour === '23' && dueParts.minute === '59', overdue = due < now; const key = !allDay && today && (overdue || due-now <= 600000) ? 'urgent' : !allDay && overdue && !today ? 'overdue' : allDay && overdue && !today ? 'overdue_no_time' : allDay && today ? 'today_no_time' : !allDay && today ? 'today_timed' : 'future'; const index = priorities.indexOf(key); return index < 0 ? 99 : index; };
@@ -245,7 +246,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   async function taskContext(id) {
     const task = await client.loadTask(Number(id), { context: true });
     assertOwnedTask(task, id);
-    if (task.is_completed) throw new Error('Задача уже завершена. Обновите очередь.');
+    if (task.is_completed) { lastTasks = 0; throw invalid('Задача уже завершена. Обновите очередь.'); }
     const value = { client_id: clientId, task_id: task.id, task_name: task.text || '', task_type_id: task.task_type_id, entity_id: task.entity_id, entity_type: task.entity_type };
     const entity = task.entity;
     // The card summary is best effort on the server; without it only IDs are recorded.
@@ -271,23 +272,43 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     if (state.active?.kind === 'imbox') return 'blocked';
     return state.active && state.active.kind !== 'pause' ? 'switch' : 'start';
   }
+  // Runs every second on amoCRM's own DOM: an unchanged card must not be written
+  // to at all, and a button pressed right now must survive until the click lands.
   function renderCardAction(node) {
     const id = node.dataset.id;
-    if (!state.enabled || !state.ready || state.completion || client?.getState().pending || !/^\d+$/.test(id)) { clearCardAction(node); return; }
     const mode = cardMode(id);
-    const target = node.querySelector('.card-task__inner-content') || node.querySelector('.card-task__inner-header') || node.querySelector('.card-task') || node;
+    // Feed blocks also cover completed and other employees' tasks: only the server's queue knows which are ours.
+    const target = node.querySelector('.card-task__inner-content') || node.querySelector('.card-task__inner-header') || node.querySelector('.card-task');
+    if (!state.enabled || !target || !(mode === 'stop' || ownTaskIds.has(id))) { clearCardAction(node); return; }
     node.querySelector('.card-task')?.classList.toggle('rkrs-active-task-card', mode === 'stop');
     let slot = node.querySelector('[data-rkrs-card-action]');
-    if (slot?.parentNode === target && slot.dataset.rkrsCardAction === mode) return;
-    slot?.remove();
-    target.classList.add('rkrs-task-card-content');
-    slot = documentImpl.createElement('div'); slot.className = 'rkrs-card-action'; slot.dataset.rkrsCardAction = mode;
-    const button = documentImpl.createElement('button'); button.type = 'button'; button.className = 'rkrs-card-btn'; button.innerHTML = cardActions[mode].icon;
-    button.append(cardActions[mode].label);
-    if (mode === 'blocked') { button.disabled = true; button.title = 'Сначала завершите Imbox-активность'; }
-    button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); if (mode === 'stop') controller.stop(); else controller.startTask(id); });
-    slot.append(button); target.append(slot);
+    if (slot && slot.parentNode !== target) { slot.remove(); slot = null; }
+    if (!slot) {
+      target.classList.add('rkrs-task-card-content');
+      slot = documentImpl.createElement('div'); slot.className = 'rkrs-card-action'; slot.dataset.rkrsCardAction = '';
+      const created = documentImpl.createElement('button'); created.type = 'button'; created.className = 'rkrs-card-btn';
+      slot.append(created); target.append(slot);
+    }
+    const button = slot.firstChild;
+    if (slot.dataset.rkrsCardAction !== mode) {
+      slot.dataset.rkrsCardAction = mode;
+      button.innerHTML = cardActions[mode].icon; button.append(cardActions[mode].label);
+      button.title = mode === 'blocked' ? 'Сначала завершите Imbox-активность' : '';
+    }
+    const locked = mode === 'blocked' || !state.ready || Boolean(state.completion) || Boolean(client?.getState().pending);
+    if (button.disabled !== locked) button.disabled = locked;
   }
+  // Delegated, as amoCRM may stop a click before it reaches a node inside its card.
+  const onCardClick = event => {
+    const target = event.target?.nodeType === 3 ? event.target.parentNode : event.target;
+    const button = target?.closest?.('.rkrs-card-action .rkrs-card-btn');
+    if (!button || disposed) return;
+    event.preventDefault(); event.stopPropagation();
+    if (button.disabled) return;
+    const id = button.closest('.feed-note-wrapper-task[data-id]')?.dataset?.id;
+    if (id) { if (button.parentNode.dataset.rkrsCardAction === 'stop') controller.stop(); else controller.startTask(id); }
+  };
+  documentImpl.addEventListener?.('click', onCardClick, true);
   async function startImboxSession(id) {
     if (!state.dialogs.some(row => row.id === String(id))) throw invalid('Откройте диалог Imbox'); const details = { client_id: clientId }; const entityId = dialogEntities.get(String(id)); if (entityId) { const entity = await client.loadLead(entityId); Object.assign(details, { entity_type: 'leads', entity_id: entityId }, entity.restricted ? {} : { entity_name: entity.name, pipeline_id: entity.pipeline_id || 0, status_id: entity.status_id || 0 }); } await client.startImbox(id, details);
   }
@@ -444,7 +465,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       // Unenrolled employees only need to notice being enabled; poll them rarely.
       if (!state.busy && !documentImpl.hidden && Date.now()-lastSync > (hidden() ? 120000 : 15000)) run(async () => { await sync(); if (!client.getState().pending && !state.completion && Date.now()-lastTasks > 60000 && Date.now() >= tasksRetryAt) await loadTasks(); });
     },
-    dispose() { disposed = true; try { channel?.close(); } catch { /* Already closed. */ } documentImpl.removeEventListener?.('visibilitychange', onVisible); windowRef?.removeEventListener?.('focus', onVisible); documentImpl.removeEventListener?.('click', onNativeComplete, true); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); documentImpl.querySelectorAll?.('.feed-note-wrapper-task[data-id]').forEach(clearCardAction); listeners.clear(); },
+    dispose() { disposed = true; try { channel?.close(); } catch { /* Already closed. */ } documentImpl.removeEventListener?.('visibilitychange', onVisible); windowRef?.removeEventListener?.('focus', onVisible); documentImpl.removeEventListener?.('click', onNativeComplete, true); documentImpl.removeEventListener?.('click', onCardClick, true); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); documentImpl.querySelectorAll?.('.feed-note-wrapper-task[data-id]').forEach(clearCardAction); listeners.clear(); },
   };
   if (client) run(async () => { await sync(); await loadTasks(); });
   return controller;

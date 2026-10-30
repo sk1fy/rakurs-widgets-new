@@ -162,12 +162,11 @@
   font-size: 11px !important;
 }
 .rkrs-summary-stop.rkrs-running {
-  border-color: var(--rkrs-red) !important;
-  background: #e05a4e;
   color: #fff !important;
 }
 .rkrs-summary-stop.rkrs-running:hover:not(:disabled) {
-  background: var(--rkrs-red);
+  border-color: #e05a4e !important;
+  background: #e05a4e;
 }
 .rkrs-summary-status,
 .rkrs-summary-date {

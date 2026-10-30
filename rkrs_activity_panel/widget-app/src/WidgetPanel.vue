@@ -203,11 +203,14 @@ async function selectImbox(id) {
   selectedDialog.value = id;
   close();
 }
-function startQueued(task) {
+// Work on a queued task happens in its card, so a confirmed start opens it.
+async function startQueued(task) {
   if (!canMutate.value) return;
   close(false);
   if (state.value.scenario !== "tasks") props.controller.selectScenario("tasks");
-  props.controller.startTask(task.id);
+  const started = await props.controller.startTask(task.id);
+  if (started === true && task.url && window.location.pathname !== task.url)
+    window.location.href = task.url;
 }
 function smartAction() {
   if (activeTask.value) window.location.href = activeTaskView.value.url;
