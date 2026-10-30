@@ -1,5 +1,15 @@
 import { createActivitySessionClient } from './session-client.js';
 
+const playIcon = '<svg width="12" height="14" viewBox="0 0 12 14" fill="none" aria-hidden="true"><path d="M1.5 2v10l9-5-9-5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+const stopIcon = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="2" fill="currentColor"/></svg>';
+const cardActions = {
+  start: { icon: playIcon, label: 'Взять в работу' },
+  switch: { icon: playIcon, label: 'Переключиться на задачу' },
+  stop: { icon: stopIcon, label: 'Остановить задачу' },
+  blocked: { icon: '', label: 'Завершите Imbox' },
+};
+const entityUrl = (type, id) => (['leads', 'contacts', 'companies', 'customers'].includes(type) && id ? `/${type}/detail/${id}` : '');
+
 // authorizedAjax caches tokens; Core requires a fresh disposable JWT for each call.
 export function createLiveActivityController({ context, apiOrigin, appOrigin, documentImpl = document, locationImpl = location, storageImpl, broadcastImpl = globalThis.BroadcastChannel }) {
   const listeners = new Set();
@@ -46,7 +56,6 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   const errorMessages = { permission_denied: 'Нет доступа: задача другого сотрудника или панель отключена', not_found: 'Задача или карточка не найдена в amoCRM', resource_exhausted: 'amoCRM временно ограничила запросы, повторите позже', reauth_required: 'Интеграции нужна повторная авторизация в amoCRM' };
   // Local validation failures are not uncertain writes: the panel stays usable.
   const invalid = message => Object.assign(new Error(message), { keepReady: true });
-  const buttons = new Set();
   const requests = new Set();
   try {
     const saved = JSON.parse(storage?.getItem(completionKey) || 'null');
@@ -128,9 +137,21 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     const day = dayKey(due) === dayKey(now) ? 'Сегодня' : `${due.day}.${due.month}${due.year === now.year ? '' : `.${due.year}`}`;
     return due.hour === '23' && due.minute === '59' ? day : `${day}, ${due.hour}:${due.minute}`;
   }
+  function dueDate(timestamp) {
+    const due = parts(timestamp);
+    return `${due.day}.${due.month}.${due.year}`;
+  }
+  function dueTime(row) {
+    const due = parts(row.complete_till * 1000);
+    if (due.hour === '23' && due.minute === '59') return 'Весь день';
+    const start = `${due.hour}:${due.minute}`;
+    if (!(row.duration > 0)) return start;
+    const end = parts((row.complete_till + row.duration) * 1000);
+    return `${start}-${end.hour}:${end.minute}`;
+  }
   function applyCurrent(raw) {
     const previous = state.active?.serverId;
-    state.active = raw?.id ? { kind: raw.kind === 'work' ? 'tasks' : raw.kind === 'pause' ? 'pause' : raw.context.activity_type === 'imbox' ? 'imbox' : 'other', id: raw.kind === 'work' ? String(raw.context.task_id) : raw.context.activity_name?.replace(/^Imbox /, '') || raw.id, title: raw.context.task_name || raw.context.activity_name || 'Пауза', entityName: raw.context.entity_name, startedAt: raw.started_at * 1000, serverId: raw.id, clientId: raw.context.client_id } : null;
+    state.active = raw?.id ? { kind: raw.kind === 'work' ? 'tasks' : raw.kind === 'pause' ? 'pause' : raw.context.activity_type === 'imbox' ? 'imbox' : 'other', id: raw.kind === 'work' ? String(raw.context.task_id) : raw.context.activity_name?.replace(/^Imbox /, '') || raw.id, title: raw.context.task_name || raw.context.activity_name || 'Пауза', entityName: raw.context.entity_name, url: entityUrl(raw.context.entity_type, raw.context.entity_id), startedAt: raw.started_at * 1000, serverId: raw.id, clientId: raw.context.client_id } : null;
     // A newly started task (here, from a card or in another tab) becomes the
     // selection; a later different selection is the user's next task.
     if (state.active?.kind === 'tasks' && state.active.serverId !== previous) state.selectedTaskId = state.active.id;
@@ -193,6 +214,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     if (!state.enabled) { state.tasks = []; state.selectedTaskId = null; describeQueue({ complete: true, stale: false, errorCode: '', fetchedAt: 0 }); return; }
     const leadId = locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1];
     queueLead = leadId || '';
+    state.relatedEnabled = Boolean(serverSettings.include_related_deals && queueLead);
     let queue;
     // The server shares one snapshot per employee across tabs and labels tasks
     // related to the open lead itself.
@@ -209,7 +231,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     const priorities = serverSettings.priority_keys || ['urgent','overdue','overdue_no_time','today_no_time','today_timed','future'];
     const priority = row => { const due = new Date(row.complete_till * 1000), now = new Date(), dueParts = parts(due.getTime()), today = dayKey(dueParts) === dayKey(parts(now.getTime())), allDay = dueParts.hour === '23' && dueParts.minute === '59', overdue = due < now; const key = !allDay && today && (overdue || due-now <= 600000) ? 'urgent' : !allDay && overdue && !today ? 'overdue' : allDay && overdue && !today ? 'overdue_no_time' : allDay && today ? 'today_no_time' : !allDay && today ? 'today_timed' : 'future'; const index = priorities.indexOf(key); return index < 0 ? 99 : index; };
     const visible = rows.filter(row => serverSettings.consider_future_tasks || dayKey(parts(row.complete_till * 1000)) <= dayKey(parts(Date.now())));
-    state.tasks = visible.sort((a,b) => priority(a)-priority(b) || a.complete_till-b.complete_till).map(row => ({ id: String(row.id), title: row.text || `Задача ${row.id}`, entityName: entityName(row), related: row.related || '', type: row.task_type_name || '', dueLabel: dueLabel(row.complete_till * 1000), overdue: row.complete_till * 1000 < Date.now(), completed: false }));
+    state.tasks = visible.sort((a,b) => priority(a)-priority(b) || a.complete_till-b.complete_till).map(row => ({ id: String(row.id), title: row.text || `Задача ${row.id}`, entityName: entityName(row), related: row.related || '', type: row.task_type_name || '', url: entityUrl(row.entity_type, row.entity_id), dueLabel: dueLabel(row.complete_till * 1000), dueDate: dueDate(row.complete_till * 1000), dueTime: dueTime(row), overdue: row.complete_till * 1000 < Date.now(), completed: false }));
     // An older server omits the metadata: its queue is a complete live read.
     describeQueue({ complete: queue.complete !== false, stale: queue.stale === true, errorCode: queue.error_code || '', fetchedAt: queue.fetched_at > 0 ? queue.fetched_at * 1000 : 0 });
     if (!state.tasks.some(row => row.id === state.selectedTaskId)) state.selectedTaskId = state.tasks[0]?.id || null;
@@ -218,7 +240,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   async function run(action) {
     if (disposed || state.busy || !client) return;
     state.busy = true; state.error = ''; emit();
-    try { await action(); return !disposed; } catch (error) { if (!disposed) { state.error = state.completion?.phase === 'stop_pending' ? `Задача завершена в amoCRM; остановка учёта времени не подтверждена. Нажмите обновление для восстановления. ${error.message}` : state.completion ? `Завершение задачи не подтверждено. Обновление проверит amoCRM и восстановит учёт времени. ${error.message}` : error.message; if (!error.keepReady) state.ready = false; } return false; } finally { if (!disposed) { state.busy = false; emit(); } }
+    try { await action(); return !disposed; } catch (error) { if (!disposed) { state.error = state.completion?.phase === 'stop_pending' ? `Задача завершена в amoCRM; остановка учёта времени не подтверждена. Нажмите обновление для восстановления. ${error.message}` : state.completion ? `Завершение задачи не подтверждено. Обновление проверит amoCRM и восстановит учёт времени. ${error.message}` : error.message; if (!error.keepReady) state.ready = false; } return false; } finally { if (!disposed) { state.busy = false; scanDOM(); emit(); } }
   }
   async function taskContext(id) {
     const task = await client.loadTask(Number(id), { context: true });
@@ -236,18 +258,35 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   }
   function scanDOM() {
     if (disposed) return;
-    for (const button of buttons) if (!button.isConnected) buttons.delete(button);
     state.dialogs = [...documentImpl.querySelectorAll('.notification--talk[data-id]')].map(node => { const link = node.querySelector('a[href*="/leads/detail/"]'); const entityId = link?.getAttribute('href')?.match(/\/leads\/detail\/(\d+)/)?.[1]; if (entityId) dialogEntities.set(node.dataset.id, Number(entityId)); return ({ id: node.dataset.id, name: node.querySelector('.notification-inner__title_message_title, .notification__title, .notification__name')?.textContent?.trim() || `Imbox ${node.dataset.id}`, preview: '', channel: 'Imbox' }); }).filter(row => /^\d+$/.test(row.id));
-    documentImpl.querySelectorAll('.feed-note-wrapper-task[data-id]').forEach(node => {
-      const existing = node.querySelector('[data-rkrs-live-start]');
-      if (!state.enabled || !state.ready || state.completion || client?.getState().pending) { existing?.remove(); return; }
-      if (state.active?.kind === 'tasks' && state.active.id === node.dataset.id) { existing?.remove(); return; }
-      if (existing || !/^\d+$/.test(node.dataset.id)) return;
-      const button = documentImpl.createElement('button'); button.type = 'button'; button.dataset.rkrsLiveStart = ''; button.textContent = 'Начать учёт времени';
-      button.style.cssText = 'display:inline-block;margin:6px 0 0;padding:3px 10px;border:1px solid #1890ff;border-radius:4px;background:transparent;color:#1890ff;font:inherit;font-size:13px;cursor:pointer;';
-      button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); controller.startTask(node.dataset.id); });
-      node.append(button); buttons.add(button);
-    });
+    documentImpl.querySelectorAll('.feed-note-wrapper-task[data-id]').forEach(renderCardAction);
+  }
+  function clearCardAction(node) {
+    node.querySelector('[data-rkrs-card-action]')?.remove();
+    node.querySelector('.rkrs-task-card-content')?.classList.remove('rkrs-task-card-content');
+    node.querySelector('.rkrs-active-task-card')?.classList.remove('rkrs-active-task-card');
+  }
+  function cardMode(id) {
+    if (state.active?.kind === 'tasks' && state.active.id === id) return 'stop';
+    if (state.active?.kind === 'imbox') return 'blocked';
+    return state.active && state.active.kind !== 'pause' ? 'switch' : 'start';
+  }
+  function renderCardAction(node) {
+    const id = node.dataset.id;
+    if (!state.enabled || !state.ready || state.completion || client?.getState().pending || !/^\d+$/.test(id)) { clearCardAction(node); return; }
+    const mode = cardMode(id);
+    const target = node.querySelector('.card-task__inner-content') || node.querySelector('.card-task__inner-header') || node.querySelector('.card-task') || node;
+    node.querySelector('.card-task')?.classList.toggle('rkrs-active-task-card', mode === 'stop');
+    let slot = node.querySelector('[data-rkrs-card-action]');
+    if (slot?.parentNode === target && slot.dataset.rkrsCardAction === mode) return;
+    slot?.remove();
+    target.classList.add('rkrs-task-card-content');
+    slot = documentImpl.createElement('div'); slot.className = 'rkrs-card-action'; slot.dataset.rkrsCardAction = mode;
+    const button = documentImpl.createElement('button'); button.type = 'button'; button.className = 'rkrs-card-btn'; button.innerHTML = cardActions[mode].icon;
+    button.append(cardActions[mode].label);
+    if (mode === 'blocked') { button.disabled = true; button.title = 'Сначала завершите Imbox-активность'; }
+    button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); if (mode === 'stop') controller.stop(); else controller.startTask(id); });
+    slot.append(button); target.append(slot);
   }
   async function startImboxSession(id) {
     if (!state.dialogs.some(row => row.id === String(id))) throw invalid('Откройте диалог Imbox'); const details = { client_id: clientId }; const entityId = dialogEntities.get(String(id)); if (entityId) { const entity = await client.loadLead(entityId); Object.assign(details, { entity_type: 'leads', entity_id: entityId }, entity.restricted ? {} : { entity_name: entity.name, pipeline_id: entity.pipeline_id || 0, status_id: entity.status_id || 0 }); } await client.startImbox(id, details);
@@ -405,7 +444,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       // Unenrolled employees only need to notice being enabled; poll them rarely.
       if (!state.busy && !documentImpl.hidden && Date.now()-lastSync > (hidden() ? 120000 : 15000)) run(async () => { await sync(); if (!client.getState().pending && !state.completion && Date.now()-lastTasks > 60000 && Date.now() >= tasksRetryAt) await loadTasks(); });
     },
-    dispose() { disposed = true; try { channel?.close(); } catch { /* Already closed. */ } documentImpl.removeEventListener?.('visibilitychange', onVisible); windowRef?.removeEventListener?.('focus', onVisible); documentImpl.removeEventListener?.('click', onNativeComplete, true); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); buttons.forEach(button => button.remove()); listeners.clear(); },
+    dispose() { disposed = true; try { channel?.close(); } catch { /* Already closed. */ } documentImpl.removeEventListener?.('visibilitychange', onVisible); windowRef?.removeEventListener?.('focus', onVisible); documentImpl.removeEventListener?.('click', onNativeComplete, true); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); documentImpl.querySelectorAll?.('.feed-note-wrapper-task[data-id]').forEach(clearCardAction); listeners.clear(); },
   };
   if (client) run(async () => { await sync(); await loadTasks(); });
   return controller;

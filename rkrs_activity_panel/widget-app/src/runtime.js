@@ -29,7 +29,17 @@ const shifted = [
 ];
 const layoutCss = `${shifted
   .map((selector) => `body.${layoutClass} ${selector}`)
-  .join(",")}{top:var(${heightVar},76px) !important;}`;
+  .join(",")}{top:var(${heightVar},65px) !important;}${[
+  // Task cards are amoCRM's own DOM, outside the panel's shadow root.
+  ".rkrs-task-card-content{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}",
+  ".rkrs-task-card-content p{min-width:0;flex:1 1 auto;max-width:100%;overflow-wrap:anywhere;}",
+  ".rkrs-card-action{position:relative;z-index:4;flex:0 0 auto;margin-left:auto;padding-left:8px;line-height:1;}",
+  ".rkrs-card-btn{display:inline-flex;align-items:center;gap:4px;min-height:20px;padding:0;border:0;background:transparent;color:#3a79b8;font:inherit;font-size:12px;line-height:1.3;white-space:nowrap;cursor:pointer;}",
+  ".rkrs-card-btn:hover{color:#2f69a3;}",
+  ".rkrs-card-btn svg{flex-shrink:0;}",
+  ".rkrs-card-btn:disabled{cursor:not-allowed;opacity:.9;}",
+  ".card-task.rkrs-active-task-card{background:linear-gradient(135deg,rgba(211,254,255,.15) 0%,rgba(211,254,255,.05) 100%) !important;border-left:3px solid #27ae60 !important;box-shadow:0 2px 8px rgba(39,174,96,.15) !important;}",
+].join("")}`;
 
 function safeStorage() {
   try {

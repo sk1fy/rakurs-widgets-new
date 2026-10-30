@@ -168,7 +168,7 @@ test("external Imbox action updates the visible dialog and outside clicks dismis
       shadow.querySelector(".rkrs-task-title").textContent.trim(),
       "Максим"
     );
-    shadow.querySelector('[aria-label="История активности"]').click();
+    shadow.querySelector(".rkrs-more-trigger").click();
     await settle();
     assert.ok(shadow.querySelector(".rkrs-popover"));
     window.document.body.dispatchEvent(
@@ -192,6 +192,8 @@ test("missing SDK stays unavailable even beside a simulator slot; demo must be e
     assert.match(shadow.textContent, /Виджет не подключён/);
     assert.equal(shadow.querySelector('.rkrs-demo'), null);
     assert.equal(shadow.querySelector('.rkrs-start').disabled, true);
+    shadow.querySelector('.rkrs-more-trigger').click();
+    await settle();
     assert.equal(shadow.querySelector('.rkrs-complete').disabled, true);
     slot.dispatchEvent(new window.CustomEvent('rkrs-activity-demo-action', { detail: { type: 'task', id: 'task-call' } }));
     assert.equal(window.localStorage.length, 0);
@@ -212,6 +214,8 @@ test("task completion requests a result, validates UTF-8 limit and accepts an em
     app.mountPanel(context);
     await settle();
     const shadow = slot.querySelector('[data-rkrs-prototype-surface="panel"]').shadowRoot;
+    shadow.querySelector('.rkrs-more-trigger').click();
+    await settle();
     shadow.querySelector('.rkrs-complete').click();
     await settle();
     const form = shadow.querySelector('.rkrs-completion-form');
@@ -285,14 +289,14 @@ test("a re-render right after destroy reuses the detached controller", async () 
     app.mountPanel({ ...context, widget: next });
     await settle();
     const shadow = slot.querySelector('[data-rkrs-prototype-surface="panel"]').shadowRoot;
-    assert.match(shadow.querySelector(".rkrs-timer-status").textContent, /Идёт учёт/);
+    assert.match(shadow.querySelector(".rkrs-summary-status").textContent, /В работе/);
     app.unmountAll(next);
   } finally {
     dom.window.close();
   }
 });
 
-test("a queue selection never retargets the running task: title, completion and switch stay explicit", async () => {
+test("the running task owns the panel: the queue hides it and a row's play button switches explicitly", async () => {
   const { dom, window, app, context, widget, slot } = setup();
   try {
     app.mountPanel(context);
@@ -302,24 +306,61 @@ test("a queue selection never retargets the running task: title, completion and 
     shadow.querySelector(".rkrs-start").click();
     await settle();
     const running = title();
+    assert.equal(shadow.querySelector(".rkrs-start"), null, "a running task turns the action into a jump");
     shadow.querySelector(".rkrs-queue-trigger").click();
     await settle();
-    const other = [...shadow.querySelectorAll(".rkrs-list-item")].find((item) => !item.querySelector(".rkrs-running-label"));
-    const otherTitle = other.querySelector("strong").textContent.trim();
-    other.click();
+    const names = () => [...shadow.querySelectorAll(".rkrs-queue-list .rkrs-q-name")].map((node) => node.textContent.trim());
+    assert.equal(names().includes(running), false);
+    const row = shadow.querySelector(".rkrs-queue-list .rkrs-q-row");
+    const otherTitle = row.querySelector(".rkrs-q-name").textContent.trim();
+    row.querySelector(".rkrs-q-main").click();
     await settle();
-    assert.equal(title(), running, "the panel keeps showing the running task");
-    const note = shadow.querySelector(".rkrs-next-note");
-    assert.match(note.textContent, new RegExp(otherTitle));
+    assert.equal(title(), running, "opening a row does not retarget the running task");
+    shadow.querySelector(".rkrs-more-trigger").click();
+    await settle();
     shadow.querySelector(".rkrs-complete").click();
     await settle();
     assert.equal(shadow.querySelector(".rkrs-completion-target strong").textContent.trim(), running);
     shadow.querySelector('[aria-label="Закрыть панель"]').click();
     await settle();
-    note.querySelector("button").click();
+    shadow.querySelector(".rkrs-queue-trigger").click();
+    await settle();
+    const target = [...shadow.querySelectorAll(".rkrs-queue-list .rkrs-q-row")].find((node) => node.querySelector(".rkrs-q-name").textContent.trim() === otherTitle);
+    target.querySelector(".rkrs-q-play").click();
     await settle();
     assert.equal(title(), otherTitle);
-    assert.equal(shadow.querySelector(".rkrs-next-note"), null);
+    assert.equal(shadow.querySelector(".rkrs-popover"), null);
+  } finally {
+    app.unmountAll(widget);
+    dom.window.close();
+  }
+});
+
+test("the panel shows the scenario's own layout and the next task's date", async () => {
+  const { dom, window, app, context, widget, slot } = setup();
+  try {
+    app.mountPanel(context);
+    await settle();
+    const shadow = slot.querySelector('[data-rkrs-prototype-surface="panel"]').shadowRoot;
+    assert.match(shadow.querySelector(".rkrs-summary-status").textContent, /Следующая задача/);
+    assert.equal(shadow.querySelector(".rkrs-summary-time").textContent.trim(), "10:30");
+    assert.equal(shadow.querySelector(".rkrs-timer-block"), null, "the task scenario has no timer");
+    shadow.querySelector(".rkrs-scenario").click();
+    await settle();
+    [...shadow.querySelectorAll(".rkrs-scenario-option")].find((node) => node.textContent.trim() === "Другое").click();
+    await settle();
+    const play = shadow.querySelector(".rkrs-btn-play");
+    assert.ok(shadow.querySelector(".rkrs-other-input"));
+    assert.ok(shadow.querySelector(".rkrs-timer-block"));
+    assert.equal(play.disabled, true, "an activity needs a name");
+    const input = shadow.querySelector(".rkrs-other-input");
+    input.value = "Подготовка";
+    input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await settle();
+    assert.equal(play.disabled, false);
+    play.click();
+    await settle();
+    assert.equal(shadow.querySelector(".rkrs-btn-stopred").disabled, false);
   } finally {
     app.unmountAll(widget);
     dom.window.close();
