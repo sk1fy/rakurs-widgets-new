@@ -4,7 +4,7 @@ import { createLiveActivityController } from '../src/live-controller.js';
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-function fixture({ storage = null } = {}) {
+function fixture({ storage = null, apiOrigin = 'https://api.example.test' } = {}) {
   const calls = [], held = [], channels = [];
   let current = null, history = [];
   const hold = new Set();
@@ -18,10 +18,11 @@ function fixture({ storage = null } = {}) {
       queueMicrotask(() => {
         const respond = () => {
           const failureKey = path.startsWith('sessions?') ? 'history' : path;
-          if (failures.get(failureKey)) { const status = failures.get(failureKey) === 409 ? 409 : 503; failures.set(failureKey, status === 409 ? 0 : failures.get(failureKey) - 1); return failure({ status }); }
+          if (failures.get(failureKey)) { const entry = failures.get(failureKey); const status = typeof entry === 'object' ? entry.status : entry === 409 ? 409 : 503; failures.set(failureKey, typeof entry === 'object' ? (entry.remaining > 1 ? { ...entry, remaining: entry.remaining - 1 } : 0) : status === 409 ? 0 : entry - 1); return failure({ status }); }
           if (path === 'token') return fn({ token: 'fresh-token' });
           if (path === 'state') return fn({ current: structuredClone(current), enabled: true, settings: { include_related_deals: true } });
           if (path.startsWith('sessions?')) return fn({ items: structuredClone(history) });
+          if (/^tasks\/\d+$/.test(path)) return fn({ id: 19, responsible_user_id: 7, text: 'Task', is_completed: false });
           if (path.startsWith('tasks')) return fn({ tasks: [], complete: true });
           if (path === 'browser-session') return fn({ url: 'https://panel.example.test/settings' });
           const body = JSON.parse(options.data);
@@ -37,7 +38,7 @@ function fixture({ storage = null } = {}) {
   } } };
   class Channel { constructor() { channels.push(this); } postMessage() {} close() {} }
   const documentImpl = { hidden: false, querySelectorAll: () => [], addEventListener(name, fn) { events[name] = fn; }, removeEventListener() {}, defaultView: { addEventListener(name, fn) { events[name] = fn; }, removeEventListener() {} } };
-  const controller = createLiveActivityController({ context: { widget, accountId: 42, userId: 7 }, apiOrigin: 'https://api.example.test', appOrigin: 'https://panel.example.test', storageImpl: storage, broadcastImpl: Channel, documentImpl, locationImpl: route });
+  const controller = createLiveActivityController({ context: { widget, accountId: 42, userId: 7 }, apiOrigin, appOrigin: 'https://panel.example.test', storageImpl: storage, broadcastImpl: Channel, documentImpl, locationImpl: route });
   return { controller, calls, hold, held, failures, route, events, channels, documentImpl, setCurrent(value) { current = value; }, setHistory(value) { history = value; } };
 }
 
@@ -290,5 +291,54 @@ test('periodic history finds a remote interval completed entirely between state 
   assert.equal(f.controller.getSnapshot().active, null);
   assert.deepEqual(f.controller.getSnapshot().history.map(row => row.id), ['remote-closed']);
   assert.equal(f.controller.getSnapshot().totalSeconds, 9);
+  f.controller.dispose();
+});
+
+
+test('every queue failure backs off and hidden lead navigation sends no queue requests', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1800000000000 });
+  const f = fixture(); await flush();
+  const count = () => f.calls.filter(row => row.url.includes('/tasks')).length;
+  f.failures.set('tasks?lead_id=1', { status: 500, remaining: 3 });
+  f.route.pathname = '/leads/detail/1'; f.controller.tick(); await flush();
+  const before = count();
+  for (let i = 0; i < 4; i++) { t.mock.timers.tick(1000); f.controller.tick(); await flush(); }
+  assert.equal(count(), before, 'HTTP500 must not trigger one queue request per tick');
+  t.mock.timers.tick(1000); f.controller.tick(); await flush();
+  assert.equal(count(), before + 1, 'the first retry is eligible after five seconds');
+  for (let i = 0; i < 9; i++) { t.mock.timers.tick(1000); f.controller.tick(); await flush(); }
+  assert.equal(count(), before + 1, 'repeated failures extend the delay');
+  f.documentImpl.hidden = true;
+  f.route.pathname = '/leads/detail/2';
+  t.mock.timers.tick(30000); f.controller.tick(); await flush();
+  assert.equal(count(), before + 1, 'a hidden new card cannot bypass the retry schedule');
+  f.documentImpl.hidden = false; f.controller.tick(); await flush();
+  assert.equal(count(), before + 2);
+  f.controller.dispose();
+});
+
+test('missing API configuration keeps tick and explicit refresh safe', async () => {
+  const f = fixture({ apiOrigin: undefined });
+  f.controller.dispose();
+  const invalid = fixture({ apiOrigin: 'invalid-api-origin' });
+  await flush();
+  assert.match(invalid.controller.getSnapshot().error, /API Activity/);
+  assert.doesNotThrow(() => invalid.controller.tick());
+  assert.equal(await invalid.controller.refresh(), false);
+  assert.deepEqual(invalid.calls, []);
+  invalid.controller.dispose();
+});
+
+test('a cross-tab signal during a completion preflight asks for retry without claiming the action finished', async () => {
+  const f = fixture(); await flush();
+  f.hold.add('state');
+  const complete = f.controller.completeTask('19', 'Done'); await flush();
+  const owned = f.held.shift(); assert.ok(owned);
+  f.channels[0].onmessage({ data: { type: 'session-changed' } });
+  owned.fn({ current: null, enabled: true, settings: {} });
+  assert.equal(await complete, false);
+  assert.match(f.controller.getSnapshot().error, /Состояние изменилось/);
+  assert.equal(f.controller.getSnapshot().completion, null);
+  assert.equal(f.calls.some(row => row.method === 'POST'), false);
   f.controller.dispose();
 });
