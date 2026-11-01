@@ -6,7 +6,7 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 
 function fixture({ storage = null } = {}) {
   const calls = [], held = [], channels = [];
-  let current = null;
+  let current = null, history = [];
   const hold = new Set();
   const failures = new Map();
   const route = { pathname: '/' }, events = {};
@@ -21,7 +21,7 @@ function fixture({ storage = null } = {}) {
           if (failures.get(failureKey)) { const status = failures.get(failureKey) === 409 ? 409 : 503; failures.set(failureKey, status === 409 ? 0 : failures.get(failureKey) - 1); return failure({ status }); }
           if (path === 'token') return fn({ token: 'fresh-token' });
           if (path === 'state') return fn({ current: structuredClone(current), enabled: true, settings: { include_related_deals: true } });
-          if (path.startsWith('sessions?')) return fn({ items: [] });
+          if (path.startsWith('sessions?')) return fn({ items: structuredClone(history) });
           if (path.startsWith('tasks')) return fn({ tasks: [], complete: true });
           if (path === 'browser-session') return fn({ url: 'https://panel.example.test/settings' });
           const body = JSON.parse(options.data);
@@ -38,7 +38,7 @@ function fixture({ storage = null } = {}) {
   class Channel { constructor() { channels.push(this); } postMessage() {} close() {} }
   const documentImpl = { hidden: false, querySelectorAll: () => [], addEventListener(name, fn) { events[name] = fn; }, removeEventListener() {}, defaultView: { addEventListener(name, fn) { events[name] = fn; }, removeEventListener() {} } };
   const controller = createLiveActivityController({ context: { widget, accountId: 42, userId: 7 }, apiOrigin: 'https://api.example.test', appOrigin: 'https://panel.example.test', storageImpl: storage, broadcastImpl: Channel, documentImpl, locationImpl: route });
-  return { controller, calls, hold, held, failures, route, events, channels, documentImpl, setCurrent(value) { current = value; } };
+  return { controller, calls, hold, held, failures, route, events, channels, documentImpl, setCurrent(value) { current = value; }, setHistory(value) { history = value; } };
 }
 
 test('background history leaves activity commands available and publishes their receipts immediately', async () => {
@@ -278,5 +278,17 @@ test('failed cross-tab reconciliation is retried on the baseline or explicit ref
   assert.equal(await f.controller.startOther('Wait for state'), false);
   assert.equal(await f.controller.refresh(), true);
   assert.equal(f.controller.getSnapshot().invalidated, false);
+  f.controller.dispose();
+});
+
+
+test('periodic history finds a remote interval completed entirely between state polls', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1800000000000 });
+  const f = fixture(); await flush();
+  f.setHistory([{ id: 'remote-closed', kind: 'activity', started_at: 1799999990, stopped_at: 1799999999, context: { activity_name: 'Remote work' } }]);
+  t.mock.timers.tick(90000); f.controller.tick(); await flush();
+  assert.equal(f.controller.getSnapshot().active, null);
+  assert.deepEqual(f.controller.getSnapshot().history.map(row => row.id), ['remote-closed']);
+  assert.equal(f.controller.getSnapshot().totalSeconds, 9);
   f.controller.dispose();
 });
