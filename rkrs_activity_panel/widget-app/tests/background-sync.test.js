@@ -161,7 +161,7 @@ test('focus and visibility keep the 90-second state baseline and card changes re
   assert.equal(count('/state'), stateReads);
   t.mock.timers.tick(1); f.controller.tick(); await flush();
   assert.equal(count('/state'), stateReads + 1);
-  assert.equal(count('/sessions?'), historyReads, 'unchanged periodic state does not reload history');
+  assert.equal(count('/sessions?'), historyReads + 1, 'history has its own bounded periodic refresh');
   f.controller.dispose();
 });
 

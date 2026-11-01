@@ -35,6 +35,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   let ownTaskIds = new Set(), disposed = false, lastSync = 0, lastTasks = 0, tasksRetryAt = 0, serverSettings = {}, client, lastDialog = null, dialogTransition = null, queueLead = '', closedSeconds = 0, dayStart = 0;
   let revision = 0, managementPending = false, stateInvalidated = false, invalidationQueued = false;
   const reads = Object.fromEntries(['state', 'history', 'queue'].map(name => [name, { token: 0, current: null }]));
+  reads.history.nextAt = 0;
   const reconciliationKey = `rkrs-activity-reconcile:${identity}`;
   try { state.recoveryRequired = storage?.getItem(reconciliationKey) === 'true'; } catch {}
   function requireReconciliation(value) {
@@ -238,6 +239,8 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   function loadHistory() {
     const today = dayKey(parts(Date.now()));
     return read('history', today, async ticket => {
+      reads.history.nextAt = Date.now() + 90000;
+      state.historyStale = true; emit();
       if (!state.enabled && !state.active) {
         state.history = []; closedSeconds = 0; state.historyStale = false; updateTotal(); emit();
         return true;
@@ -263,7 +266,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   }
   async function refreshBackground(includeQueue = true) {
     if (!await sync() || disposed) return false;
-    const results = await Promise.all([...(includeQueue || state.historyStale ? [loadHistory()] : []), ...(includeQueue && Date.now() >= tasksRetryAt ? [loadTasks()] : [])]);
+    const results = await Promise.all([...(includeQueue || state.historyStale || Date.now() >= reads.history.nextAt ? [loadHistory()] : []), ...(includeQueue && Date.now() >= tasksRetryAt ? [loadTasks()] : [])]);
     return results.every(Boolean);
   }
   function refreshProjections() {
@@ -576,7 +579,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       if (!state.busy && !documentImpl.hidden && !client.getState().pending && !state.recoveryRequired) {
         if (Date.now()-lastSync >= 90000) void refreshBackground(false);
         if (state.ready && !state.completion && Date.now()-lastTasks >= 60000 && Date.now() >= tasksRetryAt) void loadTasks();
-        if (state.ready && dayKey(parts(dayStart || Date.now())) !== dayKey(parts(Date.now()))) void loadHistory();
+        if (state.ready && Date.now() >= reads.history.nextAt && dayKey(parts(dayStart || Date.now())) !== dayKey(parts(Date.now()))) void loadHistory();
       }
     },
     dispose() { disposed = true; invalidateReads(); try { channel?.close(); } catch { /* Already closed. */ } documentImpl.removeEventListener?.('visibilitychange', onVisible); windowRef?.removeEventListener?.('focus', onVisible); documentImpl.removeEventListener?.('click', onNativeComplete, true); documentImpl.removeEventListener?.('click', onCardClick, true); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); documentImpl.querySelectorAll?.('.feed-note-wrapper-task[data-id]').forEach(clearCardAction); listeners.clear(); },
