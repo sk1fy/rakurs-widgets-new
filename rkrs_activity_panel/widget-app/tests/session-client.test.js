@@ -5,22 +5,22 @@ import { createActivitySessionClient } from "../src/session-client.js";
 test("network retry preserves command identity but gets a fresh disposable JWT", async () => {
   let tokens=0;const calls=[];
   const client=createActivitySessionClient({baseURL:"https://api.example.test",getToken:async()=>`jwt-${++tokens}`,fetchImpl:async(url,options)=>{calls.push({url,options});if(calls.length===1)throw Error("response lost");return {ok:true,json:async()=>({id:"session-1",stopped_at:0})};}});
-  await assert.rejects(client.startImbox(123),/response lost/);
-  await assert.rejects(client.startTask({task_id:7}),/pending command/);
+  await assert.rejects(client.startImbox(123, {}, ''),/response lost/);
+  await assert.rejects(client.startTask({task_id:7}, ''),/pending command/);
   await client.retryPending();
   assert.equal(calls[0].options.headers["Idempotency-Key"],calls[1].options.headers["Idempotency-Key"]);
   assert.notEqual(calls[0].options.headers.Authorization,calls[1].options.headers.Authorization);
   assert.equal(JSON.parse(calls[1].options.body).context.activity_type,"imbox");
-  assert.equal(client.getState().active.id,"session-1");client.dispose();
+  assert.equal(client.getState().pending,false);client.dispose();
 });
 test("stop carries the acknowledged session ID and result, with no client actor override", async()=>{
  const bodies=[];const client=createActivitySessionClient({baseURL:"https://api.example.test",getToken:async()=>"jwt",fetchImpl:async(_,o)=>{const body=JSON.parse(o.body);bodies.push(body);return {ok:true,json:async()=>({id:"server-session",stopped_at:body.action==="stop"?100:0})};}});
- await client.startTask({task_id:8,entity_id:9,entity_type:"leads"});await client.stop("Done");assert.equal(bodies[1].session_id,"server-session");assert.equal(bodies[1].context.task_result,"Done");assert.equal(bodies[0].employee_id,undefined);assert.equal(client.getState().active,null);client.dispose();
+ await client.startTask({task_id:8,entity_id:9,entity_type:"leads"}, "");await client.stopSession("server-session", "Done");assert.equal(bodies[1].session_id,"server-session");assert.equal(bodies[1].context.task_result,"Done");assert.equal(bodies[0].employee_id,undefined);assert.equal(client.getState().pending,false);client.dispose();
 });
-test('SDK transport restores active state and guards cross-tab replacement', async () => {
+test('SDK transport uses the explicit controller session identity', async () => {
   const calls=[];
   const client=createActivitySessionClient({baseURL:'https://api.example.test',authorizedRequest:async options => {calls.push(options);if(options.method==='GET')return {current:{id:'existing',stopped_at:0}};return {id:'new',stopped_at:0};}});
-  await client.loadState();await client.startTask({task_id:9});
+  await client.loadState();await client.startTask({task_id:9}, 'existing');
   assert.equal(calls[0].method,'GET');assert.equal(calls[0].data,undefined);
   assert.equal(JSON.parse(calls[1].data).expected_session_id,'existing');
   assert.ok(calls[1].headers['Idempotency-Key']);client.dispose();
@@ -28,8 +28,8 @@ test('SDK transport restores active state and guards cross-tab replacement', asy
 test('definitive conflict releases command for a refresh, network errors remain retryable', async () => {
   let fail=true;
   const client=createActivitySessionClient({baseURL:'https://api.example.test',authorizedRequest:async()=>{if(fail){const e=new Error('conflict');e.status=409;throw e;}return {id:'new',stopped_at:0};}});
-  await assert.rejects(client.startTask({task_id:3}));assert.equal(client.getState().pending,false);
-  fail=false;await client.startTask({task_id:4});client.dispose();
+  await assert.rejects(client.startTask({task_id:3}, ''));assert.equal(client.getState().pending,false);
+  fail=false;await client.startTask({task_id:4}, '');client.dispose();
 });
 
 test('pending identity survives reload and a state read without storing credentials', async () => {
@@ -37,7 +37,7 @@ test('pending identity survives reload and a state read without storing credenti
   const storage = { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
   const calls = [];
   const first = createActivitySessionClient({ baseURL: 'https://api.example.test', storage, storageKey: 'employee-7', authorizedRequest: async options => { calls.push(options); throw Error('response lost'); } });
-  await assert.rejects(first.startTask({ task_id: 7 }));
+  await assert.rejects(first.startTask({ task_id: 7 }, ''));
   first.dispose();
   const second = createActivitySessionClient({ baseURL: 'https://api.example.test', storage, storageKey: 'employee-7', authorizedRequest: async options => { calls.push(options); return options.method === 'GET' ? { current: { id: 'acknowledged' } } : { id: 'acknowledged', stopped_at: 0 }; } });
   assert.equal(second.getState().pending, true);
@@ -54,11 +54,11 @@ test('pending identity survives reload and a state read without storing credenti
 test('late SDK responses after dispose do not acknowledge or clear a pending command', async () => {
   let finish;
   const client = createActivitySessionClient({ baseURL: 'https://api.example.test', authorizedRequest: () => new Promise(resolve => { finish = resolve; }) });
-  const pending = client.startTask({ task_id: 9 });
+  const pending = client.startTask({ task_id: 9 }, '');
   client.dispose();
   finish({ id: 'late-session', stopped_at: 0 });
   await assert.rejects(pending, /disposed/);
-  assert.equal(client.getState().active, null);
+  assert.equal('active' in client.getState(), false);
   assert.equal(client.getState().pending, true);
 });
 
@@ -84,4 +84,24 @@ test('task reads and completion go only to the server task endpoints, carrying R
   assert.deepEqual(JSON.parse(calls[3].options.body),{result:'Готово'});
   assert.equal(calls[3].options.headers['Idempotency-Key'],undefined);
   assert.equal(client.getState().pending,false,'completion is not a session command');client.dispose();
+});
+
+
+test('late state is transport data only and explicit CAS is required for every start', async () => {
+  let finishState;
+  const bodies = [];
+  const client = createActivitySessionClient({ baseURL: 'https://api.example.test', authorizedRequest: options => {
+    if (options.method === 'GET') return new Promise(resolve => { finishState = resolve; });
+    bodies.push(JSON.parse(options.data));
+    return Promise.resolve({ id: 'confirmed', stopped_at: 0 });
+  } });
+  const state = client.loadState();
+  await client.startActivity('Work', {}, 'accepted');
+  finishState({ current: { id: 'obsolete' } }); await state;
+  await client.startPause('confirmed');
+  assert.deepEqual(bodies.map(body => body.expected_session_id), ['accepted', 'confirmed']);
+  await assert.rejects(client.startTask({ task_id: 3 }), /Explicit expected session ID/);
+  assert.equal(client.getState().pending, false);
+  assert.equal(client.stop, undefined);
+  client.dispose();
 });

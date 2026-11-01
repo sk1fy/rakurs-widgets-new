@@ -101,7 +101,7 @@ test('live controller loads real CRM task and context, writes through SDK and re
   const context={userId:7,widget:{$authorizedAjax(options){const result={done(fn){queueMicrotask(()=>{let value;if(options.url.endsWith('/state'))value={current,enabled:true,settings:{consider_future_tasks:true}};else if(options.method==='GET')value={items:[]};else {written=JSON.parse(options.data);current={id:'session',kind:'work',started_at:100,context:written.context};value=current;}fn(value);});return result;},fail(){return result;}};return result;}}};
   const fetchImpl=async url=>({ok:true,status:200,json:async()=>url.includes('tasks?')?{_embedded:{tasks:[{id:19,responsible_user_id:7,text:'CRM task',task_type_id:1,complete_till:200}]}}:url.endsWith('tasks/19')?{id:19,responsible_user_id:7,text:'CRM task',task_type_id:1,entity_type:'leads',entity_id:12}:url.endsWith('leads/12')?{name:'Real deal',pipeline_id:2,status_id:3}:url.includes('pipelines')?{name:'Sales',_embedded:{statuses:[{id:3,name:'New',color:'#fff'}]}}:{_embedded:{task_types:[{id:1,name:'Call'}]}}});
   const controller=createLiveActivityController({context,apiOrigin:'https://api.example.test',appOrigin:'https://panel.example.test',fetchImpl,documentImpl:{querySelectorAll(){return[];}},locationImpl:{pathname:'/'}});
-  await new Promise(resolve=>{const unsubscribe=controller.subscribe(state=>{listeners.push(state);if(!state.busy){unsubscribe();resolve();}});});
+  await new Promise(resolve=>{const unsubscribe=controller.subscribe(state=>{listeners.push(state);if(!state.busy && state.tasks.length){unsubscribe();resolve();}});});
   assert.equal(controller.getSnapshot().tasks[0].title,'CRM task');
   await controller.startTask('19');assert.equal(written.context.entity_name,'Real deal');assert.equal(written.context.status_name,'New');assert.equal(written.expected_session_id,'');assert.equal(controller.getSnapshot().active.id,'19');controller.dispose();
 });
@@ -215,6 +215,7 @@ function employeeFixture({ enabled = true, failState = 0, failStop = 0, failPatc
   return { create, task, writes, patches, reads, setEnabled(value) { enabled = value; }, failNextState() { failState = 1; }, replaceCurrent(value) { current = value; } };
 }
 async function idle(controller) {
+  await settleImbox();
   if (!controller.getSnapshot().busy) return;
   await new Promise(resolve => { const unsubscribe = controller.subscribe(state => { if (!state.busy) { unsubscribe(); resolve(); } }); });
 }
@@ -340,16 +341,16 @@ test('disposing a pending SDK read prevents late callbacks from issuing more rea
 });
 
 
-test('failed fresh server state blocks new commands instead of using previously healthy state', async () => {
+test('ordinary state read failure retains accepted state and permits commands', async () => {
   const fixture = employeeFixture(); const controller = fixture.create(); await idle(controller);
   assert.equal(controller.getSnapshot().ready, true);
   fixture.failNextState(); assert.equal(await controller.refresh(), false);
-  assert.equal(controller.getSnapshot().ready, false);
-  assert.equal(await controller.startOther('Must not start'), false);
-  assert.equal(fixture.writes.length, 0);
+  assert.equal(controller.getSnapshot().ready, true);
+  assert.equal(await controller.startOther('Still available'), true);
+  assert.equal(fixture.writes.length, 1);
   assert.equal(await controller.refresh(), true);
   assert.equal(await controller.startOther('Available again'), true);
-  assert.equal(fixture.writes.length, 1); controller.dispose();
+  assert.equal(fixture.writes.length, 2); controller.dispose();
 });
 
 test('initial server failure does not load a CRM queue or permit writes', async () => {
@@ -522,10 +523,9 @@ test('local validation errors keep the panel usable', async () => {
   assert.equal(fixture.writes.length, 1); controller.dispose();
 });
 
-test('compact view survives a new controller and a busy controller opens no management window', async () => {
+test('compact view survives a new controller', async () => {
   const storage = memoryStorage();
   const fixture = employeeFixture({ storage }); let controller = fixture.create();
-  assert.equal(controller.openManagement(), false);
   await idle(controller);
   controller.updateSettings({ compact: true }); controller.dispose();
   controller = fixture.create();
@@ -577,7 +577,7 @@ test('amoCRM completion button is only intent: the interval stops after CRM conf
   controller.dispose();
 });
 
-test('a write in one tab makes the other tabs reread state and queue at once', async t => {
+test('a write in one tab makes other tabs reread state without reloading their queue', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: 1800000000000 });
   const channels = [];
   class FakeChannel {
@@ -596,7 +596,7 @@ test('a write in one tab makes the other tabs reread state and queue at once', a
   await first.stop();
   const afterStop = queueReads();
   second.tick(); await settled(second);
-  assert.equal(queueReads(), afterStop + 1);
+  assert.equal(queueReads(), afterStop);
   assert.equal(second.getSnapshot().active, null);
   first.dispose(); second.dispose();
   assert.equal(channels.length, 0);

@@ -31,15 +31,52 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     view = { ...view, ...patch };
     try { prefs?.setItem(viewKey, JSON.stringify(view)); } catch { /* Preferences stay in memory. */ }
   }
-  const state = { live: true, enabled: view.enabled === true, ready: false, completion: null, busy: false, scenario: 'tasks', tasks: [], dialogs: [], selectedTaskId: null, active: null, history: [], settings: { compact: view.compact === true }, error: '', queue: { complete: true, stale: false, fetchedAt: 0, warning: false, note: '' }, elapsedSeconds: 0, totalSeconds: 0, completedCount: null };
+  const state = { live: true, enabled: view.enabled === true, ready: false, completion: null, busy: false, scenario: 'tasks', tasks: [], dialogs: [], selectedTaskId: null, active: null, history: [], settings: { compact: view.compact === true }, error: '', readWarning: '', historyStale: true, recoveryRequired: false, queue: { complete: true, stale: false, fetchedAt: 0, warning: false, note: '' }, elapsedSeconds: 0, totalSeconds: 0, completedCount: null };
   let ownTaskIds = new Set(), disposed = false, lastSync = 0, lastTasks = 0, tasksRetryAt = 0, serverSettings = {}, client, lastDialog = null, dialogTransition = null, queueLead = '', closedSeconds = 0, dayStart = 0;
-  // Other tabs of the same employee only hear that something changed; each one
-  // rereads the server, which stays the source of truth.
+  let revision = 0, managementPending = false, stateInvalidated = false, invalidationQueued = false;
+  const reads = Object.fromEntries(['state', 'history', 'queue'].map(name => [name, { token: 0, current: null }]));
+  const reconciliationKey = `rkrs-activity-reconcile:${identity}`;
+  try { state.recoveryRequired = storage?.getItem(reconciliationKey) === 'true'; } catch {}
+  function requireReconciliation(value) {
+    state.recoveryRequired = value;
+    try { if (value) storage?.setItem(reconciliationKey, 'true'); else storage?.removeItem(reconciliationKey); } catch {}
+  }
+  function invalidateReads() { revision++; }
+  function readCurrent(name, ticket) {
+    return !disposed && revision === ticket.revision && reads[name].current === ticket && reads[name].token === ticket.token && !state.busy && (ticket.metadata || (!client.getState().pending && !state.recoveryRequired));
+  }
+  function read(name, scope, action, metadata = false) {
+    if (disposed || state.busy || (!metadata && (client.getState().pending || state.recoveryRequired))) return Promise.resolve(false);
+    const slot = reads[name];
+    if (slot.current?.revision === revision && slot.current.scope === scope) return slot.current.promise;
+    const ticket = { revision, token: ++slot.token, scope, metadata };
+    slot.current = ticket;
+    ticket.promise = (async () => {
+      try { return await action(ticket); }
+      catch (error) { if (readCurrent(name, ticket)) { state.readWarning = error.message; if (!state.ready) state.error = error.message; emit(); } return false; }
+      finally { if (slot.current === ticket) slot.current = null; }
+    })();
+    return ticket.promise;
+  }
   let channel = null;
-  try { if (typeof broadcastImpl === 'function') { channel = new broadcastImpl(`rkrs-activity:${identity}`); channel.onmessage = () => { if (!disposed) { lastSync = 0; lastTasks = 0; } }; } } catch { channel = null; }
-  const announce = () => { try { if (!disposed) channel?.postMessage({ type: 'changed' }); } catch { /* Other tabs still poll. */ } };
-  // Returning to the tab rereads state at once; hidden tabs do not poll at all.
-  const onVisible = () => { if (disposed || documentImpl.hidden) return; if (Date.now() - lastSync > 3000) lastSync = 0; if (Date.now() - lastTasks > 10000) lastTasks = 0; };
+  try {
+    if (typeof broadcastImpl === 'function') {
+      channel = new broadcastImpl(`rkrs-activity:${identity}`);
+      channel.onmessage = event => {
+        if (disposed || !['session-changed', 'changed'].includes(event.data?.type)) return;
+        stateInvalidated = true;
+        for (const name of ['state', 'history']) { reads[name].token++; reads[name].current = null; }
+        state.historyStale = true;
+        emit();
+        if (!invalidationQueued) {
+          invalidationQueued = true;
+          queueMicrotask(() => { invalidationQueued = false; if (!disposed && !state.busy) void refreshBackground(false); });
+        }
+      };
+    }
+  } catch { channel = null; }
+  const announce = () => { try { if (!disposed) channel?.postMessage({ type: 'session-changed' }); } catch { /* Other tabs still poll. */ } };
+  const onVisible = () => { if (!disposed && !documentImpl.hidden) controller.tick(); };
   const windowRef = documentImpl.defaultView;
   documentImpl.addEventListener?.('visibilitychange', onVisible);
   windowRef?.addEventListener?.('focus', onVisible);
@@ -63,6 +100,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   } catch { /* Ignore malformed local recovery data. */ }
   function rememberCompletion(value) {
     if (disposed) throw new Error('Виджет закрыт');
+    if (state.completion && !value) lastTasks = 0;
     state.completion = value;
     try { if (value) storage?.setItem(completionKey, JSON.stringify(value)); else storage?.removeItem(completionKey); } catch { /* Server/CRM reads still recover the current task. */ }
   }
@@ -73,8 +111,8 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   const parts = timestamp => Object.fromEntries(formatter.formatToParts(new Date(timestamp)).map(part => [part.type, part.value]));
   const dayKey = value => `${value.year}-${value.month}-${value.day}`;
   // Employees outside the panel settings get no bar unless they still own unfinished work.
-  const hidden = () => Boolean(client) && !state.enabled && !state.active && !state.completion && !client.getState().pending;
-  const snapshot = () => structuredClone({ ...state, pending: client?.getState().pending || false, hidden: hidden() });
+  const hidden = () => Boolean(client) && !state.enabled && !state.active && !state.completion && !client.getState().pending && !state.recoveryRequired;
+  const snapshot = () => structuredClone({ ...state, invalidated: stateInvalidated, pending: client?.getState().pending || false, hidden: hidden() });
   const emit = () => { if (!disposed) listeners.forEach(fn => fn(snapshot())); };
   const sdkRequest = options => new Promise((resolve, reject) => {
     if (disposed) return reject(new Error('Виджет закрыт'));
@@ -105,6 +143,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   try { client = createActivitySessionClient({ baseURL: apiOrigin, authorizedRequest: sdkRequest, storage, storageKey: `rkrs-activity-command:${identity}`, onCommand: announce }); }
   catch { state.error = 'Не настроен адрес API Activity (VITE_ACTIVITY_API_ORIGIN)'; }
   function assertAvailable() {
+    if (state.recoveryRequired || stateInvalidated) throw invalid('Обновите состояние перед действием');
     if (!state.ready) throw new Error('Обновите данные перед действием');
     if (!state.enabled) throw invalid('Панель задач отключена');
     if (client.getState().pending || state.completion) throw invalid('Сначала восстановите незавершённое действие кнопкой обновления');
@@ -156,35 +195,81 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     // selection; a later different selection is the user's next task.
     if (state.active?.kind === 'tasks' && state.active.serverId !== previous) state.selectedTaskId = state.active.id;
   }
-  async function sync() {
-    lastSync = Date.now();
-    const own = await client.loadState();
-    if (disposed) return;
-    serverSettings = own.settings;
+  function applyState(own) {
+    if (!state.ready) state.error = '';
+    const previous = state.active?.serverId;
+    serverSettings = own.settings || {};
     state.enabled = own.enabled;
     if (view.enabled !== own.enabled) rememberView({ enabled: own.enabled });
     applyCurrent(own.current);
-    if (!own.enabled) state.error = 'Панель задач отключена для сотрудника в общих настройках';
-    if (!own.enabled && !state.active) {
-      // A hidden panel has nothing to show: skip the history pages entirely.
-      state.history = []; closedSeconds = 0; updateTotal(); state.ready = true; lastSync = Date.now();
-      return;
-    }
-    const today = dayKey(parts(Date.now())); let low = Math.floor(Date.now()/1000)-48*3600, high = Math.floor(Date.now()/1000); while (low < high) { const mid = Math.floor((low+high)/2); if (dayKey(parts(mid*1000)) < today) low=mid+1; else high=mid; } const midnight = new Date(low*1000);
-    const from = Math.floor(midnight.getTime() / 1000), to = Math.floor(Date.now() / 1000);
-    let cursor = '', items = [];
-    do { const page = await client.loadHistory({ from, to, ...(cursor ? { cursor } : {}) }); items.push(...(page.items || [])); cursor = page.next_cursor || ''; } while (cursor && !disposed);
-    const closed = items.filter(row => row.stopped_at);
-    state.history = closed.map(row => ({ id: row.id, kind: row.kind === 'work' ? 'tasks' : row.kind === 'pause' ? 'pause' : row.context.activity_type || 'other', title: row.context.task_name || row.context.activity_name || 'Пауза', seconds: Math.max(0, row.stopped_at - row.started_at), finishedAt: row.stopped_at * 1000 }));
-    // Pauses are not work, and an interval that began yesterday counts only from midnight.
-    closedSeconds = closed.filter(row => row.kind !== 'pause').reduce((sum, row) => sum + Math.max(0, Math.min(row.stopped_at, to) - Math.max(row.started_at, from)), 0);
-    dayStart = from * 1000;
-    updateTotal();
-    // Session history has no explicit completion fact. A result comment is not
-    // proof of CRM completion, and an empty result is a valid completion.
-    state.completedCount = null;
+    if (previous !== state.active?.serverId) state.historyStale = true;
     state.ready = true;
+    stateInvalidated = false;
+    updateTotal();
+    scanDOM(); emit();
+  }
+  function publishReceipt(receipt) {
+    if (disposed) return;
+    if (!receipt.stopped_at) applyCurrent(receipt);
+    else if (state.active?.serverId === receipt.id) applyCurrent(null);
+    state.historyStale = true;
+    updateTotal();
+    emit();
+  }
+  async function ownedState() {
+    const owner = revision, token = reads.state.token;
+    const own = await client.loadState();
+    if (disposed || !state.busy || owner !== revision || token !== reads.state.token) throw invalid('Действие уже завершено');
+    applyState(own);
     lastSync = Date.now();
+    return own;
+  }
+  function sync(metadata = false) {
+    return read('state', '', async ticket => {
+      lastSync = Date.now();
+      const own = await client.loadState();
+      if (!readCurrent('state', ticket)) return false;
+      if (client.getState().pending || state.recoveryRequired) {
+        state.enabled = own.enabled; serverSettings = own.settings || {}; emit();
+      } else { applyState(own); state.readWarning = ''; }
+      return true;
+    }, metadata);
+  }
+  function loadHistory() {
+    const today = dayKey(parts(Date.now()));
+    return read('history', today, async ticket => {
+      if (!state.enabled && !state.active) {
+        state.history = []; closedSeconds = 0; state.historyStale = false; updateTotal(); emit();
+        return true;
+      }
+      let low = Math.floor(Date.now()/1000)-48*3600, high = Math.floor(Date.now()/1000);
+      while (low < high) { const mid = Math.floor((low+high)/2); if (dayKey(parts(mid*1000)) < today) low=mid+1; else high=mid; }
+      const from = low, to = Math.floor(Date.now()/1000);
+      let cursor = '', items = [];
+      do {
+        const page = await client.loadHistory({ from, to, ...(cursor ? { cursor } : {}) });
+        if (!readCurrent('history', ticket) || dayKey(parts(Date.now())) !== today) return false;
+        items.push(...(page.items || [])); cursor = page.next_cursor || '';
+      } while (cursor);
+      const closed = items.filter(row => row.stopped_at);
+      state.history = closed.map(row => ({ id: row.id, kind: row.kind === 'work' ? 'tasks' : row.kind === 'pause' ? 'pause' : row.context.activity_type || 'other', title: row.context.task_name || row.context.activity_name || 'Пауза', seconds: Math.max(0, row.stopped_at - row.started_at), finishedAt: row.stopped_at * 1000 }));
+      closedSeconds = closed.filter(row => row.kind !== 'pause').reduce((sum, row) => sum + Math.max(0, Math.min(row.stopped_at, to) - Math.max(row.started_at, from)), 0);
+      dayStart = from * 1000;
+      state.historyStale = false;
+      state.completedCount = null;
+      updateTotal(); emit();
+      return true;
+    });
+  }
+  async function refreshBackground(includeQueue = true) {
+    if (!await sync() || disposed) return false;
+    const results = await Promise.all([...(includeQueue || state.historyStale ? [loadHistory()] : []), ...(includeQueue && Date.now() >= tasksRetryAt ? [loadTasks()] : [])]);
+    return results.every(Boolean);
+  }
+  function refreshProjections() {
+    if (disposed || !state.ready || client.getState().pending || state.recoveryRequired) return;
+    if (state.historyStale) void loadHistory();
+    if ((!lastTasks || Date.now() - lastTasks >= 60000) && Date.now() >= tasksRetryAt) void loadTasks();
   }
   // Today's total includes the running interval from midnight on; pauses are not work.
   function updateTotal() {
@@ -195,41 +280,41 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   // button, another device). Only CRM's record proves the completion, and only
   // the very interval observed for that task is closed.
   async function reconcileCompletedTask(id) {
-    const active = state.active;
-    if (active?.kind !== 'tasks' || active.id !== id || client.getState().pending || state.completion) return false;
+    const active = state.active, observed = revision;
+    if (active?.kind !== 'tasks' || active.id !== id || state.busy || client.getState().pending || state.completion || state.recoveryRequired) return false;
     let task;
-    try { task = await client.loadTask(Number(id)); } catch (error) { if (disposed) throw error; return false; }
-    if (!task.is_completed) return false;
-    const own = await client.loadState();
-    if (disposed) return false;
-    applyCurrent(own.current);
-    if (own.current?.id !== active.serverId) return false;
-    const result = typeof task.result_text === 'string' && new TextEncoder().encode(task.result_text).length <= 2000 ? task.result_text : '';
-    await client.stopSession(active.serverId, result);
-    await sync();
-    return true;
+    try { task = await client.loadTask(Number(id)); } catch { return false; }
+    if (disposed || revision !== observed || !task.is_completed || state.active?.serverId !== active.serverId) return false;
+    return run(async () => {
+      const own = await ownedState();
+      if (own.current?.id !== active.serverId) return;
+      const result = typeof task.result_text === 'string' && new TextEncoder().encode(task.result_text).length <= 2000 ? task.result_text : '';
+      publishReceipt(await client.stopSession(active.serverId, result));
+    });
   }
-  async function loadTasks() {
+  function loadTasks() {
+    const leadId = locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1] || '';
+    return read('queue', `${serverSettings.include_related_deals ? leadId : ''}`, ticket => loadQueue(leadId, ticket));
+  }
+  async function loadQueue(leadId, ticket) {
     if (!Number.isSafeInteger(Number(context.userId)) || Number(context.userId) <= 0) throw new Error('Не определён сотрудник amoCRM');
-    if (!state.enabled) { state.tasks = []; ownTaskIds = new Set(); state.selectedTaskId = null; describeQueue({ complete: true, stale: false, errorCode: '', fetchedAt: 0 }); return; }
-    const leadId = locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1];
-    queueLead = leadId || '';
-    state.relatedEnabled = Boolean(serverSettings.include_related_deals && queueLead);
+    if (!state.enabled) { state.tasks = []; ownTaskIds = new Set(); state.selectedTaskId = null; describeQueue({ complete: true, stale: false, errorCode: '', fetchedAt: 0 }); emit(); return true; }
     let queue;
     // The server shares one snapshot per employee across tabs and labels tasks
     // related to the open lead itself.
     try { queue = await client.loadTasks(serverSettings.include_related_deals ? leadId : undefined); }
     catch (error) {
       // amoCRM is busy: keep the last queue and wait for the server's delay.
-      if ([429, 503].includes(error.status)) { tasksRetryAt = Date.now() + Math.max(error.retryAfter, 5) * 1000; if (lastTasks) { error.keepReady = true; describeQueue({ ...state.queue, stale: true, errorCode: error.code || '' }); } }
+      if (readCurrent('queue', ticket) && [429, 503].includes(error.status)) { tasksRetryAt = Date.now() + Math.max(error.retryAfter, 5) * 1000; if (lastTasks) { error.keepReady = true; describeQueue({ ...state.queue, stale: true, errorCode: error.code || '' }); } }
       throw error;
     }
-    if (disposed) return;
+    if (!readCurrent('queue', ticket) || (serverSettings.include_related_deals && (locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1] || '') !== leadId)) return false;
+    queueLead = leadId;
+    state.relatedEnabled = Boolean(serverSettings.include_related_deals && queueLead);
     tasksRetryAt = queue.retry_after_seconds > 0 ? Date.now() + queue.retry_after_seconds * 1000 : 0;
     const rows = queue.tasks || [];
     // The server returns only this employee's unfinished tasks; a queue row carries no owner field.
     ownTaskIds = new Set(rows.map(row => String(row.id)));
-    if (state.active?.kind === 'tasks' && !rows.some(row => String(row.id) === state.active.id)) await reconcileCompletedTask(state.active.id);
     const priorities = serverSettings.priority_keys || ['urgent','overdue','overdue_no_time','today_no_time','today_timed','future'];
     const priority = row => { const due = new Date(row.complete_till * 1000), now = new Date(), dueParts = parts(due.getTime()), today = dayKey(dueParts) === dayKey(parts(now.getTime())), allDay = dueParts.hour === '23' && dueParts.minute === '59', overdue = due < now; const key = !allDay && today && (overdue || due-now <= 600000) ? 'urgent' : !allDay && overdue && !today ? 'overdue' : allDay && overdue && !today ? 'overdue_no_time' : allDay && today ? 'today_no_time' : !allDay && today ? 'today_timed' : 'future'; const index = priorities.indexOf(key); return index < 0 ? 99 : index; };
     const visible = rows.filter(row => serverSettings.consider_future_tasks || dayKey(parts(row.complete_till * 1000)) <= dayKey(parts(Date.now())));
@@ -238,11 +323,28 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     describeQueue({ complete: queue.complete !== false, stale: queue.stale === true, errorCode: queue.error_code || '', fetchedAt: queue.fetched_at > 0 ? queue.fetched_at * 1000 : 0 });
     if (!state.tasks.some(row => row.id === state.selectedTaskId)) state.selectedTaskId = state.tasks[0]?.id || null;
     lastTasks = Date.now();
+    scanDOM(); emit();
+    if (state.active?.kind === 'tasks' && !rows.some(row => String(row.id) === state.active.id)) await reconcileCompletedTask(state.active.id);
+    return true;
   }
   async function run(action) {
-    if (disposed || state.busy || !client) return;
+    if (disposed || state.busy || !client) return false;
+    invalidateReads();
     state.busy = true; state.error = ''; emit();
-    try { await action(); return !disposed; } catch (error) { if (!disposed) { state.error = state.completion?.phase === 'stop_pending' ? `Задача завершена в amoCRM; остановка учёта времени не подтверждена. Нажмите обновление для восстановления. ${error.message}` : state.completion ? `Завершение задачи не подтверждено. Обновление проверит amoCRM и восстановит учёт времени. ${error.message}` : error.message; if (!error.keepReady) state.ready = false; } return false; } finally { if (!disposed) { state.busy = false; scanDOM(); emit(); } }
+    try { return await action() !== false && !disposed; }
+    catch (error) {
+      if (!disposed) {
+        if (error.status === 409) {
+          requireReconciliation(true);
+          try { await ownedState(); requireReconciliation(false); } catch (readError) { state.readWarning = readError.message; }
+        }
+        state.error = state.completion?.phase === 'stop_pending' ? `Задача завершена в amoCRM; остановка учёта времени не подтверждена. Нажмите обновление для восстановления. ${error.message}` : state.completion ? `Завершение задачи не подтверждено. Обновление проверит amoCRM и восстановит учёт времени. ${error.message}` : error.message;
+      }
+      return false;
+    } finally {
+      invalidateReads();
+      if (!disposed) { state.busy = false; scanDOM(); emit(); refreshProjections(); if (stateInvalidated) void refreshBackground(false); }
+    }
   }
   async function taskContext(id) {
     const task = await client.loadTask(Number(id), { context: true });
@@ -297,7 +399,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       button.innerHTML = cardActions[mode].icon; button.append(cardActions[mode].label);
       button.title = mode === 'blocked' ? 'Сначала завершите Imbox-активность' : '';
     }
-    const locked = mode === 'blocked' || !state.ready || Boolean(state.completion) || Boolean(client?.getState().pending);
+    const locked = mode === 'blocked' || state.busy || state.recoveryRequired || stateInvalidated || !state.ready || Boolean(state.completion) || Boolean(client?.getState().pending);
     if (button.disabled !== locked) button.disabled = locked;
   }
   // Delegated, as amoCRM may stop a click before it reaches a node inside its card.
@@ -312,7 +414,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   };
   documentImpl.addEventListener?.('click', onCardClick, true);
   async function startImboxSession(id) {
-    if (!state.dialogs.some(row => row.id === String(id))) throw invalid('Откройте диалог Imbox'); const details = { client_id: clientId }; const entityId = dialogEntities.get(String(id)); if (entityId) { const entity = await client.loadLead(entityId); Object.assign(details, { entity_type: 'leads', entity_id: entityId }, entity.restricted ? {} : { entity_name: entity.name, pipeline_id: entity.pipeline_id || 0, status_id: entity.status_id || 0 }); } await client.startImbox(id, details);
+    if (!state.dialogs.some(row => row.id === String(id))) throw invalid('Откройте диалог Imbox'); const details = { client_id: clientId }; const entityId = dialogEntities.get(String(id)); if (entityId) { const entity = await client.loadLead(entityId); Object.assign(details, { entity_type: 'leads', entity_id: entityId }, entity.restricted ? {} : { entity_name: entity.name, pipeline_id: entity.pipeline_id || 0, status_id: entity.status_id || 0 }); } publishReceipt(await client.startImbox(id, details, state.active?.serverId || ''));
   }
   async function resumeCompletion() {
     const intent = state.completion;
@@ -325,10 +427,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
           rememberCompletion(null);
           throw new Error('Для завершения задачи укажите результат. Задача остаётся открытой.');
         }
-        const own = await client.loadState();
-        if (disposed) return;
-        state.enabled = own.enabled;
-        applyCurrent(own.current);
+        await ownedState();
         if (!state.ready || !state.enabled) throw new Error('Панель отключена: задача не была завершена');
         try {
           await client.completeTask(intent.taskId, intent.result);
@@ -348,38 +447,37 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     }
     const completed = state.completion;
     if (completed.sessionId) {
-      const own = await client.loadState();
-      if (disposed) return;
-      applyCurrent(own.current);
+      const own = await ownedState();
       // The captured interval may already have been stopped/replaced in another
       // tab. Never stop whichever different interval is current now.
-      if (own.current?.id === completed.sessionId) await client.stopSession(completed.sessionId, completed.result);
+      if (own.current?.id === completed.sessionId) publishReceipt(await client.stopSession(completed.sessionId, completed.result));
     }
     rememberCompletion(null);
   }
-  async function refresh() {
+  async function recover() {
     if (client.getState().pending) {
-      try { await client.retryPending(); }
+      requireReconciliation(true);
+      try { publishReceipt(await client.retryPending()); }
       catch (error) { if (error.status !== 409) throw error; }
     }
-    await sync();
-    if (state.completion) { await resumeCompletion(); await sync(); }
-    await loadTasks();
+    try { await ownedState(); requireReconciliation(false); state.readWarning = ''; }
+    catch (error) { state.readWarning = `Обновите состояние перед следующим действием. ${error.message}`; return false; }
+    if (state.completion) await resumeCompletion();
   }
   const controller = {
     getSnapshot: snapshot, subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     selectScenario(value) { state.scenario = value; emit(); }, selectTask(id) { state.selectedTaskId = id; emit(); },
-    startTask(id = state.selectedTaskId) { return run(async () => { assertAvailable(); await client.startTask(await taskContext(id)); await sync(); }); },
-    startOther(name) { return run(async () => { assertAvailable(); name = validateText(name, 'Название активности', true); await client.startActivity(name, { client_id: clientId }); await sync(); }); },
-    startImbox(id) { return run(async () => { assertAvailable(); await startImboxSession(id); lastDialog = String(id); await sync(); }); },
-    pause() { return run(async () => { assertAvailable(); await client.startPause(); await sync(); }); },
+    startTask(id = state.selectedTaskId) { return run(async () => { assertAvailable(); publishReceipt(await client.startTask(await taskContext(id), state.active?.serverId || '')); }); },
+    startOther(name) { return run(async () => { assertAvailable(); name = validateText(name, 'Название активности', true); publishReceipt(await client.startActivity(name, { client_id: clientId }, state.active?.serverId || '')); }); },
+    startImbox(id) { return run(async () => { assertAvailable(); await startImboxSession(id); lastDialog = String(id); }); },
+    pause() { return run(async () => { assertAvailable(); publishReceipt(await client.startPause(state.active?.serverId || '')); }); },
     stop() { return run(async () => {
       if (client.getState().pending) throw new Error('Сначала восстановите незавершённую команду кнопкой обновления');
       // An explicit stop may abandon an unconfirmed CRM completion; it never
       // retries the CRM write and still closes only the acknowledged interval.
-      await client.stop();
+      if (state.recoveryRequired || stateInvalidated || !state.ready) throw invalid('Обновите состояние перед действием');
+      publishReceipt(await client.stopSession(state.active?.serverId));
       rememberCompletion(null);
-      await sync();
     }); },
     completeTask(id, result = '') { return run(async () => {
       assertAvailable();
@@ -387,10 +485,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       if (!result) throw invalid('Для завершения задачи укажите результат.');
       const task = await client.loadTask(Number(id));
       assertOwnedTask(task, id);
-      const own = await client.loadState();
-      if (disposed) return;
-      applyCurrent(own.current);
-      state.enabled = own.enabled;
+      await ownedState();
       if (!state.enabled) throw new Error('Панель задач отключена');
       const sessionId = state.active?.kind === 'tasks' && state.active.id === String(id) ? state.active.serverId : '';
       if (task.is_completed && !sessionId) throw new Error('Задача уже завершена');
@@ -398,16 +493,25 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       // the task, so a lost PATCH response does not blindly repeat completion.
       rememberCompletion({ taskId: Number(id), result: task.is_completed ? task.result_text || result : result, sessionId, phase: 'crm_pending' });
       await resumeCompletion();
-      await sync();
-      await loadTasks();
     }); },
-    refresh() { return run(refresh); },
+    refresh() { return client && (client.getState().pending || state.completion || state.recoveryRequired) ? run(recover) : refreshBackground(); },
     updateSettings(patch) { state.settings = { ...state.settings, ...patch }; rememberView({ compact: state.settings.compact === true }); emit(); }, reset() {},
     openManagement() {
-      // run() would skip a busy controller and leave the blank window behind.
-      if (disposed || state.busy || !client) return false;
+      if (disposed || managementPending || !client) return false;
       const popup = window.open('about:blank', '_blank'); if (popup) popup.opener = null;
-      return run(async () => { try { const result = await client.createManagementLink(appOrigin); const url = new URL(result.url); if (url.origin !== new URL(appOrigin).origin) throw new Error('Некорректный адрес настроек'); if (!popup) throw new Error('Разрешите открытие окна настроек'); popup.location.replace(url.href); } catch (error) { popup?.close(); error.keepReady = true; throw error; } });
+      managementPending = true;
+      return (async () => {
+        try {
+          const result = await client.createManagementLink(appOrigin);
+          if (disposed) { popup?.close(); return false; }
+          const url = new URL(result.url);
+          if (url.origin !== new URL(appOrigin).origin) throw new Error('Некорректный адрес настроек');
+          if (!popup) throw new Error('Разрешите открытие окна настроек');
+          popup.location.replace(url.href);
+          return true;
+        } catch (error) { popup?.close(); if (!disposed) { state.error = error.message; emit(); } return false; }
+        finally { managementPending = false; }
+      })();
     },
     tick() {
       if (disposed) return;
@@ -419,15 +523,15 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
         else if (!state.busy && state.ready && Date.now() >= check.next) {
           // Each check is a live amoCRM read inside the shared budget.
           check.next = Date.now() + 5000;
-          run(async () => { if (await reconcileCompletedTask(id)) { completionChecks.delete(id); await loadTasks(); } });
+          void reconcileCompletedTask(id).then(completed => { if (completed) completionChecks.delete(id); });
         }
       }
       // The controller outlives navigation: related deals follow the opened lead card.
       const lead = locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1] || '';
-      if (serverSettings.include_related_deals && state.ready && lead !== queueLead) { queueLead = lead; lastSync = 0; lastTasks = 0; }
+      if (serverSettings.include_related_deals && state.ready && lead !== queueLead && Date.now() >= tasksRetryAt) { void loadTasks(); }
       const dialog = locationImpl.pathname.match(/\/imbox\/(\d+)/)?.[1];
       if (lastDialog === null && state.active?.kind === 'imbox' && state.active.clientId === clientId && state.active.id === dialog) lastDialog = dialog;
-      if (!state.busy && (state.ready || dialogTransition?.pending) && state.enabled && !state.completion && !documentImpl.hidden) {
+      if (!state.busy && (!state.recoveryRequired || (dialogTransition?.pending && client.getState().pending)) && !stateInvalidated && (state.ready || dialogTransition?.pending) && state.enabled && !state.completion && !documentImpl.hidden) {
         // A failed automatic write keeps its original command identity even if
         // navigation changes while its response is missing. Resolve it first.
         if (!dialogTransition && !client.getState().pending && dialog !== lastDialog) {
@@ -445,14 +549,19 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
           if (!transition.pending && (transition.target !== dialog || (state.active && !ownsCurrent))) dialogTransition = null;
           else run(async () => {
             try {
-              if (transition.pending) await client.retryPending();
+              if (transition.pending) {
+                requireReconciliation(true);
+                publishReceipt(await client.retryPending());
+                lastDialog = transition.target;
+                dialogTransition = null;
+                try { await ownedState(); requireReconciliation(false); } catch (error) { state.readWarning = error.message; }
+              }
               else if (transition.action === 'start') await startImboxSession(transition.target);
-              else await client.stop();
+              else publishReceipt(await client.stopSession(state.active?.serverId));
               // Acknowledge only the successful server write, not DOM discovery
               // or a subsequent read. Manual stop on this route stays stopped.
               lastDialog = transition.target;
               dialogTransition = null;
-              await sync();
             } catch (error) {
               if (dialogTransition === transition) {
                 transition.pending = client.getState().pending;
@@ -464,11 +573,14 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
           });
         }
       }
-      // Unenrolled employees only need to notice being enabled; poll them rarely.
-      if (!state.busy && !documentImpl.hidden && Date.now()-lastSync > (hidden() ? 120000 : 15000)) run(async () => { await sync(); if (!client.getState().pending && !state.completion && Date.now()-lastTasks > 60000 && Date.now() >= tasksRetryAt) await loadTasks(); });
+      if (!state.busy && !documentImpl.hidden && !client.getState().pending && !state.recoveryRequired) {
+        if (Date.now()-lastSync >= 90000) void refreshBackground(false);
+        if (state.ready && !state.completion && Date.now()-lastTasks >= 60000 && Date.now() >= tasksRetryAt) void loadTasks();
+        if (state.ready && dayKey(parts(dayStart || Date.now())) !== dayKey(parts(Date.now()))) void loadHistory();
+      }
     },
-    dispose() { disposed = true; try { channel?.close(); } catch { /* Already closed. */ } documentImpl.removeEventListener?.('visibilitychange', onVisible); windowRef?.removeEventListener?.('focus', onVisible); documentImpl.removeEventListener?.('click', onNativeComplete, true); documentImpl.removeEventListener?.('click', onCardClick, true); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); documentImpl.querySelectorAll?.('.feed-note-wrapper-task[data-id]').forEach(clearCardAction); listeners.clear(); },
+    dispose() { disposed = true; invalidateReads(); try { channel?.close(); } catch { /* Already closed. */ } documentImpl.removeEventListener?.('visibilitychange', onVisible); windowRef?.removeEventListener?.('focus', onVisible); documentImpl.removeEventListener?.('click', onNativeComplete, true); documentImpl.removeEventListener?.('click', onCardClick, true); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); documentImpl.querySelectorAll?.('.feed-note-wrapper-task[data-id]').forEach(clearCardAction); listeners.clear(); },
   };
-  if (client) run(async () => { await sync(); await loadTasks(); });
+  if (client) void sync(true).then(ok => { if (ok && !disposed) refreshProjections(); });
   return controller;
 }
