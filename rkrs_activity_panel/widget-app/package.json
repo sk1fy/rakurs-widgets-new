@@ -10,7 +10,8 @@
     "build:preview": "node scripts/release.mjs && vite build --mode preview",
     "preview": "vite preview --host 127.0.0.1 --port 4174 --strictPort --outDir dist-preview",
     "package:widget": "node scripts/package-widget.mjs",
-    "test": "npm run release && node --test tests/*.test.js"
+    "test": "npm run release && node --test tests/*.test.js",
+    "dev:live-fixture": "VITE_ACTIVITY_API_ORIGIN=https://activity-fixture.invalid VITE_ACTIVITY_APP_ORIGIN=https://panel-fixture.invalid vite --host 127.0.0.1 --port 5176 --strictPort"
   },
   "dependencies": {
     "@lucide/vue": "1.48.0",

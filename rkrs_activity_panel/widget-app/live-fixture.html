@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ru">
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Activity live SDK fixture</title></head>
+  <body>
+    <main style="margin:100px 32px 32px 88px;font:15px system-ui;max-width:1050px">
+      <h1>Activity live SDK fixture</h1>
+      <p>Настоящие live-контроллер, runtime и Vue-панель. SDK отвечает в памяти. Запросы в CRM не отправляются. Перезагрузка сбрасывает fixture.</p>
+      <nav style="display:flex;gap:12px;flex-wrap:wrap">
+        <a href="?scenario=error">Ошибка состояния</a><a href="?scenario=error-disabled">Ошибка с кэшем disabled</a><a href="?scenario=auth">Ошибка авторизации</a><a href="?scenario=active">Активная задача</a><a href="?scenario=idle">Очередь без интервала</a>
+      </nav>
+      <p id="scenario"></p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button id="accept-enabled">Следующий state enabled</button><button id="accept-disabled">Следующий state disabled</button>
+        <button id="hold-detail">Удерживать task detail</button><button id="release-detail">Вернуть task detail</button><button id="reject-detail">Ошибка task detail</button>
+        <button id="hold-state">Удерживать state</button><button id="release-state">Вернуть state</button><button id="visibility">Fixture hidden = false</button>
+        <button id="rerender">Destroy + render</button>
+      </div>
+      <p>Кнопка «Выполнить» меняет CRM-запись fixture. Контроллер должен подтвердить её чтением и остановить захваченный интервал. Удержание применяется ко всем последующим запросам выбранного типа.</p>
+      <section class="feed-note-wrapper-task" data-id="19" style="border:1px solid #ccd5df;padding:16px;margin:16px 0">
+        <div class="card-task"><div class="card-task__inner-content"><strong>Проверить предложение</strong><p>Тестовая сделка</p></div><div class="card-task__actions"><button class="js-complete-task" id="native-complete">Выполнить</button></div></div>
+      </section>
+      <p id="status" role="status"></p><pre id="requests" style="white-space:pre-wrap;background:#f0f4f8;padding:12px"></pre>
+    </main>
+    <script type="module" src="/fixtures/browser.js"></script>
+  </body>
+</html>
