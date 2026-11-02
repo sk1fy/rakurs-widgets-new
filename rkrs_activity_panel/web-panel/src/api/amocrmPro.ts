@@ -211,33 +211,49 @@ export class AmocrmProViewerSource implements ActivitySource {
   }
 
   private async paginate(path: string, range: DayRange, signal?: AbortSignal): Promise<{ events: CrmEvent[]; meta: DataMeta }> {
-    const events: CrmEvent[] = [];
+    const uniqueEvents = new Map<string, CrmEvent>();
+    const seenCursors = new Set<string>();
+    const notes = new Set<string>();
+    let coverage: DataMeta["coverage"] = "verified";
+    let partial = false;
+    let stale = false;
     const legacyCalls = new Set<string>();
     let cursor: string | undefined;
-    let last: RawTimeline | undefined;
     let pages = 0;
     do {
       const q = new URLSearchParams({ from: String(range.from), to: String(range.to), limit: "100" });
       if (cursor) q.set("cursor", cursor);
-      last = await this.get<RawTimeline>(`${path}?${q.toString()}`, signal);
+      const page = await this.get<RawTimeline>(`${path}?${q.toString()}`, signal);
       // Go encodes an empty nil slice as null. Coverage still decides whether
       // the empty result is verified; normalizing the list must not hide it.
-      const pageEvents = last.data.events ?? [];
+      const pageMeta = metaFrom(page, 0, false);
+      if (pageMeta.coverage === "unknown" || coverage === "unknown") coverage = "unknown";
+      else if (pageMeta.coverage === "partial") coverage = "partial";
+      partial ||= pageMeta.partial;
+      stale ||= pageMeta.stale;
+      for (const note of pageMeta.note?.split("; ") ?? []) notes.add(note);
+      const pageEvents = page.data.events ?? [];
       for (const event of pageEvents) {
-        if (event.call_facts == null) legacyCalls.add(String(event.id));
+        const id = String(event.id);
+        if (uniqueEvents.has(id)) continue;
+        uniqueEvents.set(id, mapEvent(event));
+        if (event.call_facts == null) legacyCalls.add(id);
       }
-      events.push(...pageEvents.map(mapEvent));
-      cursor = last.data.next_cursor || undefined;
+      cursor = page.data.next_cursor || undefined;
+      if (cursor) {
+        if (seenCursors.has(cursor)) throw new ApiError({ code: "unavailable", message: "Источник повторил курсор событий", retryable: true });
+        seenCursors.add(cursor);
+      }
       pages += 1;
     } while (cursor && pages < MAX_PAGES);
     const capped = Boolean(cursor);
     const snapshotAt = Math.floor(Date.now() / 1000);
+    const events = [...uniqueEvents.values()];
     const resolved = await this.resolveCallFacts(events, legacyCalls, signal);
     if (signal?.aborted) throw new ApiError({ code: "aborted", message: "aborted" });
-    const notes = [capped ? `загружено ${pages} стр. из-за предела, часть событий не получена` : null, resolved.unresolved ? `у ${resolved.unresolved} звонков нет длительности` : null]
-      .filter(Boolean)
-      .join("; ");
-    return { events, meta: metaFrom(last as RawTimeline, snapshotAt, capped, notes || undefined) };
+    if (capped) notes.add(`загружено ${pages} стр. из-за предела, часть событий не получена`);
+    if (resolved.unresolved) notes.add(`у ${resolved.unresolved} звонков нет длительности`);
+    return { events, meta: { source: "amocrm-pro", snapshotAt, coverage, partial: partial || capped, stale, note: [...notes].join("; ") || undefined } };
   }
 
   /**

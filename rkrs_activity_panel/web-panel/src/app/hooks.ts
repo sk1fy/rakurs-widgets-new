@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "../api/errors";
 
-export const ACTIVE_REFRESH_MS = 4 * 60_000;
+export const ACTIVE_REFRESH_MS = 90_000;
 
 /** Текущее время, тикает раз в tickMs (по умолчанию 30 с). */
 export function useNow(tickMs = 30_000): number {

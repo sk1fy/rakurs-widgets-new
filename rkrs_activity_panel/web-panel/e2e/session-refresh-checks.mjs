@@ -19,12 +19,12 @@ export async function sessionRefreshChecks(browser, base, check) {
     await click("Reject latest");
     await wait("error", "failed");
     check(await text("data") === "source1-employee7-request1", `${mode}: refresh failure retains old intervals with an error`);
-    await page.clock.fastForward(240000);
+    await page.clock.fastForward(90000);
     await wait("requests", "3");
     await click("Resolve latest");
     await wait("data", "source1-employee7-request3");
-    check(await text("error") === "none", `${mode}: four-minute retry replaces data and clears the error`);
-    await page.clock.fastForward(240000);
+    check(await text("error") === "none", `${mode}: 90-second retry replaces data and clears the error`);
+    await page.clock.fastForward(90000);
     await wait("requests", "4");
     await page.clock.fastForward(480000);
     check(await text("requests") === "4", `${mode}: slow session refresh is not restarted`);
@@ -50,7 +50,7 @@ export async function sessionRefreshChecks(browser, base, check) {
     await hidden.clock.install();
     await hidden.goto(`${base}e2e/session-refresh.html?mode=${mode}&hidden`);
     await hidden.getByRole("button", { name: "Show tab", exact: true }).waitFor();
-    await hidden.clock.fastForward(240000);
+    await hidden.clock.fastForward(90000);
     check(await hidden.getByTestId("requests").innerText() === "0", `${mode}: initially hidden sessions wait for activation`);
     await hidden.getByRole("button", { name: "Show tab", exact: true }).click();
     await hidden.getByTestId("requests").filter({ hasText: "1" }).waitFor();

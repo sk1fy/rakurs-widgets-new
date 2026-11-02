@@ -7,6 +7,7 @@ import { avatarSrc } from "../../domain/crmLinks";
 import { ratingTheme } from "../../domain/formulas/profileRating";
 import { profileActivityPercent } from "../../domain/activityRatings";
 import { addMonths, todayKey } from "../../domain/time";
+import { LoadingFeedback } from "../../ui/LoadingFeedback";
 import { Icon } from "../../ui/Icon";
 import { Avatar, EmptyState, ErrorState, MetaBadges } from "../../ui/primitives";
 import { DateNav } from "../dashboard/DateNav";
@@ -23,7 +24,7 @@ import { useEmployeeData } from "./useEmployeeData";
 
 /** Профиль сотрудника (EmployeeStatsScreenV2): события CRM + сессии виджета (C4). */
 export function EmployeePage({ employeeId, date }: { employeeId: number; date: string | null }) {
-  const { panel, prefs, source, viewKey } = usePanelScope();
+  const { panel, panelRefreshing, prefs, source, viewKey } = usePanelScope();
   const now = useNow();
   const tz = panel.timezone;
   const today = todayKey(tz, now * 1000);
@@ -81,11 +82,6 @@ export function EmployeePage({ employeeId, date }: { employeeId: number; date: s
           </div>
           <div className="sp" />
           <DateNav dayKey={dayKey} today={today} sub={win.isToday ? "сегодня" : "сравнение: предыдущий день целиком"} onChange={(d) => navigate({ name: "employee", viewKey, employeeId, date: d === today ? null : d })} />
-          {data.events.refreshing && (
-            <span className="refreshing">
-              <span className="spin" /> обновление
-            </span>
-          )}
           {data.events.data && <MetaBadges meta={data.events.data.meta} timeZone={tz} />}
         </div>
         {canPreview && (
@@ -95,33 +91,37 @@ export function EmployeePage({ employeeId, date }: { employeeId: number; date: s
             <button className="tool-btn" type="button" onClick={() => setPreviewEnabled((v) => !v)}>{previewEnabled ? "Только реальные данные" : "Показать тестовые примеры"}</button>
           </div>
         )}
-        {data.ratings.error !== null && <ErrorState error={data.ratings.error} onRetry={data.ratings.reload} compact />}
-        {data.prevRatings.error !== null && <div className="banner">Не удалось загрузить вчерашний рейтинг активности.</div>}
-        {(data.ratings.data?.partial || data.prevRatings.data?.partial) && <div className="banner">Рейтинг активности рассчитан по неполной выборке событий.</div>}
-        {data.events.status === "error" && <ErrorState error={data.events.error} onRetry={data.events.reload} />}
-        {data.events.status === "loading" && (
-          <>
-            <SectionSkeleton title="Общая информация" tiles={4} rows={0} />
-            <SectionSkeleton title="Анализ событий" tiles={0} rows={6} />
-          </>
-        )}
-        {events && (
-          <>
-            <GeneralInfo
-              today={{ events, sessions, dayKey, activityPercent: rating }}
-              yesterday={{ events: data.prevEvents.status === "ready" ? prevEvents ?? [] : null, sessions: data.prevSessions.data ?? null, dayKey: data.prev.dayKey, activityPercent: previousRating }}
-              timeZone={tz}
-              workEndMinutes={win.endMinutes}
-              nowUnix={now}
-              isToday={win.isToday}
-            />
-            <EventAnalysis events={preview.analysis ? sample.events : filtered} sessions={preview.analysis ? sample.sessions : sessions} dayKey={dayKey} timeZone={tz} startMinutes={win.startMinutes} endMinutes={win.endMinutes} nowUnix={preview.analysis ? sample.now : now} crmBase={preview.analysis ? null : crmBase} employeeId={employeeId} demo={preview.analysis} />
-          </>
-        )}
+        <div className="data-region">
+          <LoadingFeedback loading={data.events.status === "loading"} refreshing={panelRefreshing || data.events.refreshing || data.sessions.refreshing || data.ratings.refreshing || (data.events.data !== null && data.ratings.status === "loading")} />
+          {data.ratings.error !== null && <ErrorState error={data.ratings.error} onRetry={data.ratings.reload} compact />}
+          {data.prevRatings.error !== null && <div className="banner">Не удалось загрузить вчерашний рейтинг активности.</div>}
+          {(data.ratings.data?.partial || data.prevRatings.data?.partial) && <div className="banner">Рейтинг активности рассчитан по неполной выборке событий.</div>}
+          {data.events.error !== null && <ErrorState error={data.events.error} onRetry={data.events.reload} />}
+          {data.events.error !== null && data.events.data !== null && <div className="banner">Последнее обновление не удалось. Показаны ранее загруженные данные.</div>}
+          {data.prevEvents.error !== null && <><div className="banner">Сравнение с предыдущим днём недоступно.</div><ErrorState error={data.prevEvents.error} onRetry={data.prevEvents.reload} compact /></>}
+          {data.events.status === "loading" && (
+            <>
+              <SectionSkeleton title="Общая информация" tiles={4} rows={0} />
+              <SectionSkeleton title="Анализ событий" tiles={0} rows={6} />
+            </>
+          )}
+          {events && (
+            <>
+              <GeneralInfo
+                today={{ events, sessions, dayKey, activityPercent: rating }}
+                yesterday={{ events: data.prevEvents.status === "ready" && data.prevEvents.error === null ? prevEvents ?? [] : null, sessions: data.prevSessions.data ?? null, dayKey: data.prev.dayKey, activityPercent: previousRating }}
+                timeZone={tz}
+                workEndMinutes={win.endMinutes}
+                nowUnix={now}
+                isToday={win.isToday}
+              />
+              <EventAnalysis events={preview.analysis ? sample.events : filtered} sessions={preview.analysis ? sample.sessions : sessions} dayKey={dayKey} timeZone={tz} startMinutes={win.startMinutes} endMinutes={win.endMinutes} nowUnix={preview.analysis ? sample.now : now} crmBase={preview.analysis ? null : crmBase} employeeId={employeeId} demo={preview.analysis} />
+            </>
+          )}
+        </div>
         {data.sessions.error !== null && <ErrorState error={data.sessions.error} onRetry={data.sessions.reload} compact />}
         {data.sessions.data?.kind === "ok" && <MetaBadges meta={data.sessions.data.data.meta} timeZone={tz} />}
         {data.sessions.error !== null && data.sessions.data && <div className="banner">История сессий временно устарела: последнее обновление не удалось.</div>}
-        {data.sessions.refreshing && <div className="refreshing"><span className="spin" /> Обновление интервалов сотрудника…</div>}
         {data.sessions.status === "loading" && (
           <>
             <SectionSkeleton title="Суммарное время" tiles={0} rows={5} />

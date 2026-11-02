@@ -3,7 +3,8 @@ import { createSource } from "../api";
 import { ApiError } from "../api/errors";
 import { loadPreferences, savePreferences } from "../settings/preferences";
 import type { LocalPreferences } from "../settings/models";
-import { ErrorState, Spinner } from "../ui/primitives";
+import { LoadingFeedback } from "../ui/LoadingFeedback";
+import { ErrorState } from "../ui/primitives";
 import { PanelScopeContext } from "./context";
 import { AppHeader } from "./AppHeader";
 import { ACTIVE_REFRESH_MS, useResource } from "./hooks";
@@ -36,9 +37,9 @@ export function PanelShell({ viewKey, children }: { viewKey: string; children: R
       </>
     );
   }
-  if (!panel.data) return <Spinner label="Загрузка панели…" />;
+  if (!panel.data) return <div className="data-region panel-bootstrap"><LoadingFeedback loading refreshing={false} /></div>;
   return (
-    <PanelScopeContext.Provider value={{ viewKey, source, panel: panel.data, prefs, setPrefs }}>
+    <PanelScopeContext.Provider value={{ viewKey, source, panel: panel.data, panelRefreshing: panel.refreshing, prefs, setPrefs }}>
       {panel.error !== null && <div className="banner">Настройки панели не обновились; показаны последние доступные данные. <button className="tool-btn" onClick={panel.reload}>Повторить</button></div>}
       {children}
     </PanelScopeContext.Provider>

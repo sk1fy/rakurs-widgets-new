@@ -19,9 +19,10 @@ export async function managementMvp(browser, check, out) {
   let viewReads = 0, viewerAllowed = true;
   let settings = { enabled: true, employee_ids: [7], consider_future_tasks: false, include_related_deals: true, priority_keys: ["today_timed", "urgent"], revision: 3 };
   const saves = [], managementCalls = [], issued = [];
-  const html = `<!doctype html><meta charset="utf-8"><title>MVP widget fixture</title><main id="app"><h1>Искусственный SDK-стенд</h1></main><script src="/fixture-widget.js"></script><script>
+  const html = `<!doctype html><meta charset="utf-8"><title>MVP widget fixture</title><main id="app"><h1>Искусственный SDK-стенд</h1><button id="widget-settings-entry">Настройки установленного виджета</button></main><script src="/fixture-widget.js"></script><script>
     const widget={get_settings:()=>({widget_code:'fixture_activity',oauth_client_uuid:'a0ee1dca-76a6-4720-b1dc-c6a0ba52c07e'}),$authorizedAjax(){throw Error('Cached SDK must not be used')},$:{ajax(options){let done,fail;const req={done(fn){done=fn;return req},fail(fn){fail=fn;return req}};queueMicrotask(async()=>{try{const url=new URL(options.url,location.origin);const r=await fetch(url.pathname+url.search,{method:options.method,headers:{'Content-Type':'application/json',...options.headers},body:options.data});const value=await r.json();r.ok?done(value):fail({status:r.status,responseJSON:value})}catch(e){fail({status:0})}});return req}}};
     RkrsActivityPrototype.registerWidgetInstance(widget);RkrsActivityPrototype.mountPanel({widget,accountId:42,userId:7,mode:'live'});
+    document.getElementById('widget-settings-entry').onclick=()=>RkrsActivityPrototype.openSettings({widget,accountId:42,userId:7,mode:'live'});
     </script>`;
   try {
     await context.route("**/*", async (route) => {
@@ -67,7 +68,8 @@ export async function managementMvp(browser, check, out) {
     });
     const widget = await context.newPage();
     await widget.goto(`${base}/widget-fixture`);
-    await widget.getByRole("button", { name: "Настройки виджета", exact: true }).click();
+    await widget.getByRole("button", { name: "Ещё", exact: true }).click();
+    await widget.getByRole("button", { name: "Настройки", exact: true }).click();
     const opened = context.waitForEvent("page");
     await widget.getByRole("button", { name: "Общие настройки аккаунта", exact: true }).click();
     const settingsPage = await opened;
@@ -107,8 +109,8 @@ export async function managementMvp(browser, check, out) {
     await settingsPage.getByRole("checkbox", { name: /Мария Тест/ }).waitFor();
     check(await settingsPage.getByRole("checkbox", { name: /Мария Тест/ }).isChecked() && !await settingsPage.getByRole("checkbox", { name: /Никита Тест/ }).isChecked(), "management: explicit reload replaces the draft with current server settings");
     await widget.getByRole("button", { name: "Обновить / повторить запрос", exact: true }).click();
-    await widget.getByRole("alert").waitFor();
-    check((await widget.getByRole("alert").innerText()).includes("отключена"), "management: the employee widget consumes updated shared enablement");
+    await widget.locator('[data-rkrs-prototype-surface="panel"]').waitFor({ state: "detached" });
+    check(await widget.locator('[data-rkrs-prototype-surface="panel"]').count() === 0, "management: updated shared employee scope hides the disabled employee panel");
     expired = true;
     await settingsPage.getByRole("link", { name: "Панели", exact: true }).click();
     await settingsPage.getByText("Войдите в настройки из amoCRM", { exact: true }).waitFor();
@@ -123,8 +125,9 @@ export async function managementMvp(browser, check, out) {
     await settingsPage.getByRole("button", { name: "Загрузить актуальные настройки", exact: true }).waitFor();
     check(!await panelSwitch.isEnabled(), "management: revoked administrator access blocks subsequent edits");
     const before = issued.length;
+    await widget.getByRole("button", { name: "Настройки установленного виджета", exact: true }).click();
     await widget.getByRole("button", { name: "Общие настройки аккаунта", exact: true }).click();
-    await widget.getByRole("alert").filter({ hasText: "администратора" }).waitFor();
+    await widget.getByRole("alert").filter({ hasText: "Нет доступа" }).waitFor();
     check(issued.length === before, "management: an ordinary employee cannot mint a settings session");
     const viewer = await context.newPage();
     await viewer.goto(`${base}/#/settings/task-panel`);
@@ -135,9 +138,9 @@ export async function managementMvp(browser, check, out) {
     await viewer.locator(".pname").filter({ hasText: `Тестовая панель ${settings.revision}` }).waitFor();
     const firstReads = viewReads;
     settings = { ...settings, enabled: false, revision: settings.revision + 1 };
-    await viewer.clock.fastForward(240000);
+    await viewer.clock.fastForward(90000);
     await viewer.locator(".pname").filter({ hasText: `Тестовая панель ${settings.revision}` }).waitFor();
-    check(viewReads === firstReads + 1 && await viewer.getByText("Сбор новых интервалов отключён.", { exact: false }).isVisible(), "panel: active viewer reloads shared configuration every four minutes");
+    check(viewReads === firstReads + 1 && await viewer.getByText("Сбор новых интервалов отключён.", { exact: false }).isVisible(), "panel: active viewer reloads shared configuration every 90 seconds");
     check(await viewer.getByRole("switch", { name: "События панели задач на таймлайне", exact: true }).isEnabled(), "panel: disabling collection does not disable viewing recorded history");
     await viewer.evaluate(() => { Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" }); document.dispatchEvent(new Event("visibilitychange")); });
     await viewer.clock.fastForward(2400000);

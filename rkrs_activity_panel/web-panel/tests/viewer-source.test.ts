@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AmocrmProViewerSource, mapEvent } from "../src/api/amocrmPro";
+import { AmocrmProViewerSource, MAX_PAGES, mapEvent } from "../src/api/amocrmPro";
 import { computeMissedCalls } from "../src/domain/formulas/missedCalls";
 
 const range = { dayKey: "2026-10-23", from: 1792702800, to: 1792789199 };
@@ -30,6 +30,14 @@ describe("viewer C1", () => {
     expect(data.meta.note).toContain("unverified_empty");
   });
 
+  it.each(["day", "employee"] as const)("keeps a verified empty %s selection distinct from unavailable data", async (surface) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(timeline(null))));
+    const source = new AmocrmProViewerSource("synthetic-key", "");
+    const data = await (surface === "day" ? source.loadDayEvents(range) : source.loadEmployeeEvents(7, range));
+    expect([...data.byEmployee.values()].flat()).toEqual([]);
+    expect(data.meta).toMatchObject({ coverage: "verified", partial: false, stale: false });
+  });
+
   it("uses the page projection: known zero is missed, null remains unknown", async () => {
     const fetchMock = vi.fn().mockResolvedValue(json(timeline([
       event("zero", { call_facts: facts(0) }),
@@ -54,6 +62,68 @@ describe("viewer C1", () => {
     const data = await new AmocrmProViewerSource("synthetic-key", "").loadDayEvents(range);
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(data.byEmployee.get(7)).toHaveLength(250);
+  });
+
+  it.each(["day", "employee"] as const)("retains metadata from every %s page in either order", async (surface) => {
+    for (const reverse of [false, true]) {
+      const pages = [
+        { ...timeline([]), coverage: "partial", freshness: "lagging", empty_reason: "collecting" },
+        timeline([]),
+      ];
+      if (reverse) pages.reverse();
+      let index = 0;
+      vi.stubGlobal("fetch", vi.fn(async () => json({ ...pages[index++], data: { events: [], next_cursor: index === 1 ? "next" : undefined } })));
+      const source = new AmocrmProViewerSource("synthetic-key", "");
+      const data = await (surface === "day" ? source.loadDayEvents(range) : source.loadEmployeeEvents(7, range));
+      expect(data.meta).toMatchObject({ coverage: "partial", partial: true, stale: true });
+      expect(data.meta.note).toContain("сбор: lagging");
+      expect(data.meta.note).toContain("пусто: collecting");
+    }
+  });
+
+  it("preserves unknown coverage independently of partialness and unique notes", async () => {
+    const pages = [
+      { ...timeline([], "a"), coverage: "unknown", freshness: "lagging", empty_reason: "first" },
+      { ...timeline([], "b"), coverage: "partial", freshness: "lagging", empty_reason: "second" },
+      timeline([]),
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => json(pages.shift())));
+    const { meta } = await new AmocrmProViewerSource("synthetic-key", "").loadDayEvents(range);
+    expect(meta).toMatchObject({ coverage: "unknown", partial: true, stale: true });
+    expect(meta.note).toBe("сбор: lagging; пусто: first; пусто: second");
+  });
+
+  it("deduplicates overlap before legacy enrichment and keeps the first observation", async () => {
+    let page = 0;
+    const fetchMock = vi.fn(async (url: string) => url.includes("/events/")
+      ? json(event("legacy", { call_facts: facts(30) }))
+      : json(++page === 1
+        ? timeline([event("legacy"), event("zero", { call_facts: facts(0) })], "next")
+        : timeline([event("legacy"), event("zero", { call_facts: facts(120) })])));
+    vi.stubGlobal("fetch", fetchMock);
+    const data = await new AmocrmProViewerSource("synthetic-key", "").loadDayEvents(range);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(data.byEmployee.get(7)?.map(e => [e.id, e.call?.durationSeconds])).toEqual([["legacy", 30], ["zero", 0]]);
+    expect(data.meta).toMatchObject({ coverage: "verified", partial: false });
+  });
+
+  it.each([{ cursors: ["a", "a"] }, { cursors: ["a", "b", "a"] }])("rejects cursor cycle $cursors as a retryable failed read", async ({ cursors }) => {
+    let page = 0;
+    const fetchMock = vi.fn(async () => json(timeline([event("projected", { call_facts: facts(0) })], cursors[Math.min(page++, cursors.length - 1)])));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(new AmocrmProViewerSource("synthetic-key", "").loadDayEvents(range)).rejects.toMatchObject({ code: "unavailable", retryable: true });
+    expect(fetchMock).toHaveBeenCalledTimes(cursors.length);
+  });
+
+  it("returns a visibly partial unique selection at the legitimate page cap", async () => {
+    let page = 0;
+    const fetchMock = vi.fn(async () => json(timeline([event(`call-${++page}`, { call_facts: facts(0) })], `cursor-${page}`)));
+    vi.stubGlobal("fetch", fetchMock);
+    const data = await new AmocrmProViewerSource("synthetic-key", "").loadDayEvents(range);
+    expect(fetchMock).toHaveBeenCalledTimes(MAX_PAGES);
+    expect(data.byEmployee.get(7)).toHaveLength(MAX_PAGES);
+    expect(data.meta).toMatchObject({ coverage: "verified", partial: true });
+    expect(data.meta.note).toContain("часть событий не получена");
   });
 
   it("takes refreshed facts from the next page read", async () => {

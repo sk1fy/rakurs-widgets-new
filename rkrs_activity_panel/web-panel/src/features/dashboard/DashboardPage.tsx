@@ -6,6 +6,7 @@ import { navigate } from "../../app/router";
 import { hasProblemSnapshot } from "../../domain/problemRefresh";
 import { computeMissedCalls } from "../../domain/formulas/missedCalls";
 import { addMonths, dayShort, hhmm, minutesToHHMM, minutesOfDay, todayKey, addDays } from "../../domain/time";
+import { LoadingFeedback } from "../../ui/LoadingFeedback";
 import { ErrorState, MetaBadges, NotConnected, Spinner } from "../../ui/primitives";
 import { DateNav, PeriodSwitch } from "./DateNav";
 import { EmployeeCard } from "./EmployeeCard";
@@ -19,7 +20,7 @@ import { DAY_REFRESH_MS, useDashboardData } from "./useDashboardData";
 import { useExternalSessions } from "./useExternalSessions";
 
 export function DashboardPage({ date }: { date: string | null }) {
-  const { panel, prefs, setPrefs, source, viewKey } = usePanelScope();
+  const { panel, panelRefreshing, prefs, setPrefs, source, viewKey } = usePanelScope();
   const now = useNow();
   const tz = panel.timezone;
   const today = todayKey(tz, now * 1000);
@@ -90,11 +91,6 @@ export function DashboardPage({ date }: { date: string | null }) {
             {data.yesterday.status === "error" && <span className="chip bad" title="Вчерашние данные не загрузились, сравнение недоступно">нет данных</span>}
           </div>
           <div className="sp" />
-          {data.today.refreshing && (
-            <span className="refreshing">
-              <span className="spin" /> обновление
-            </span>
-          )}
           {data.today.data && <MetaBadges meta={data.today.data.meta} timeZone={tz} />}
           {data.today.error !== null && data.today.data && <span className="chip bad" title="Последнее обновление не удалось, показаны прежние данные">обновление не удалось</span>}
         </div>
@@ -103,7 +99,8 @@ export function DashboardPage({ date }: { date: string | null }) {
           <button type="button" className="side-open" onClick={() => setPrefs((p) => ({ ...p, sidebarCollapsed: false }))}>
             Сотрудники
           </button>
-          <div className="mainc">
+          <div className="mainc data-region">
+            <LoadingFeedback loading={data.today.status === "loading"} refreshing={panelRefreshing || data.today.refreshing || data.ratings.refreshing || (data.today.data !== null && data.ratings.status === "loading") || Boolean(data.current?.refreshing) || (external.kind === "ready" && external.refreshing)} />
             {prefs.showPlanFact && <PlanFactStrip events={currentEvents} yesterday={win.isToday ? data.yesterday.data : null} win={currentWin} nowUnix={now} percentById={percentById} />}
             {showExternal && external.kind === "unavailable" && (
               <div style={{ marginBottom: 10 }}>
@@ -113,14 +110,11 @@ export function DashboardPage({ date }: { date: string | null }) {
             {showExternal && panel.taskPanelEnabled === false && <div className="banner">Сбор новых интервалов отключён; показана записанная история.</div>}
             {showExternal && external.kind === "loading" && <Spinner label="Загрузка интервалов панели задач…" />}
             {showExternal && external.kind === "error" && <ErrorState compact error={external.error} onRetry={external.reload} />}
-            {showExternal && external.kind === "ready" && external.refreshing && <div className="refreshing"><span className="spin" /> Обновление интервалов панели задач…</div>}
             {showExternal && external.kind === "ready" && external.stale && <div className="banner">Обновить все интервалы панели задач не удалось. Доступные данные сохранены. <button className="tool-btn" type="button" onClick={external.reload}>Повторить</button></div>}
             {showExternal && external.kind === "ready" && external.synthetic && <span className="chip warn">Интервалы: тестовые данные</span>}
             {data.ratings.error !== null && <ErrorState error={data.ratings.error} onRetry={data.ratings.reload} />}
-            {data.today.data && (data.ratings.status === "loading" || data.ratings.refreshing) && <div className="refreshing"><span className="spin" /> {data.ratings.data ? "Обновление расчёта активности…" : "Расчёт активности…"}</div>}
             {data.ratings.data?.partial && <div className="banner">Расчёт активности выполнен по неполной выборке событий.</div>}
             {data.today.status === "error" && <ErrorState error={data.today.error} onRetry={data.today.reload} />}
-            {data.today.status === "loading" && <Spinner label="Загрузка событий дня…" />}
             {rows && groups.length === 0 && <div className="state empty">Нет сотрудников для показа: проверьте фильтр отделов и сотрудников.</div>}
             {rows && data.today.data && rows.every((r) => r.events.length === 0) && (
               <div className="state empty" style={{ marginBottom: 10 }}>
@@ -159,7 +153,7 @@ export function DashboardPage({ date }: { date: string | null }) {
             {rows && (
               <div className="note">
                 Процент — доля 2-минутных отрезков с событием или звонком в рабочем окне {minutesToHHMM(win.startMinutes)}–{minutesToHHMM(win.endMinutes)} ({tz}).
-                {win.isToday && " Обновляется каждые 4 минуты до конца рабочего окна."}
+                {win.isToday && " Обновляется каждые 90 секунд."}
                 {problemsState?.kind === "ok" && " Проблемные списки — текущий срез, не зависят от даты."}
                 {!win.isToday && " Пропущенные звонки и план/факт показаны за сегодня."}
               </div>
