@@ -442,8 +442,8 @@ onBeforeUnmount(() => {
       </div>
       <p v-if="state.readWarning" class="rkrs-queue-note rkrs-queue-warning" role="status">{{ state.readWarning }}</p>
       <p v-if="state.historyStale" class="rkrs-queue-note" role="status">Итог дня уточняется</p>
-      <p v-if="state.error || (!state.busy && (state.pending || state.completion || state.recoveryRequired || state.invalidated))" class="rkrs-error" role="alert">
-        {{ state.error || "Нужно восстановить предыдущую операцию." }}
+      <p v-if="state.error || (!state.busy && (state.pending || state.completion || state.recoveryRequired || state.stateReadStatus === 'failed'))" class="rkrs-error" role="alert">
+        {{ state.error || (state.pending || state.completion ? "Нужно восстановить предыдущую операцию." : "Состояние изменилось. Обновите данные.") }}
         <button v-if="state.live" type="button" class="rkrs-button" :disabled="state.busy" @click="recover">
           {{ state.pending || state.completion ? "Восстановить операцию" : "Обновить данные" }}
         </button>

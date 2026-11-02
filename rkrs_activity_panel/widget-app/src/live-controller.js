@@ -33,7 +33,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   }
   const state = { live: true, enabled: view.enabled === true, ready: false, completion: null, busy: false, scenario: 'tasks', tasks: [], dialogs: [], selectedTaskId: null, active: null, history: [], settings: { compact: view.compact === true }, error: '', readWarning: '', historyStale: true, recoveryRequired: false, queue: { complete: true, stale: false, fetchedAt: 0, warning: false, note: '' }, elapsedSeconds: 0, totalSeconds: 0, completedCount: null };
   let ownTaskIds = new Set(), disposed = false, lastSync = 0, lastTasks = 0, tasksRetryAt = 0, tasksFailures = 0, serverSettings = {}, client, lastDialog = null, dialogTransition = null, queueLead = '', closedSeconds = 0, dayStart = 0;
-  let revision = 0, managementPending = false, stateInvalidated = false, invalidationQueued = false;
+  let revision = 0, managementPending = false, stateReadStatus = 'accepted', errorSource = '', invalidationQueued = false;
   const reads = Object.fromEntries(['state', 'history', 'queue'].map(name => [name, { token: 0, current: null }]));
   reads.history.nextAt = 0;
   const reconciliationKey = `rkrs-activity-reconcile:${identity}`;
@@ -54,7 +54,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     slot.current = ticket;
     ticket.promise = (async () => {
       try { return await action(ticket); }
-      catch (error) { if (readCurrent(name, ticket)) { state.readWarning = error.message; if (!state.ready) state.error = error.message; emit(); } return false; }
+      catch (error) { if (readCurrent(name, ticket)) { state.readWarning = error.message; if (name === 'state' && stateReadStatus !== 'accepted') stateReadStatus = 'failed'; if (!state.ready) { state.error = error.message; errorSource = 'state'; } emit(); } return false; }
       finally { if (slot.current === ticket) slot.current = null; }
     })();
     return ticket.promise;
@@ -65,7 +65,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       channel = new broadcastImpl(`rkrs-activity:${identity}`);
       channel.onmessage = event => {
         if (disposed || !['session-changed', 'changed'].includes(event.data?.type)) return;
-        stateInvalidated = true;
+        stateReadStatus = 'refreshing';
         for (const name of ['state', 'history']) { reads[name].token++; reads[name].current = null; }
         state.historyStale = true;
         emit();
@@ -92,8 +92,6 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   documentImpl.addEventListener?.('click', onNativeComplete, true);
   const entityLabels = { leads: 'Сделка', contacts: 'Контакт', companies: 'Компания', customers: 'Покупатель' };
   const errorMessages = { permission_denied: 'Нет доступа: задача другого сотрудника или панель отключена', not_found: 'Задача или карточка не найдена в amoCRM', resource_exhausted: 'amoCRM временно ограничила запросы, повторите позже', reauth_required: 'Интеграции нужна повторная авторизация в amoCRM' };
-  // Local validation failures are not uncertain writes: the panel stays usable.
-  const invalid = message => new Error(message);
   const requests = new Set();
   try {
     const saved = JSON.parse(storage?.getItem(completionKey) || 'null');
@@ -113,7 +111,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   const dayKey = value => `${value.year}-${value.month}-${value.day}`;
   // Employees outside the panel settings get no bar unless they still own unfinished work.
   const hidden = () => Boolean(client) && !state.enabled && !state.active && !state.completion && !client.getState().pending && !state.recoveryRequired;
-  const snapshot = () => structuredClone({ ...state, invalidated: stateInvalidated, pending: client?.getState().pending || false, hidden: hidden() });
+  const snapshot = () => structuredClone({ ...state, invalidated: stateReadStatus !== 'accepted', stateReadStatus, pending: client?.getState().pending || false, hidden: hidden() });
   const emit = () => { if (!disposed) listeners.forEach(fn => fn(snapshot())); };
   const sdkRequest = options => new Promise((resolve, reject) => {
     if (disposed) return reject(new Error('Виджет закрыт'));
@@ -144,18 +142,18 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   try { client = createActivitySessionClient({ baseURL: apiOrigin, authorizedRequest: sdkRequest, storage, storageKey: `rkrs-activity-command:${identity}`, onCommand: announce }); }
   catch { state.error = 'Не настроен адрес API Activity (VITE_ACTIVITY_API_ORIGIN)'; }
   function assertAvailable() {
-    if (state.recoveryRequired || stateInvalidated) throw invalid('Обновите состояние перед действием');
-    if (!state.ready) throw new Error('Обновите данные перед действием');
-    if (!state.enabled) throw invalid('Панель задач отключена');
-    if (client.getState().pending || state.completion) throw invalid('Сначала восстановите незавершённое действие кнопкой обновления');
+    if (state.recoveryRequired || stateReadStatus !== 'accepted') throw Object.assign(new Error('Обновите состояние перед действием'), { code: 'state_changed' });
+    if (!state.ready) throw Object.assign(new Error('Обновите данные перед действием'), { code: 'state_changed' });
+    if (!state.enabled) throw new Error('Панель задач отключена');
+    if (client.getState().pending || state.completion) throw new Error('Сначала восстановите незавершённое действие кнопкой обновления');
   }
   function assertOwnedTask(task, id) {
-    if (!Number.isSafeInteger(Number(id)) || Number(id) <= 0 || task.id !== Number(id)) throw invalid('Некорректная задача amoCRM');
-    if (task.responsible_user_id !== Number(context.userId)) throw invalid('Задача назначена другому сотруднику');
+    if (!Number.isSafeInteger(Number(id)) || Number(id) <= 0 || task.id !== Number(id)) throw new Error('Некорректная задача amoCRM');
+    if (task.responsible_user_id !== Number(context.userId)) throw new Error('Задача назначена другому сотруднику');
   }
   function validateText(value, label, required = false) {
-    if (typeof value !== 'string' || (required && !value.trim())) throw invalid(`${label}: заполните поле`);
-    if (new TextEncoder().encode(value).length > 2000) throw invalid(`${label}: максимум 2000 байт`);
+    if (typeof value !== 'string' || (required && !value.trim())) throw new Error(`${label}: заполните поле`);
+    if (new TextEncoder().encode(value).length > 2000) throw new Error(`${label}: максимум 2000 байт`);
     return value.trim();
   }
   // The server names cards best effort; an unresolved name keeps the card label.
@@ -197,7 +195,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     if (state.active?.kind === 'tasks' && state.active.serverId !== previous) state.selectedTaskId = state.active.id;
   }
   function applyState(own) {
-    if (!state.ready) state.error = '';
+    if (!state.ready || errorSource === 'state') { state.error = ''; errorSource = ''; }
     const previous = state.active?.serverId;
     serverSettings = own.settings || {};
     state.enabled = own.enabled;
@@ -205,7 +203,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     applyCurrent(own.current);
     if (previous !== state.active?.serverId) state.historyStale = true;
     state.ready = true;
-    stateInvalidated = false;
+    stateReadStatus = 'accepted';
     updateTotal();
     scanDOM(); emit();
   }
@@ -220,7 +218,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   async function ownedState() {
     const owner = revision, token = reads.state.token;
     const own = await client.loadState();
-    if (disposed || !state.busy || owner !== revision || token !== reads.state.token) throw invalid('Состояние изменилось в другой вкладке. Обновите данные и повторите действие.');
+    if (disposed || !state.busy || owner !== revision || token !== reads.state.token) throw Object.assign(new Error('Состояние изменилось в другой вкладке. Обновите данные.'), { code: 'state_changed' });
     applyState(own);
     lastSync = Date.now();
     return own;
@@ -228,6 +226,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   function sync(metadata = false) {
     return read('state', '', async ticket => {
       lastSync = Date.now();
+      if (stateReadStatus !== 'accepted') { stateReadStatus = 'refreshing'; emit(); }
       const own = await client.loadState();
       if (!readCurrent('state', ticket)) return false;
       if (client.getState().pending || state.recoveryRequired) {
@@ -339,7 +338,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   async function run(action) {
     if (disposed || state.busy || !client) return false;
     invalidateReads();
-    state.busy = true; state.error = ''; emit();
+    state.busy = true; state.error = ''; errorSource = ''; emit();
     try { return await action() !== false && !disposed; }
     catch (error) {
       if (!disposed) {
@@ -347,18 +346,19 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
           requireReconciliation(true);
           try { await ownedState(); requireReconciliation(false); } catch (readError) { state.readWarning = readError.message; }
         }
+        errorSource = error.code === 'state_changed' ? 'state' : 'command';
         state.error = state.completion?.phase === 'stop_pending' ? `Задача завершена в amoCRM; остановка учёта времени не подтверждена. Нажмите обновление для восстановления. ${error.message}` : state.completion ? `Завершение задачи не подтверждено. Обновление проверит amoCRM и восстановит учёт времени. ${error.message}` : error.message;
       }
       return false;
     } finally {
       invalidateReads();
-      if (!disposed) { state.busy = false; scanDOM(); emit(); refreshProjections(); if (stateInvalidated) void refreshBackground(false); }
+      if (!disposed) { state.busy = false; scanDOM(); emit(); refreshProjections(); if (stateReadStatus !== 'accepted') void refreshBackground(false); }
     }
   }
   async function taskContext(id) {
     const task = await client.loadTask(Number(id), { context: true });
     assertOwnedTask(task, id);
-    if (task.is_completed) { lastTasks = 0; throw invalid('Задача уже завершена. Обновите очередь.'); }
+    if (task.is_completed) { lastTasks = 0; throw new Error('Задача уже завершена. Обновите очередь.'); }
     const value = { client_id: clientId, task_id: task.id, task_name: task.text || '', task_type_id: task.task_type_id, entity_id: task.entity_id, entity_type: task.entity_type };
     const entity = task.entity;
     // The card summary is best effort on the server; without it only IDs are recorded.
@@ -408,7 +408,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       button.innerHTML = cardActions[mode].icon; button.append(cardActions[mode].label);
       button.title = mode === 'blocked' ? 'Сначала завершите Imbox-активность' : '';
     }
-    const locked = mode === 'blocked' || state.busy || state.recoveryRequired || stateInvalidated || !state.ready || Boolean(state.completion) || Boolean(client?.getState().pending);
+    const locked = mode === 'blocked' || state.busy || state.recoveryRequired || stateReadStatus !== 'accepted' || !state.ready || Boolean(state.completion) || Boolean(client?.getState().pending);
     if (button.disabled !== locked) button.disabled = locked;
   }
   // Delegated, as amoCRM may stop a click before it reaches a node inside its card.
@@ -423,7 +423,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   };
   documentImpl.addEventListener?.('click', onCardClick, true);
   async function startImboxSession(id) {
-    if (!state.dialogs.some(row => row.id === String(id))) throw invalid('Откройте диалог Imbox'); const details = { client_id: clientId }; const entityId = dialogEntities.get(String(id)); if (entityId) { const entity = await client.loadLead(entityId); Object.assign(details, { entity_type: 'leads', entity_id: entityId }, entity.restricted ? {} : { entity_name: entity.name, pipeline_id: entity.pipeline_id || 0, status_id: entity.status_id || 0 }); } publishReceipt(await client.startImbox(id, details, state.active?.serverId || ''));
+    if (!state.dialogs.some(row => row.id === String(id))) throw new Error('Откройте диалог Imbox'); const details = { client_id: clientId }; const entityId = dialogEntities.get(String(id)); if (entityId) { const entity = await client.loadLead(entityId); Object.assign(details, { entity_type: 'leads', entity_id: entityId }, entity.restricted ? {} : { entity_name: entity.name, pipeline_id: entity.pipeline_id || 0, status_id: entity.status_id || 0 }); } publishReceipt(await client.startImbox(id, details, state.active?.serverId || ''));
   }
   async function resumeCompletion() {
     const intent = state.completion;
@@ -484,14 +484,14 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       if (client.getState().pending) throw new Error('Сначала восстановите незавершённую команду кнопкой обновления');
       // An explicit stop may abandon an unconfirmed CRM completion; it never
       // retries the CRM write and still closes only the acknowledged interval.
-      if (state.recoveryRequired || stateInvalidated || !state.ready) throw invalid('Обновите состояние перед действием');
+      if (state.recoveryRequired || stateReadStatus !== 'accepted' || !state.ready) throw Object.assign(new Error('Обновите состояние перед действием'), { code: 'state_changed' });
       publishReceipt(await client.stopSession(state.active?.serverId));
       rememberCompletion(null);
     }); },
     completeTask(id, result = '') { return run(async () => {
       assertAvailable();
       result = validateText(result, 'Результат задачи');
-      if (!result) throw invalid('Для завершения задачи укажите результат.');
+      if (!result) throw new Error('Для завершения задачи укажите результат.');
       const task = await client.loadTask(Number(id));
       assertOwnedTask(task, id);
       await ownedState();
@@ -518,7 +518,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
           if (!popup) throw new Error('Разрешите открытие окна настроек');
           popup.location.replace(url.href);
           return true;
-        } catch (error) { popup?.close(); if (!disposed) { state.error = error.message; emit(); } return false; }
+        } catch (error) { popup?.close(); if (!disposed) { state.error = error.message; errorSource = 'command'; emit(); } return false; }
         finally { managementPending = false; }
       })();
     },
@@ -540,7 +540,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       if (!documentImpl.hidden && serverSettings.include_related_deals && state.ready && lead !== queueLead && Date.now() >= tasksRetryAt) { void loadTasks(); }
       const dialog = locationImpl.pathname.match(/\/imbox\/(\d+)/)?.[1];
       if (lastDialog === null && state.active?.kind === 'imbox' && state.active.clientId === clientId && state.active.id === dialog) lastDialog = dialog;
-      if (!state.busy && (!state.recoveryRequired || (dialogTransition?.pending && client.getState().pending)) && !stateInvalidated && (state.ready || dialogTransition?.pending) && state.enabled && !state.completion && !documentImpl.hidden) {
+      if (!state.busy && (!state.recoveryRequired || (dialogTransition?.pending && client.getState().pending)) && stateReadStatus === 'accepted' && (state.ready || dialogTransition?.pending) && state.enabled && !state.completion && !documentImpl.hidden) {
         // A failed automatic write keeps its original command identity even if
         // navigation changes while its response is missing. Resolve it first.
         if (!dialogTransition && !client.getState().pending && dialog !== lastDialog) {

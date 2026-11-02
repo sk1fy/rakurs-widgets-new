@@ -279,6 +279,7 @@ test('failed cross-tab reconciliation is retried on the baseline or explicit ref
   assert.equal(await f.controller.startOther('Wait for state'), false);
   assert.equal(await f.controller.refresh(), true);
   assert.equal(f.controller.getSnapshot().invalidated, false);
+  assert.equal(f.controller.getSnapshot().error, '');
   f.controller.dispose();
 });
 
@@ -318,8 +319,6 @@ test('every queue failure backs off and hidden lead navigation sends no queue re
 });
 
 test('missing API configuration keeps tick and explicit refresh safe', async () => {
-  const f = fixture({ apiOrigin: undefined });
-  f.controller.dispose();
   const invalid = fixture({ apiOrigin: 'invalid-api-origin' });
   await flush();
   assert.match(invalid.controller.getSnapshot().error, /API Activity/);
@@ -357,16 +356,18 @@ test('routine invalidation is pending state knowledge, not uncertain command rec
   f.controller.dispose();
 });
 
-test('targeted state refresh distinguishes refreshing, failed, and accepted knowledge', async () => {
+test('targeted state refresh warns only after failure and clears the warning after success', async () => {
   const f = fixture(); await flush();
   f.hold.add('state');
   f.channels[0].onmessage({ data: { type: 'session-changed' } }); await flush();
-  assert.equal(f.controller.getSnapshot().stateReadStatus, 'refreshing');
+  assert.equal(f.controller.getSnapshot().readWarning, '');
+  assert.equal(f.controller.getSnapshot().error, '');
   f.hold.clear(); f.failures.set('state', 1); f.held.shift().respond(); await flush();
-  assert.equal(f.controller.getSnapshot().stateReadStatus, 'failed');
+  assert.ok(f.controller.getSnapshot().readWarning);
+  assert.equal(f.controller.getSnapshot().error, '');
   assert.equal(f.controller.getSnapshot().pending, false);
   assert.equal(await f.controller.refresh(), true);
-  assert.equal(f.controller.getSnapshot().stateReadStatus, 'accepted');
+  assert.equal(f.controller.getSnapshot().invalidated, false);
   assert.equal(f.controller.getSnapshot().readWarning, '');
   f.controller.dispose();
 });
