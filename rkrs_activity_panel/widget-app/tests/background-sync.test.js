@@ -393,3 +393,26 @@ test('accepted state clears a superseded preflight error but preserves a genuine
   assert.equal(f.controller.getSnapshot().error, actionError);
   f.controller.dispose();
 });
+
+
+test('accepted background state preserves the CRM-completed stop-unconfirmed recovery message', async () => {
+  const f = fixture();
+  f.setCurrent({ id: 'task-session', kind: 'work', started_at: 100, context: { task_id: 19, task_name: 'Task' } });
+  await flush(); f.hold.add('state');
+  const complete = f.controller.completeTask('19', 'Done'); await flush();
+  f.held.shift().respond(); await flush();
+  f.held.shift().respond(); await flush();
+  const stopCheck = f.held.shift(); assert.ok(stopCheck);
+  f.channels[0].onmessage({ data: { type: 'session-changed' } });
+  stopCheck.respond();
+  assert.equal(await complete, false);
+  assert.equal(f.controller.getSnapshot().completion.phase, 'stop_pending');
+  assert.match(f.controller.getSnapshot().error, /Задача завершена в amoCRM; остановка учёта времени не подтверждена/);
+  await flush();
+  f.hold.clear(); f.held.shift().respond(); await flush();
+  assert.equal(f.controller.getSnapshot().invalidated, false);
+  assert.equal(f.controller.getSnapshot().completion.phase, 'stop_pending');
+  assert.match(f.controller.getSnapshot().error, /Задача завершена в amoCRM; остановка учёта времени не подтверждена/);
+  assert.equal(f.calls.filter(row => row.method === 'POST' && row.url.endsWith('/sessions')).length, 0);
+  f.controller.dispose();
+});
