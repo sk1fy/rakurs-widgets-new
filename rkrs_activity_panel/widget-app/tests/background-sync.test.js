@@ -342,3 +342,53 @@ test('a cross-tab signal during a completion preflight asks for retry without cl
   assert.equal(f.calls.some(row => row.method === 'POST'), false);
   f.controller.dispose();
 });
+
+
+test('routine invalidation is pending state knowledge, not uncertain command recovery', async () => {
+  const f = fixture(); await flush();
+  f.hold.add('state');
+  f.channels[0].onmessage({ data: { type: 'session-changed' } }); await flush();
+  const snapshot = f.controller.getSnapshot();
+  assert.equal(snapshot.invalidated, true);
+  assert.equal(snapshot.pending, false);
+  assert.equal(snapshot.recoveryRequired, false);
+  assert.equal(snapshot.error, '');
+  assert.equal(snapshot.readWarning, '');
+  f.controller.dispose();
+});
+
+test('targeted state refresh distinguishes refreshing, failed, and accepted knowledge', async () => {
+  const f = fixture(); await flush();
+  f.hold.add('state');
+  f.channels[0].onmessage({ data: { type: 'session-changed' } }); await flush();
+  assert.equal(f.controller.getSnapshot().stateReadStatus, 'refreshing');
+  f.hold.clear(); f.failures.set('state', 1); f.held.shift().respond(); await flush();
+  assert.equal(f.controller.getSnapshot().stateReadStatus, 'failed');
+  assert.equal(f.controller.getSnapshot().pending, false);
+  assert.equal(await f.controller.refresh(), true);
+  assert.equal(f.controller.getSnapshot().stateReadStatus, 'accepted');
+  assert.equal(f.controller.getSnapshot().readWarning, '');
+  f.controller.dispose();
+});
+
+test('accepted state clears a superseded preflight error but preserves a genuine action rejection', async () => {
+  const f = fixture(); await flush();
+  f.hold.add('state');
+  const complete = f.controller.completeTask('19', 'Done'); await flush();
+  const owned = f.held.shift();
+  f.channels[0].onmessage({ data: { type: 'session-changed' } });
+  owned.fn({ current: null, enabled: true, settings: {} });
+  assert.equal(await complete, false);
+  assert.match(f.controller.getSnapshot().error, /Состояние изменилось/);
+  await flush();
+  const recovery = f.controller.refresh();
+  f.hold.clear(); f.held.shift().respond();
+  assert.equal(await recovery, true);
+  assert.equal(f.controller.getSnapshot().error, '');
+  assert.equal(await f.controller.startOther(''), false);
+  const actionError = f.controller.getSnapshot().error;
+  assert.ok(actionError);
+  assert.equal(await f.controller.refresh(), true);
+  assert.equal(f.controller.getSnapshot().error, actionError);
+  f.controller.dispose();
+});
