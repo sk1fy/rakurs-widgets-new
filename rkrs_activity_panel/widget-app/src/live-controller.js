@@ -65,7 +65,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       channel = new broadcastImpl(`rkrs-activity:${identity}`);
       channel.onmessage = event => {
         if (disposed || !['session-changed', 'changed'].includes(event.data?.type)) return;
-        stateReadStatus = 'refreshing';
+        if (stateReadStatus !== 'failed') stateReadStatus = 'refreshing';
         for (const name of ['state', 'history']) { reads[name].token++; reads[name].current = null; }
         state.historyStale = true;
         emit();
@@ -226,7 +226,6 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   function sync(metadata = false) {
     return read('state', '', async ticket => {
       lastSync = Date.now();
-      if (stateReadStatus !== 'accepted') { stateReadStatus = 'refreshing'; emit(); }
       const own = await client.loadState();
       if (!readCurrent('state', ticket)) return false;
       if (client.getState().pending || state.recoveryRequired) {
@@ -346,7 +345,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
           requireReconciliation(true);
           try { await ownedState(); requireReconciliation(false); } catch (readError) { state.readWarning = readError.message; }
         }
-        errorSource = error.code === 'state_changed' ? 'state' : 'command';
+        errorSource = error.code === 'state_changed' && !state.completion ? 'state' : 'command';
         state.error = state.completion?.phase === 'stop_pending' ? `Задача завершена в amoCRM; остановка учёта времени не подтверждена. Нажмите обновление для восстановления. ${error.message}` : state.completion ? `Завершение задачи не подтверждено. Обновление проверит amoCRM и восстановит учёт времени. ${error.message}` : error.message;
       }
       return false;
