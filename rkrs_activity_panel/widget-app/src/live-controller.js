@@ -84,6 +84,8 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   // amoCRM's own completion button: a click is only intent, CRM confirms it.
   const nativeCompletion = '.card-task__actions .js-complete-task, .feed-note-wrapper-task .js-switcher-complete, .js-task-result-button, .card-task__button';
   const completionChecks = new Map();
+  const completionReads = new Map();
+  const confirmedCompletions = new Set();
   const onNativeComplete = event => {
     const target = event.target?.nodeType === 3 ? event.target.parentNode : event.target;
     const id = target?.closest?.(nativeCompletion)?.closest?.('.feed-note-wrapper-task[data-id]')?.dataset?.id;
@@ -110,7 +112,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   const parts = timestamp => Object.fromEntries(formatter.formatToParts(new Date(timestamp)).map(part => [part.type, part.value]));
   const dayKey = value => `${value.year}-${value.month}-${value.day}`;
   // Employees outside the panel settings get no bar unless they still own unfinished work.
-  const hidden = () => Boolean(client) && !state.enabled && !state.active && !state.completion && !client.getState().pending && !state.recoveryRequired;
+  const hidden = () => Boolean(client) && !state.enabled && !state.active && !state.completion && !client.getState().pending && !state.recoveryRequired && !(errorSource === 'state' && !state.ready && state.error);
   const snapshot = () => structuredClone({ ...state, invalidated: stateReadStatus !== 'accepted', stateReadStatus, pending: client?.getState().pending || false, hidden: hidden() });
   const emit = () => { if (!disposed) listeners.forEach(fn => fn(snapshot())); };
   const sdkRequest = options => new Promise((resolve, reject) => {
@@ -282,16 +284,28 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   // the very interval observed for that task is closed.
   async function reconcileCompletedTask(id) {
     const active = state.active, observed = revision;
-    if (active?.kind !== 'tasks' || active.id !== id || state.busy || client.getState().pending || state.completion || state.recoveryRequired) return false;
-    let task;
-    try { task = await client.loadTask(Number(id)); } catch { return false; }
-    if (disposed || revision !== observed || !task.is_completed || state.active?.serverId !== active.serverId) return false;
-    return run(async () => {
-      const own = await ownedState();
-      if (own.current?.id !== active.serverId) return;
-      const result = typeof task.result_text === 'string' && new TextEncoder().encode(task.result_text).length <= 2000 ? task.result_text : '';
-      publishReceipt(await client.stopSession(active.serverId, result));
-    });
+    if (disposed || documentImpl.hidden || active?.kind !== 'tasks' || active.id !== id || state.busy || client.getState().pending || state.completion || state.recoveryRequired) return false;
+    if (completionReads.has(active.serverId)) return completionReads.get(active.serverId);
+    const observation = (async () => {
+      let task;
+      try { task = await client.loadTask(Number(id)); } catch { return false; }
+      if (disposed || documentImpl.hidden || revision !== observed || !task.is_completed || state.active?.serverId !== active.serverId) return false;
+      return run(async () => {
+        confirmedCompletions.add(id);
+        const row = state.tasks.find(task => task.id === id);
+        if (row) row.completed = true;
+        ownTaskIds.delete(id);
+        if (state.selectedTaskId === id) state.selectedTaskId = state.tasks.find(task => !task.completed)?.id || null;
+        lastTasks = 0;
+        const own = await ownedState();
+        if (documentImpl.hidden || own.current?.id !== active.serverId) return false;
+        const result = typeof task.result_text === 'string' && new TextEncoder().encode(task.result_text).length <= 2000 ? task.result_text : '';
+        publishReceipt(await client.stopSession(active.serverId, result));
+      });
+    })();
+    completionReads.set(active.serverId, observation);
+    try { return await observation; }
+    finally { if (completionReads.get(active.serverId) === observation) completionReads.delete(active.serverId); }
   }
   function loadTasks() {
     const leadId = locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1] || '';
@@ -315,20 +329,37 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       throw error;
     }
     if (!readCurrent('queue', ticket) || (serverSettings.include_related_deals && (locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1] || '') !== leadId)) return false;
+    const rows = queue.tasks || [];
+    // The server returns only this employee's unfinished tasks; a queue row carries no owner field.
+    const visible = rows.filter(row => serverSettings.consider_future_tasks || dayKey(parts(row.complete_till * 1000)) <= dayKey(parts(Date.now())));
+    const queueIds = new Set(rows.map(row => String(row.id)));
+    const reopened = [];
+    if (queue.complete !== false && queue.stale !== true) {
+      for (const row of visible) {
+        if (!readCurrent('queue', ticket)) return false;
+        if (documentImpl.hidden) break;
+        const id = String(row.id);
+        if (!confirmedCompletions.has(id)) continue;
+        try {
+          const task = await client.loadTask(Number(id));
+          assertOwnedTask(task, id);
+          if (task.is_completed === false) reopened.push(id);
+        } catch {}
+      }
+    }
+    if (!readCurrent('queue', ticket) || (serverSettings.include_related_deals && (locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1] || '') !== leadId)) return false;
+    if (!documentImpl.hidden) reopened.forEach(id => confirmedCompletions.delete(id));
     tasksFailures = 0;
     queueLead = leadId;
     state.relatedEnabled = Boolean(serverSettings.include_related_deals && queueLead);
     tasksRetryAt = queue.retry_after_seconds > 0 ? Date.now() + queue.retry_after_seconds * 1000 : 0;
-    const rows = queue.tasks || [];
-    // The server returns only this employee's unfinished tasks; a queue row carries no owner field.
-    ownTaskIds = new Set(rows.map(row => String(row.id)));
+    ownTaskIds = new Set([...queueIds].filter(id => !confirmedCompletions.has(id)));
     const priorities = serverSettings.priority_keys || ['urgent','overdue','overdue_no_time','today_no_time','today_timed','future'];
     const priority = row => { const due = new Date(row.complete_till * 1000), now = new Date(), dueParts = parts(due.getTime()), today = dayKey(dueParts) === dayKey(parts(now.getTime())), allDay = dueParts.hour === '23' && dueParts.minute === '59', overdue = due < now; const key = !allDay && today && (overdue || due-now <= 600000) ? 'urgent' : !allDay && overdue && !today ? 'overdue' : allDay && overdue && !today ? 'overdue_no_time' : allDay && today ? 'today_no_time' : !allDay && today ? 'today_timed' : 'future'; const index = priorities.indexOf(key); return index < 0 ? 99 : index; };
-    const visible = rows.filter(row => serverSettings.consider_future_tasks || dayKey(parts(row.complete_till * 1000)) <= dayKey(parts(Date.now())));
-    state.tasks = visible.sort((a,b) => priority(a)-priority(b) || a.complete_till-b.complete_till).map(row => ({ id: String(row.id), title: row.text || `Задача ${row.id}`, entityName: entityName(row), related: row.related || '', type: row.task_type_name || '', url: entityUrl(row.entity_type, row.entity_id), dueLabel: dueLabel(row.complete_till * 1000), dueDate: dueDate(row.complete_till * 1000), dueTime: dueTime(row), overdue: row.complete_till * 1000 < Date.now(), completed: false }));
+    state.tasks = visible.sort((a,b) => priority(a)-priority(b) || a.complete_till-b.complete_till).map(row => ({ id: String(row.id), title: row.text || `Задача ${row.id}`, entityName: entityName(row), related: row.related || '', type: row.task_type_name || '', url: entityUrl(row.entity_type, row.entity_id), dueLabel: dueLabel(row.complete_till * 1000), dueDate: dueDate(row.complete_till * 1000), dueTime: dueTime(row), overdue: row.complete_till * 1000 < Date.now(), completed: confirmedCompletions.has(String(row.id)) }));
     // An older server omits the metadata: its queue is a complete live read.
     describeQueue({ complete: queue.complete !== false, stale: queue.stale === true, errorCode: queue.error_code || '', fetchedAt: queue.fetched_at > 0 ? queue.fetched_at * 1000 : 0 });
-    if (!state.tasks.some(row => row.id === state.selectedTaskId)) state.selectedTaskId = state.tasks[0]?.id || null;
+    if (!state.tasks.some(row => row.id === state.selectedTaskId && !row.completed)) state.selectedTaskId = state.tasks.find(row => !row.completed)?.id || null;
     lastTasks = Date.now();
     scanDOM(); emit();
     if (state.active?.kind === 'tasks' && !rows.some(row => String(row.id) === state.active.id)) await reconcileCompletedTask(state.active.id);
@@ -528,7 +559,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       scanDOM(); emit();
       for (const [id, check] of completionChecks) {
         if (state.active?.kind !== 'tasks' || state.active.id !== id || Date.now() > check.until) completionChecks.delete(id);
-        else if (!state.busy && state.ready && Date.now() >= check.next) {
+        else if (!documentImpl.hidden && !state.busy && state.ready && Date.now() >= check.next) {
           // Each check is a live amoCRM read inside the shared budget.
           check.next = Date.now() + 5000;
           void reconcileCompletedTask(id).then(completed => { if (completed) completionChecks.delete(id); });
@@ -587,7 +618,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
         if (state.ready && Date.now() >= reads.history.nextAt && dayKey(parts(dayStart || Date.now())) !== dayKey(parts(Date.now()))) void loadHistory();
       }
     },
-    dispose() { disposed = true; invalidateReads(); try { channel?.close(); } catch { /* Already closed. */ } documentImpl.removeEventListener?.('visibilitychange', onVisible); windowRef?.removeEventListener?.('focus', onVisible); documentImpl.removeEventListener?.('click', onNativeComplete, true); documentImpl.removeEventListener?.('click', onCardClick, true); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); documentImpl.querySelectorAll?.('.feed-note-wrapper-task[data-id]').forEach(clearCardAction); listeners.clear(); },
+    dispose() { disposed = true; invalidateReads(); confirmedCompletions.clear(); try { channel?.close(); } catch { /* Already closed. */ } documentImpl.removeEventListener?.('visibilitychange', onVisible); windowRef?.removeEventListener?.('focus', onVisible); documentImpl.removeEventListener?.('click', onNativeComplete, true); documentImpl.removeEventListener?.('click', onCardClick, true); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); documentImpl.querySelectorAll?.('.feed-note-wrapper-task[data-id]').forEach(clearCardAction); listeners.clear(); },
   };
   if (client) void sync(true).then(ok => { if (ok && !disposed) refreshProjections(); });
   return controller;
