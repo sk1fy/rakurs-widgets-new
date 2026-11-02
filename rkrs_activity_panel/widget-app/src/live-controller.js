@@ -32,7 +32,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     try { prefs?.setItem(viewKey, JSON.stringify(view)); } catch { /* Preferences stay in memory. */ }
   }
   const state = { live: true, enabled: view.enabled === true, ready: false, completion: null, busy: false, scenario: 'tasks', tasks: [], dialogs: [], selectedTaskId: null, active: null, history: [], settings: { compact: view.compact === true }, error: '', readWarning: '', historyStale: true, recoveryRequired: false, queue: { complete: true, stale: false, fetchedAt: 0, warning: false, note: '' }, elapsedSeconds: 0, totalSeconds: 0, completedCount: null };
-  let ownTaskIds = new Set(), disposed = false, lastSync = 0, lastTasks = 0, tasksRetryAt = 0, serverSettings = {}, client, lastDialog = null, dialogTransition = null, queueLead = '', closedSeconds = 0, dayStart = 0;
+  let ownTaskIds = new Set(), disposed = false, lastSync = 0, lastTasks = 0, tasksRetryAt = 0, tasksFailures = 0, serverSettings = {}, client, lastDialog = null, dialogTransition = null, queueLead = '', closedSeconds = 0, dayStart = 0;
   let revision = 0, managementPending = false, stateInvalidated = false, invalidationQueued = false;
   const reads = Object.fromEntries(['state', 'history', 'queue'].map(name => [name, { token: 0, current: null }]));
   reads.history.nextAt = 0;
@@ -47,7 +47,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     return !disposed && revision === ticket.revision && reads[name].current === ticket && reads[name].token === ticket.token && !state.busy && (ticket.metadata || (!client.getState().pending && !state.recoveryRequired));
   }
   function read(name, scope, action, metadata = false) {
-    if (disposed || state.busy || (!metadata && (client.getState().pending || state.recoveryRequired))) return Promise.resolve(false);
+    if (disposed || !client || state.busy || (!metadata && (client.getState().pending || state.recoveryRequired))) return Promise.resolve(false);
     const slot = reads[name];
     if (slot.current?.revision === revision && slot.current.scope === scope) return slot.current.promise;
     const ticket = { revision, token: ++slot.token, scope, metadata };
@@ -93,7 +93,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   const entityLabels = { leads: 'Сделка', contacts: 'Контакт', companies: 'Компания', customers: 'Покупатель' };
   const errorMessages = { permission_denied: 'Нет доступа: задача другого сотрудника или панель отключена', not_found: 'Задача или карточка не найдена в amoCRM', resource_exhausted: 'amoCRM временно ограничила запросы, повторите позже', reauth_required: 'Интеграции нужна повторная авторизация в amoCRM' };
   // Local validation failures are not uncertain writes: the panel stays usable.
-  const invalid = message => Object.assign(new Error(message), { keepReady: true });
+  const invalid = message => new Error(message);
   const requests = new Set();
   try {
     const saved = JSON.parse(storage?.getItem(completionKey) || 'null');
@@ -220,7 +220,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   async function ownedState() {
     const owner = revision, token = reads.state.token;
     const own = await client.loadState();
-    if (disposed || !state.busy || owner !== revision || token !== reads.state.token) throw invalid('Действие уже завершено');
+    if (disposed || !state.busy || owner !== revision || token !== reads.state.token) throw invalid('Состояние изменилось в другой вкладке. Обновите данные и повторите действие.');
     applyState(own);
     lastSync = Date.now();
     return own;
@@ -308,10 +308,16 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     try { queue = await client.loadTasks(serverSettings.include_related_deals ? leadId : undefined); }
     catch (error) {
       // amoCRM is busy: keep the last queue and wait for the server's delay.
-      if (readCurrent('queue', ticket) && [429, 503].includes(error.status)) { tasksRetryAt = Date.now() + Math.max(error.retryAfter, 5) * 1000; if (lastTasks) { error.keepReady = true; describeQueue({ ...state.queue, stale: true, errorCode: error.code || '' }); } }
+      if (readCurrent('queue', ticket)) {
+        tasksFailures++;
+        const delay = Math.min(60000, 5000 * 2 ** Math.min(tasksFailures - 1, 4));
+        tasksRetryAt = Date.now() + Math.max((error.retryAfter || 0) * 1000, delay);
+        if (lastTasks) describeQueue({ ...state.queue, stale: true, errorCode: error.code || '' });
+      }
       throw error;
     }
     if (!readCurrent('queue', ticket) || (serverSettings.include_related_deals && (locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1] || '') !== leadId)) return false;
+    tasksFailures = 0;
     queueLead = leadId;
     state.relatedEnabled = Boolean(serverSettings.include_related_deals && queueLead);
     tasksRetryAt = queue.retry_after_seconds > 0 ? Date.now() + queue.retry_after_seconds * 1000 : 0;
@@ -497,7 +503,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       rememberCompletion({ taskId: Number(id), result: task.is_completed ? task.result_text || result : result, sessionId, phase: 'crm_pending' });
       await resumeCompletion();
     }); },
-    refresh() { return client && (client.getState().pending || state.completion || state.recoveryRequired) ? run(recover) : refreshBackground(); },
+    refresh() { if (disposed || !client) return Promise.resolve(false); return client.getState().pending || state.completion || state.recoveryRequired ? run(recover) : refreshBackground(); },
     updateSettings(patch) { state.settings = { ...state.settings, ...patch }; rememberView({ compact: state.settings.compact === true }); emit(); }, reset() {},
     openManagement() {
       if (disposed || managementPending || !client) return false;
@@ -517,7 +523,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       })();
     },
     tick() {
-      if (disposed) return;
+      if (disposed || !client) return;
       state.elapsedSeconds = state.active ? Math.max(0, (Date.now() - state.active.startedAt) / 1000) : 0;
       updateTotal();
       scanDOM(); emit();
@@ -531,7 +537,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       }
       // The controller outlives navigation: related deals follow the opened lead card.
       const lead = locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1] || '';
-      if (serverSettings.include_related_deals && state.ready && lead !== queueLead && Date.now() >= tasksRetryAt) { void loadTasks(); }
+      if (!documentImpl.hidden && serverSettings.include_related_deals && state.ready && lead !== queueLead && Date.now() >= tasksRetryAt) { void loadTasks(); }
       const dialog = locationImpl.pathname.match(/\/imbox\/(\d+)/)?.[1];
       if (lastDialog === null && state.active?.kind === 'imbox' && state.active.clientId === clientId && state.active.id === dialog) lastDialog = dialog;
       if (!state.busy && (!state.recoveryRequired || (dialogTransition?.pending && client.getState().pending)) && !stateInvalidated && (state.ready || dialogTransition?.pending) && state.enabled && !state.completion && !documentImpl.hidden) {
