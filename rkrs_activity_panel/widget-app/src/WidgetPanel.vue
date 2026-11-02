@@ -88,12 +88,10 @@ const completionTarget = computed(() =>
 );
 const available = computed(() => state.value.enabled !== false && state.value.ready !== false);
 const canMutate = computed(() =>
-  !state.value.busy && available.value && !state.value.pending && !state.value.completion
+  !state.value.busy && available.value && !state.value.pending && !state.value.recoveryRequired && !state.value.invalidated && !state.value.completion
 );
-const canStop = computed(() => running.value && !state.value.busy && !state.value.pending);
+const canStop = computed(() => running.value && !state.value.busy && !state.value.pending && !state.value.recoveryRequired && !state.value.invalidated);
 const canComplete = computed(() => canMutate.value && Boolean(completionTarget.value));
-// Polling makes the panel busy for a moment: a button only looks switched off
-// when it has nothing to do, otherwise it would blink on every refresh.
 const startReady = computed(
   () =>
     available.value && !running.value &&
@@ -442,8 +440,10 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </div>
-      <p v-if="state.error || (!state.busy && (state.pending || state.completion))" class="rkrs-error" role="alert">
-        {{ state.error || "Нужно восстановить предыдущую операцию." }}
+      <p v-if="state.readWarning" class="rkrs-queue-note rkrs-queue-warning" role="status">{{ state.readWarning }}</p>
+      <p v-if="state.historyStale" class="rkrs-queue-note" role="status">Итог дня уточняется</p>
+      <p v-if="state.error || (!state.busy && (state.pending || state.completion || state.recoveryRequired || state.stateReadStatus === 'failed'))" class="rkrs-error" role="alert">
+        {{ state.error || (state.pending || state.completion ? "Нужно восстановить предыдущую операцию." : "Состояние изменилось. Обновите данные.") }}
         <button v-if="state.live" type="button" class="rkrs-button" :disabled="state.busy" @click="recover">
           {{ state.pending || state.completion ? "Восстановить операцию" : "Обновить данные" }}
         </button>
@@ -621,7 +621,7 @@ onBeforeUnmount(() => {
         <template v-else-if="open === 'history'">
           <div class="rkrs-history-summary">
             <span
-              >{{ state.live ? "Учтено сегодня" : "Учтено за сессию" }}<strong>{{
+              >{{ state.live ? (state.historyStale ? "Учтено сегодня, уточняется" : "Учтено сегодня") : "Учтено за сессию" }}<strong>{{
                 duration(state.totalSeconds)
               }}</strong></span
             ><span v-if="state.completedCount != null"

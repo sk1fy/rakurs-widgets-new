@@ -5,7 +5,6 @@ export function createActivitySessionClient({ baseURL, getToken, authorizedReque
   if (base.username || base.password || base.search || base.hash) throw new Error('Invalid Activity API origin');
   if (typeof getToken !== 'function' && typeof authorizedRequest !== 'function') throw new Error('Fresh widget token provider is required');
   const origin = base.origin;
-  let active = null;
   let pending = null;
   let running = false;
   let disposed = false;
@@ -55,25 +54,26 @@ export function createActivitySessionClient({ baseURL, getToken, authorizedReque
     if (running) throw new Error('Activity command is already in progress');
     if (!pending) throw new Error('No pending command');
     running = true;
+    let invalidates = true;
     try {
       const result = await request('sessions', pending.body, pending.id);
-      active = result.stopped_at ? null : result;
       pending = null;
       remember();
       return result;
     } catch (error) {
-      if ([400, 401, 403, 404, 409, 422].includes(error.status)) { pending = null; remember(); }
+      if ([400, 401, 403, 404, 409, 422].includes(error.status)) { invalidates = false; pending = null; remember(); }
       throw error;
     } finally {
       running = false;
-      // Even a failed write may have reached the server: let other tabs reread.
-      onCommand?.();
+      // An uncertain write may have reached the server too.
+      if (invalidates) onCommand?.();
     }
   }
   function command(body) {
     assertAlive();
     if (pending) return Promise.reject(new Error('Retry the pending command before starting another operation'));
-    pending = { id: crypto.randomUUID(), body: structuredClone({ ...body, ...(body.action !== 'stop' ? { expected_session_id: active?.id || '' } : {}) }) };
+    if (body.action !== 'stop' && typeof body.expected_session_id !== 'string') return Promise.reject(new Error('Explicit expected session ID required'));
+    pending = { id: crypto.randomUUID(), body: structuredClone(body) };
     remember();
     return sendPending();
   }
@@ -82,20 +82,19 @@ export function createActivitySessionClient({ baseURL, getToken, authorizedReque
     return command({ action: 'stop', session_id: sessionId, context: { task_result: result } });
   }
   return {
-    startTask(context) {
+    startTask(context, expectedSessionId) {
       if (!Number.isSafeInteger(context?.task_id) || context.task_id <= 0) return Promise.reject(new Error('Real CRM task_id required'));
-      return command({ action: 'work', context });
+      return command({ action: 'work', context, expected_session_id: expectedSessionId });
     },
-    startImbox(dialogId, context = {}) {
+    startImbox(dialogId, context, expectedSessionId) {
       if (!String(dialogId).match(/^\d+$/)) return Promise.reject(new Error('Real Imbox dialog ID required'));
-      return command({ action: 'activity', context: { ...context, activity_type: 'imbox', activity_name: `Imbox ${dialogId}` } });
+      return command({ action: 'activity', expected_session_id: expectedSessionId, context: { ...context, activity_type: 'imbox', activity_name: `Imbox ${dialogId}` } });
     },
-    startActivity(name, context = {}) { return command({ action: 'activity', context: { ...context, activity_type: 'other', activity_name: name } }); },
-    startPause() { return command({ action: 'pause', context: {} }); },
-    stop(result = '') { return stopSession(active?.id, result); },
+    startActivity(name, context, expectedSessionId) { return command({ action: 'activity', expected_session_id: expectedSessionId, context: { ...context, activity_type: 'other', activity_name: name } }); },
+    startPause(expectedSessionId) { return command({ action: 'pause', context: {}, expected_session_id: expectedSessionId }); },
     stopSession,
     retryPending: sendPending,
-    async loadState() { const state = await request('state', undefined, undefined, 'GET'); active = state.current?.id ? state.current : null; return state; },
+    loadState() { return request('state', undefined, undefined, 'GET'); },
     loadHistory(query) { return request(`sessions?${new URLSearchParams(query)}`, undefined, undefined, 'GET'); },
     // amoCRM is reached only through the server: it binds tasks to the verified
     // employee, shares one queue snapshot across tabs and owns the request budget.
@@ -104,7 +103,7 @@ export function createActivitySessionClient({ baseURL, getToken, authorizedReque
     // Safe to repeat: the server rereads the task and never completes it twice.
     completeTask(id, result) { return request(`tasks/${encodeURIComponent(id)}/complete`, { result }); },
     loadLead(id) { return request(`leads/${encodeURIComponent(id)}`, undefined, undefined, 'GET'); },
-    getState() { return { active: active ? structuredClone(active) : null, pending: !!pending, running }; },
+    getState() { return { pending: !!pending, running }; },
     createManagementLink(appOrigin) { return request('browser-session', { app_origin: appOrigin }); },
     dispose() { disposed = true; abort.abort(); },
   };
