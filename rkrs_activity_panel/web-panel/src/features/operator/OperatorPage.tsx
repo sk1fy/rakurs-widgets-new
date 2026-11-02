@@ -1,14 +1,14 @@
 import { useMemo, useState } from "react";
 import { AppHeader } from "../../app/AppHeader";
 import { usePanelScope } from "../../app/context";
-import { useNow, useResource } from "../../app/hooks";
+import { ACTIVE_REFRESH_MS, useNow, useResource } from "../../app/hooks";
 import { href } from "../../app/router";
 import { compareWithYesterday, conversionPercent, conversionTone, gaugeMax, lastCallLabel, remainingTimeLabel, speedColor, type Comparison } from "../../domain/formulas/operator";
 import { dayTitle, formatDurationShort, formatDurationWithSeconds, todayKey } from "../../domain/time";
+import { LoadingFeedback } from "../../ui/LoadingFeedback";
 import { Icon } from "../../ui/Icon";
-import { ErrorState, HelpTip, MetaBadges, NotConnected, Spinner, Switch } from "../../ui/primitives";
+import { ErrorState, HelpTip, MetaBadges, NotConnected, Switch } from "../../ui/primitives";
 import { dayRange, previousDayRange, resolveWindow } from "../dashboard/model";
-import { SNAPSHOT_REFRESH_MS } from "../dashboard/useDashboardData";
 import { operatorSnapshot } from "./model";
 
 const TICK_ANGLES = [180, 120, 60, 0];
@@ -98,9 +98,8 @@ function PlanPace({ plan, actual, forecast, showForecast }: { plan: number; actu
   );
 }
 
-/** План/факт оператора (EmployeeSpeedWidget, type=employee). Всегда за сегодня, обновление раз в 10 минут. */
 export function OperatorPage({ employeeId }: { employeeId: number }) {
-  const { panel, prefs, source, viewKey } = usePanelScope();
+  const { panel, panelRefreshing, prefs, source, viewKey } = usePanelScope();
   const now = useNow();
   const tz = panel.timezone;
   const today = todayKey(tz, now * 1000);
@@ -110,8 +109,8 @@ export function OperatorPage({ employeeId }: { employeeId: number }) {
   const [unique, setUnique] = useState(false);
   const employee = panel.employees.find((e) => e.id === employeeId);
   const settings = panel.operators.find((o) => o.employeeId === employeeId);
-  const todayRes = useResource(settings ? `op:${employeeId}:${range.from}` : null, (s) => source.loadEmployeeEvents(employeeId, range, s), { refreshMs: SNAPSHOT_REFRESH_MS });
-  const prevRes = useResource(settings ? `op-prev:${employeeId}:${prev.from}` : null, (s) => source.loadEmployeeEvents(employeeId, prev, s));
+  const todayRes = useResource(settings ? `op:${employeeId}:${range.from}:${range.to}` : null, (s) => source.loadEmployeeEvents(employeeId, range, s), { refreshMs: ACTIVE_REFRESH_MS });
+  const prevRes = useResource(settings ? `op-prev:${employeeId}:${prev.from}:${prev.to}` : null, (s) => source.loadEmployeeEvents(employeeId, prev, s));
 
   const header = <AppHeader mode={source.mode} panelName={panel.name} viewKey={viewKey} />;
   const back = (
@@ -139,7 +138,7 @@ export function OperatorPage({ employeeId }: { employeeId: number }) {
     );
   }
   const s = todayRes.data
-    ? operatorSnapshot({ settings, events: todayRes.data.byEmployee.get(employeeId) ?? [], yesterdayEvents: prevRes.status === "ready" ? prevRes.data?.byEmployee.get(employeeId) ?? [] : null, dayKey: today, timeZone: tz, startMinutes: win.startMinutes, endMinutes: win.endMinutes, nowUnix: now, unique })
+    ? operatorSnapshot({ settings, events: todayRes.data.byEmployee.get(employeeId) ?? [], yesterdayEvents: prevRes.status === "ready" && prevRes.error === null ? prevRes.data?.byEmployee.get(employeeId) ?? [] : null, dayKey: today, timeZone: tz, startMinutes: win.startMinutes, endMinutes: win.endMinutes, nowUnix: now, unique })
     : null;
   const y = s?.yesterday ?? null;
   const cr = s ? conversionPercent(s.today.successful, s.today.calls) : 0;
@@ -161,56 +160,60 @@ export function OperatorPage({ employeeId }: { employeeId: number }) {
           <HelpTip label="Об уникальных звонках">При включении учитываются только уникальные номера телефонов</HelpTip>
           {todayRes.data && <MetaBadges meta={todayRes.data.meta} timeZone={tz} />}
         </div>
-        {todayRes.status === "error" && <ErrorState error={todayRes.error} onRetry={todayRes.reload} />}
-        {!s && todayRes.status !== "error" && <Spinner />}
-        {s && (
-          <div className="op">
-            <div className="card">
-              <div className="gauge">
-                <Gauge speed={speed} />
-                <div className="gauge-sub" style={{ color }}>
-                  Скорость работы: <b>{speed}</b> зв./ч
-                  <HelpTip label="Подробнее о скорости" align="left">
-                    <span>Текущая скорость: {speed} зв./ч</span>
-                    {s.requiredSpeed > 0 && <span>Требуемая скорость: {s.requiredSpeed} зв./ч</span>}
-                    <span>Последний звонок: {lastCall}</span>
-                    <span>Осталось до плана: {s.remainingToPlan} зв.</span>
-                    <span>До конца рабочего времени: {remainingTimeLabel(s.remainingHours)}</span>
-                    {unique && <span className="hint-unique">Учитываются уникальные номера: {s.today.calls}</span>}
-                  </HelpTip>
+        <div className="data-region">
+          <LoadingFeedback loading={todayRes.status === "loading"} refreshing={panelRefreshing || todayRes.refreshing} />
+          {todayRes.error !== null && <ErrorState error={todayRes.error} onRetry={todayRes.reload} />}
+          {todayRes.error !== null && todayRes.data !== null && <div className="banner">Последнее обновление не удалось. Показаны ранее загруженные данные.</div>}
+          {prevRes.error !== null && <><div className="banner">Сравнение с предыдущим днём недоступно.</div><ErrorState error={prevRes.error} onRetry={prevRes.reload} compact /></>}
+          {s && (
+            <div className="op">
+              <div className="card">
+                <div className="gauge">
+                  <Gauge speed={speed} />
+                  <div className="gauge-sub" style={{ color }}>
+                    Скорость работы: <b>{speed}</b> зв./ч
+                    <HelpTip label="Подробнее о скорости" align="left">
+                      <span>Текущая скорость: {speed} зв./ч</span>
+                      {s.requiredSpeed > 0 && <span>Требуемая скорость: {s.requiredSpeed} зв./ч</span>}
+                      <span>Последний звонок: {lastCall}</span>
+                      <span>Осталось до плана: {s.remainingToPlan} зв.</span>
+                      <span>До конца рабочего времени: {remainingTimeLabel(s.remainingHours)}</span>
+                      {unique && <span className="hint-unique">Учитываются уникальные номера: {s.today.calls}</span>}
+                    </HelpTip>
+                  </div>
+                  <div className="dim small" style={{ textAlign: "center", marginTop: 6, lineHeight: 1.6 }}>
+                    {s.requiredSpeed > 0 && <>Требуемая скорость: {s.requiredSpeed} зв./ч · </>}
+                    Осталось до плана: {s.remainingToPlan} зв. · До конца рабочего времени: {remainingTimeLabel(s.remainingHours)}
+                    <br />
+                    Последний звонок: {lastCall}
+                  </div>
                 </div>
-                <div className="dim small" style={{ textAlign: "center", marginTop: 6, lineHeight: 1.6 }}>
-                  {s.requiredSpeed > 0 && <>Требуемая скорость: {s.requiredSpeed} зв./ч · </>}
-                  Осталось до плана: {s.remainingToPlan} зв. · До конца рабочего времени: {remainingTimeLabel(s.remainingHours)}
-                  <br />
-                  Последний звонок: {lastCall}
+                <PlanPace plan={settings.plan} actual={s.actual} forecast={s.forecast} showForecast={s.showForecast} />
+                <div className="dim small">Прогноз показывается, если за последний час были звонки.</div>
+              </div>
+              <div className="card op-stats">
+                <div className="chips" style={{ marginBottom: 8 }}>
+                  <span className={`chip ${conversionTone(cr)}`}>
+                    CR {cr}%
+                    <HelpTip label="Что такое CR" align="left">CR - показывает, какой процент звонков завершился успешным дозвоном (Дозвоны / Все звонки × 100%)</HelpTip>
+                  </span>
+                  <span className="chip mut">
+                    {s.today.talkSeconds < 3600 ? formatDurationWithSeconds(s.today.talkSeconds) : formatDurationShort(s.today.talkSeconds)}
+                    <HelpTip label="Что считается временем разговоров" align="left">Общая продолжительность исходящих звонков</HelpTip>
+                  </span>
+                  {s.today.unknownDuration > 0 && <span className="chip warn" title="Звонки без длительности: не классифицированы (C1, F9)">{s.today.unknownDuration} без длительности</span>}
+                </div>
+                <Row label="Звонков" today={s.today.calls} cmp={y ? compareWithYesterday(s.today.calls, y.calls) : undefined} color={color} />
+                <Row label={`Дозвоны (≥ ${settings.dialingSeconds} с)`} today={s.today.successful} cmp={y ? compareWithYesterday(s.today.successful, y.successful) : undefined} color={color} />
+                <Row label={`Разговор (≥ ${settings.conversationSeconds} с)`} today={s.today.conversation} cmp={y ? compareWithYesterday(s.today.conversation, y.conversation) : undefined} color={color} />
+                <Row label={`Превышение (≥ ${settings.exceedingSeconds} с)`} today={s.today.exceeding} cmp={y ? compareWithYesterday(s.today.exceeding, y.exceeding) : undefined} color={color} />
+                <div className="dim small" style={{ marginTop: 10 }}>
+                  «/ N» — вчера до того же времени{prevRes.error !== null ? " (вчерашние данные не загрузились)" : ""}. Обновляется каждые 90 секунд.
                 </div>
               </div>
-              <PlanPace plan={settings.plan} actual={s.actual} forecast={s.forecast} showForecast={s.showForecast} />
-              <div className="dim small">Прогноз показывается, если за последний час были звонки.</div>
             </div>
-            <div className="card op-stats">
-              <div className="chips" style={{ marginBottom: 8 }}>
-                <span className={`chip ${conversionTone(cr)}`}>
-                  CR {cr}%
-                  <HelpTip label="Что такое CR" align="left">CR - показывает, какой процент звонков завершился успешным дозвоном (Дозвоны / Все звонки × 100%)</HelpTip>
-                </span>
-                <span className="chip mut">
-                  {s.today.talkSeconds < 3600 ? formatDurationWithSeconds(s.today.talkSeconds) : formatDurationShort(s.today.talkSeconds)}
-                  <HelpTip label="Что считается временем разговоров" align="left">Общая продолжительность исходящих звонков</HelpTip>
-                </span>
-                {s.today.unknownDuration > 0 && <span className="chip warn" title="Звонки без длительности: не классифицированы (C1, F9)">{s.today.unknownDuration} без длительности</span>}
-              </div>
-              <Row label="Звонков" today={s.today.calls} cmp={y ? compareWithYesterday(s.today.calls, y.calls) : undefined} color={color} />
-              <Row label={`Дозвоны (≥ ${settings.dialingSeconds} с)`} today={s.today.successful} cmp={y ? compareWithYesterday(s.today.successful, y.successful) : undefined} color={color} />
-              <Row label={`Разговор (≥ ${settings.conversationSeconds} с)`} today={s.today.conversation} cmp={y ? compareWithYesterday(s.today.conversation, y.conversation) : undefined} color={color} />
-              <Row label={`Превышение (≥ ${settings.exceedingSeconds} с)`} today={s.today.exceeding} cmp={y ? compareWithYesterday(s.today.exceeding, y.exceeding) : undefined} color={color} />
-              <div className="dim small" style={{ marginTop: 10 }}>
-                «/ N» — вчера до того же времени{prevRes.status === "error" ? " (вчерашние данные не загрузились)" : ""}. Обновляется каждые 10 минут.
-              </div>
-            </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </>
   );

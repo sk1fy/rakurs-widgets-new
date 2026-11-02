@@ -53,7 +53,7 @@ describe("problem snapshot polling", () => {
 function header(problems: Sourced<ProblemLists>, loading: boolean) {
   const panel = fixturePanel(at);
   return renderToStaticMarkup(createElement(PanelScopeContext.Provider,
-    { value: { panel, prefs: defaultPreferences(), source: new FixtureSource(), viewKey: "demo", setPrefs: () => {} } },
+    { value: { panel, prefs: defaultPreferences(), source: new FixtureSource(), panelRefreshing: false, viewKey: "demo", setPrefs: () => {} } },
     createElement(HeaderIndicators, { missed: null, missedUpdatedAt: null, problems, problemsLoading: loading, visibleIds: [9007] }),
   ));
 }

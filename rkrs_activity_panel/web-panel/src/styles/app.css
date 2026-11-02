@@ -627,3 +627,10 @@ a.mc-phone:hover{color:#ff8f8f;text-decoration:underline}
 /* Keep the shared snapshot refresh indicator next to its existing badge. */
 .hic > .spin{display:block;margin:7px}
 .hic > .problem-refresh-spin{position:absolute;left:-14px;top:7px;margin:0}
+
+.data-region{position:relative;min-height:180px}
+.panel-bootstrap{min-height:70vh}
+.data-loading-overlay{position:absolute;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;gap:12px;background:rgba(12,18,29,.72);color:var(--tx);font-size:16px;backdrop-filter:blur(2px)}
+.data-refresh-indicator{position:fixed;right:18px;bottom:18px;z-index:900;display:flex;align-items:center;gap:8px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--inset);color:var(--tx2);font-size:12px;pointer-events:none}
+.data-refresh-indicator .spin{width:12px;height:12px}
+@media(prefers-reduced-motion:reduce){.data-loading-overlay .spin,.data-refresh-indicator .spin{animation:none}}

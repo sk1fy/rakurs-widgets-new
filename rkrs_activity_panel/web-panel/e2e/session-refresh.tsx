@@ -5,6 +5,7 @@ import type { ActivitySource, Sourced } from "../src/api/source";
 import { dayEndInclusive, dayStart, unixAt } from "../src/domain/time";
 import type { DataMeta, EmployeeSessions, WorkSession } from "../src/domain/types";
 import { useExternalSessions } from "../src/features/dashboard/useExternalSessions";
+import { ACTIVE_REFRESH_MS } from "../src/app/hooks";
 import { useEmployeeData } from "../src/features/employee/useEmployeeData";
 
 const params = new URLSearchParams(location.search);
@@ -38,7 +39,7 @@ function SessionRefreshAudit() {
     } as ActivitySource;
   }, [sourceIndex]);
   const range = { dayKey: day, from: dayStart(day, zone) + offset, to: dayEndInclusive(day, zone) };
-  const refreshMs = historical ? null : 240000;
+  const refreshMs = historical ? null : ACTIVE_REFRESH_MS;
   const visibility = (value: string) => { Object.defineProperty(document, "visibilityState", { configurable: true, value }); document.dispatchEvent(new Event("visibilitychange")); };
   return <main>
     {profile ? <ProfileObservation source={source} employee={employee} zone={zone} refreshMs={refreshMs} requests={() => calls.current} /> : <ExternalObservation source={source} employee={employee} range={range} refreshMs={refreshMs} requests={() => calls.current} />}

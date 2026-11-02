@@ -4,6 +4,7 @@
 // Скриншоты — в E2E_OUT (по умолчанию ./e2e-out, игнорируется git).
 import { chromium } from "playwright";
 import { mkdirSync } from "node:fs";
+import { eventDataChecks } from "./event-data-checks.mjs";
 import { managementMvp } from "./management-mvp.mjs";
 import { sessionRefreshChecks } from "./session-refresh-checks.mjs";
 
@@ -19,6 +20,7 @@ const check = (cond, msg) => {
 
 const browser = await chromium.launch();
 await managementMvp(browser, check, OUT);
+await eventDataChecks(browser, check, OUT);
 await sessionRefreshChecks(browser, BASE, check);
 
 // Exercise the actual resource hook with controlled pending requests. A new

@@ -7,6 +7,7 @@ export interface PanelScope {
   viewKey: string;
   source: ActivitySource;
   panel: PanelContext;
+  panelRefreshing: boolean;
   prefs: LocalPreferences;
   setPrefs: (update: (prev: LocalPreferences) => LocalPreferences) => void;
 }
