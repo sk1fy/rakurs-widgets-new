@@ -17,15 +17,12 @@ test('bridge GET uses fresh admin assertion; PUT binds fresh proof to exact job 
 test('bridge polls complete jobs; partial reads upload explicit failure and foreign scopes are ignored',async()=>{
  const submitted=[],captured=[];
  const controller=new Controller({accountId:123,get_settings:()=>({teamos_enabled:'1'})},{},{},()=>{});
- controller.running=true;controller.client={pendingSources:async()=>({requests:[{...job,scope:{...job.scope,accountId:'456'}},job]}),submitSource:async(id,result)=>submitted.push({id,result})};
+ controller.bridgeAuthorized=true;controller.client={pendingSources:async()=>({requests:[{...job,scope:{...job.scope,accountId:'456'}},job]}),submitSource:async(id,result)=>submitted.push({id,result})};
  controller.migration={capture:async request=>{captured.push(request);throw Object.assign(new Error('partial'),{code:'INCOMPLETE_PAGINATION'});}};
  controller.pollSources();await flush();assert.equal(captured.length,1);assert.equal(submitted.length,1);assert.equal(submitted[0].result.complete,false);assert.equal(submitted[0].result.payload.issues[0].code,'INCOMPLETE_PAGINATION');
 });
-test('TeamOS disabled makes zero bridge/runtime network calls',async()=>{
- let calls=0;const controller=new Controller({accountId:123,get_settings:()=>({teamos_enabled:'0'})},{},{},()=>{});controller.client={pendingSources:()=>calls++,refresh:()=>calls++};controller.migration={capture:()=>calls++};controller.start();controller.pollSources();await flush();assert.equal(calls,0);
-});
 test('bridge late catalog result after destroy never submits',async()=>{
- let release,submitted=0;const controller=new Controller({accountId:123,get_settings:()=>({teamos_enabled:'1'})},{},{},()=>{});controller.running=true;
+ let release,submitted=0;const controller=new Controller({accountId:123,get_settings:()=>({teamos_enabled:'1'})},{},{},()=>{});controller.bridgeAuthorized=true;
  controller.client={pendingSources:async()=>({requests:[job]}),submitSource:async()=>submitted++,clear:()=>{}};
  controller.migration={capture:()=>new Promise(resolve=>release=resolve)};controller.pollSources();await flush();controller.destroy();release({complete:true});await flush();assert.equal(submitted,0);
 });
@@ -49,7 +46,7 @@ test('explicit admin bridge opt-in imports standalone rules without enabling man
  t.mock.timers.enable({apis:['setTimeout']});let polls=0,proofs=0,submits=0, runtime=0;
  const controller=new Controller({accountId:123,get_settings:()=>({teamos_enabled:'0'})},{},{},()=>{});
  controller.client={proof:async purpose=>{assert.equal(purpose,'adminBridge');proofs++;return{assertion:'admin'};},pendingSources:async()=>{polls++;return{requests:[job]};},submitSource:async()=>submits++,refresh:()=>runtime++,clear:()=>{}};
- controller.migration={capture:async()=>({complete:true})};controller.start();await flush();assert.equal(polls,0);
+ controller.migration={capture:async()=>({complete:true})};controller.pollSources();await flush();assert.equal(polls,0);
  await controller.startAdminBridge();await flush();assert.equal(proofs,1);assert.equal(polls,1);assert.equal(submits,1);assert.equal(runtime,0);assert.equal(controller.running,false);
  controller.destroy();t.mock.timers.tick(30000);await flush();assert.equal(polls,1);
 });

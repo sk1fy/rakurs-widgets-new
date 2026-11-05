@@ -1044,9 +1044,7 @@
             this._runAreaServices();
             return true;
         }
-        var settings = {};
-        try { settings = this.widget.get_settings() || {}; } catch (error) {}
-        var parsed = Snapshot.parseRuntimeConfig(this.runtimeConfig === undefined ? settings.runtime_config : this.runtimeConfig);
+        var parsed = Snapshot.parseRuntimeConfig(this.runtimeConfig);
         var user = readConstant('user') || {};
         var userId = safeNumber(user.id);
         this.started = true;

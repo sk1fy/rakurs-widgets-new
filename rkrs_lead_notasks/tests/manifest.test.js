@@ -13,30 +13,38 @@ test('manifest settings use supported amoCRM field types', () => {
     }
 });
 
-test('TeamOS toggle stages both on and off in native text field without changing saved runtime mode', () => {
+test('widget settings hide legacy fields and offer only the TeamOS connection code', () => {
     const nodes = [];
-    const hidden = { length: 1, value: '0', changes: 0,
-        hide() { return this; }, closest() { return this; }, first() { return this; }, val(v) { this.value = v; return this; },
-        trigger(event) { assert.equal(event, 'change'); this.changes++; return this; } };
-    const $ = (tag) => {
-        const node = { tag, props: {}, events: {},
-            insertAfter() { return this; }, css() { return this; }, appendTo() { return this; }, append() { return this; },
-            text() { return this; }, attr(v) { Object.assign(this.props, v); return this; },
-            prop(k,v) { if (arguments.length === 1) return this.props[k]; this.props[k] = v; return this; },
-            on(event, cb) { this.events[event] = cb; return this; } };
-        nodes.push(node); return node;
+    const legacy = {
+        hidden: false,
+        hide() { this.hidden = true; return this; },
+        closest() { return this; },
     };
-    const saved = { teamos_enabled: '0' };
-    const Controller = require('../lib/teamos_controller')({ enabled: v => v === '1' });
-    const controller = new Controller({ get_settings: () => saved }, $, {}, () => {});
-    controller.render({ find(selector) { assert.equal(selector, 'input[name="teamos_enabled"]'); return hidden; } });
-    const toggle = nodes.find(n => n.props.type === 'checkbox');
-    assert.equal(toggle.props.checked, false);
-    assert.equal(toggle.props.disabled, false);
-    toggle.prop('checked', true); toggle.events.change();
-    assert.equal(hidden.value, '1');
-    assert.equal(controller.enabled(), false);
-    toggle.prop('checked', false); toggle.events.change();
-    assert.equal(hidden.value, '0');
-    assert.equal(hidden.changes, 2);
+    const $ = (tag) => {
+        const node = {
+            tag,
+            label: '',
+            appendTo() { return this; },
+            text(label) { this.label = label; return this; },
+            attr() { return this; },
+            prop() { return this; },
+            on() { return this; },
+        };
+        nodes.push(node);
+        return node;
+    };
+    const Controller = require('../lib/teamos_controller')({});
+    const controller = new Controller({}, $, {}, () => {});
+    const selectors = [];
+    controller.render({
+        find(selector) {
+            selectors.push(selector);
+            return selector.startsWith('input') ? legacy : { first: () => ({ length: 0 }) };
+        },
+    });
+
+    assert.match(selectors[0], /teamos_enabled.*runtime_config/);
+    assert.equal(legacy.hidden, true);
+    assert.deepEqual(nodes.filter(node => node.tag.startsWith('<button')).map(node => node.label), ['Код подключения']);
+    assert.equal(nodes.some(node => node.tag.startsWith('<input')), false);
 });
