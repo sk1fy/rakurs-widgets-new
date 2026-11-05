@@ -7,7 +7,6 @@
         this.widget = widget; this.$ = $; this.deployment = deployment; this.changed = changed;
         this.client = null; this.running = false; this.timer = null; this.generation = 0;
     }
-    Controller.prototype.enabled = function () { return TeamOS.enabled(this.widget.get_settings().teamos_enabled); };
     Controller.prototype.getClient = function () {
         var self = this;
         if (!this.client) {
@@ -23,7 +22,7 @@
         return this.client;
     };
     Controller.prototype.start = function () {
-        if (this.running || !this.enabled()) { return; }
+        if (this.running) { return; }
         this.running = true;
         var self = this, generation = ++this.generation;
         function current() { return self.running && generation === self.generation; }
@@ -51,7 +50,7 @@
                 return client.refresh();
             }).catch(function () {}).finally(function () {
                 self.refreshing = false;
-                if (current()) { apply(); self.pollSources(); self.timer = setTimeout(refresh, self.client.pollDelay()); }
+                if (current()) { apply(); self.timer = setTimeout(refresh, self.client ? self.client.pollDelay() : 60000); }
             });
         }
         this.resume = function () { apply(); refresh(); };
@@ -59,7 +58,7 @@
         if (typeof document !== 'undefined') { document.addEventListener('visibilitychange', this.resume); }
         refresh();
     };
-    Controller.prototype.bridgeAllowed = function () { return !!this.bridgeAuthorized || this.running && this.enabled(); };
+    Controller.prototype.bridgeAllowed = function () { return !!this.bridgeAuthorized; };
     Controller.prototype.authorizeBridge = function () {
         var self = this;
         this.bridgeAuthorized = true;
@@ -103,52 +102,35 @@
     Controller.prototype.render = function ($body) {
         var self = this, $ = this.$;
         if (this.panel) { this.panel.remove(); }
-        var field = $body.find('input[name="teamos_enabled"]').first();
-        var nativeItem = field.closest('.widget_settings_block__item_field');
-        field.hide(); nativeItem.hide();
+        $body.find('input[name="teamos_enabled"], input[name="runtime_config"], textarea[name="runtime_config"]')
+            .hide().closest('.widget_settings_block__item_field').hide();
         var panel = $('<section>').attr('class', 'rkrs-wt-teamos');
         this.panel = panel;
-        // Keep custom controls inside the native fields area, before amoCRM Save.
-        if (nativeItem.length) { panel.insertAfter(nativeItem); }
-        else {
-            var wrapper = $body.find('#widget_settings__fields_wrapper').first();
-            panel.appendTo(wrapper.length ? wrapper : $body);
-        }
-        $('<h3>').text('Правила из TeamOS').appendTo(panel);
-        $('<p>').attr('class', 'rkrs-wt-teamos__intro').text(this.enabled()
-            ? 'Правила настраиваются в TeamOS. Проверка задач выполняется в amoCRM.'
-            : 'Сейчас используются локальные правила amoCRM. Подключите TeamOS, чтобы управлять правилами аккаунта в одном месте.').appendTo(panel);
-        var toggle = $('<input>').attr({ type: 'checkbox', 'aria-label': 'Правила из TeamOS' })
-            .prop('checked', this.enabled()).prop('disabled', !field.length);
-        var label = $('<label>').attr('class', 'rkrs-wt-teamos__toggle').appendTo(panel);
-        label.append(toggle).append($('<span>').text(' Использовать правила из TeamOS'));
-        toggle.on('change', function () {
-            field.val(toggle.prop('checked') ? '1' : '0').trigger('change');
-        });
-        if (!field.length) {
-            $('<p>').text('Не найдено поле настроек TeamOS. Закройте и повторно откройте настройки виджета.').appendTo(panel);
-        }
+        var wrapper = $body.find('#widget_settings__fields_wrapper').first();
+        panel.appendTo(wrapper.length ? wrapper : $body);
+
+        $('<h3>').text('Контроль задач в TeamOS').appendTo(panel);
+        $('<p>').attr('class', 'rkrs-wt-teamos__intro').text('Правила настраиваются в TeamOS. Проверка задач выполняется в amoCRM.').appendTo(panel);
         var steps = $('<ol>').attr('class', 'rkrs-wt-teamos__steps').appendTo(panel);
         ['Получите код подключения и вставьте его в разделе «Контроль задач» в TeamOS.',
-            'Создайте и опубликуйте правила в TeamOS.',
-            'Получите код смены режима, подтвердите переход в TeamOS, затем включите флажок выше и нажмите «Сохранить» в amoCRM.'
+            'Создайте и сохраните правила в TeamOS.'
         ].forEach(function (text) { $('<li>').text(text).appendTo(steps); });
         var actions = $('<div>').attr('class', 'rkrs-wt-teamos__actions').appendTo(panel);
-        var status = $('<p>').attr({ 'class': 'rkrs-wt-teamos__status', role: 'status', 'aria-live': 'polite' }).text('Коды одноразовые и действуют 60 секунд.').appendTo(panel);
+        var status = $('<p>').attr({ 'class': 'rkrs-wt-teamos__status', role: 'status', 'aria-live': 'polite' }).text('Код одноразовый и действует 60 секунд.').appendTo(panel);
         var code = $('<textarea readonly>').attr({ 'class': 'rkrs-wt-teamos__code', 'aria-label': 'Одноразовый код для TeamOS', spellcheck: 'false' }).prop('hidden', true).appendTo(panel);
-        ['link', 'mode'].forEach(function (purpose) {
-            var button = $('<button type="button">').attr('class', 'button-input rkrs-wt-teamos__button').text(purpose === 'link' ? 'Код подключения' : 'Код смены режима').appendTo(actions).on('click', function () {
-                button.prop('disabled', true);
-                code.val('').prop('hidden', true); status.text('Получение подтверждения…');
-                Promise.resolve().then(function () { return self.getClient().proof(purpose); }).then(function (proof) {
-                    if (purpose === 'link') { self.authorizeBridge(); }
-                    code.val(proof.assertion).prop('hidden', false); status.text('Выделите и скопируйте код в TeamOS в течение 60 секунд.');
-                    setTimeout(function () { if (code.val() === proof.assertion) { code.val('').prop('hidden', true); status.text('Код истёк. Получите новый код.'); } }, 60000);
-                }).catch(function () { status.text('Не удалось получить код. Проверьте подключение сервера и права администратора amoCRM.'); }).finally(function () { button.prop('disabled', false); });
-            });
+        var button = $('<button type="button">').attr('class', 'button-input rkrs-wt-teamos__button').text('Код подключения').appendTo(actions);
+        button.on('click', function () {
+            button.prop('disabled', true);
+            code.val('').prop('hidden', true);
+            status.text('Получение подтверждения…');
+            Promise.resolve().then(function () { return self.getClient().proof('link'); }).then(function (proof) {
+                self.authorizeBridge();
+                code.val(proof.assertion).prop('hidden', false);
+                status.text('Выделите и скопируйте код в TeamOS в течение 60 секунд.');
+                setTimeout(function () { if (code.val() === proof.assertion) { code.val('').prop('hidden', true); status.text('Код истёк. Получите новый код.'); } }, 60000);
+            }).catch(function () { status.text('Не удалось получить код. Проверьте подключение сервера и права администратора amoCRM.'); }).finally(function () { button.prop('disabled', false); });
         });
         code.on('click', function () { this.select(); });
-        if (this.enabled()) { $('<p>').text('Настройки правил находятся в TeamOS. Для возврата к автономному режиму сначала переключите режим в TeamOS, затем отключите флажок и сохраните настройки amoCRM.').appendTo(panel); }
     };
     Controller.prototype.destroy = function () { this.running = false; this.bridgeAuthorized = false; clearTimeout(this.bridgeTimer); this.generation++; clearTimeout(this.timer); clearTimeout(this.leaseTimer);
         if (typeof window !== 'undefined' && this.resume) { window.removeEventListener('online', this.resume); window.removeEventListener('pageshow', this.resume); }

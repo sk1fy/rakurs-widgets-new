@@ -17,10 +17,10 @@ if (fields.some(field => !allowed.has(field.type)) || fields.filter(field => fie
 }
 const coreOrigin = process.env.TASK_CONTROL_CORE_ORIGIN || '';
 const backendOrigin = process.env.TASK_CONTROL_BACKEND_ORIGIN || '';
-if ((!coreOrigin || !backendOrigin) && process.env.TASK_CONTROL_STANDALONE_BUILD !== '1') {
-    throw new Error('Set TASK_CONTROL_CORE_ORIGIN and TASK_CONTROL_BACKEND_ORIGIN (HTTPS public origins). For a standalone-only archive set TASK_CONTROL_STANDALONE_BUILD=1 explicitly.');
+if (!coreOrigin || !backendOrigin) {
+    throw new Error('Set TASK_CONTROL_CORE_ORIGIN and TASK_CONTROL_BACKEND_ORIGIN (HTTPS public origins).');
 }
-for (const input of [coreOrigin, backendOrigin].filter(Boolean)) {
+for (const input of [coreOrigin, backendOrigin]) {
     const u = new URL(input);
     if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash || u.pathname !== '/') throw new Error('Expected HTTPS origin without path/credentials');
 }

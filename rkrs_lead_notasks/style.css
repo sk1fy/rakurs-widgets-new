@@ -1321,8 +1321,6 @@ html[data-color-scheme='dark'] .rkrs-wt-flags .rkrs-wt-switch:has(input:checked)
 .rkrs-wt-teamos h3 { margin: 0 0 8px; font-size: 16px; font-weight: 600; color: #17505b; }
 .rkrs-wt-teamos p { margin: 8px 0; }
 .rkrs-wt-teamos__intro, .rkrs-wt-teamos__status { color: #667680; }
-.rkrs-wt-teamos__toggle { display: flex; align-items: center; gap: 9px; margin: 16px 0; font-weight: 600; cursor: pointer; }
-.rkrs-wt-teamos__toggle input { appearance: auto; width: 16px; height: 16px; margin: 0; accent-color: #17505b; }
 .rkrs-wt-teamos__steps { margin: 14px 0; padding-left: 20px; list-style: decimal; }
 .rkrs-wt-teamos__steps li { margin: 8px 0; padding-left: 3px; }
 .rkrs-wt-teamos__actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0 10px; }

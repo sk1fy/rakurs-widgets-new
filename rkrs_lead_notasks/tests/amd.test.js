@@ -59,7 +59,6 @@ test('script entrypoint creates callbacks.onSave with versioned .js dependency p
         (constants, rules) => require('../lib/snapshot'),
         (constants, rules) => require('../lib/catalog_repository'),
         (constants, rules, snapshot) => require('../lib/runtime'),
-        (constants, rules, snapshot) => require('../lib/settings_controller'),
         (constants) => require('../lib/task_assignment'),
         require('../lib/teamos'),
         { coreOrigin: '', backendOrigin: '' },

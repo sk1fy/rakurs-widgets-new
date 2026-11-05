@@ -58,11 +58,31 @@ test('v2 never falls back to v1 on endpoint failure or session downgrade in the 
     h.schema=1;h.bootstrapError=null;await assert.rejects(h.client.refresh(),/протокол v2/);
     assert.equal(h.calls.filter(c=>c.url.includes('/api/v1/widget/task-control/bootstrap')).length,0);
 });
-test('controller does not acknowledge a snapshot when no runtime engine was installed; standalone never starts transport',async t=>{
-    t.mock.timers.enable({apis:['setTimeout']});const h=harness();
-    const controller=new Controller({get_settings:()=>({teamos_enabled:'1'})},{},{},()=>false);controller.client=h.client;controller.start();await flush();
-    assert.equal(h.calls.filter(c=>c.url.endsWith('/telemetry') && c.options.body.event === 'applied').length,0);controller.destroy();
-    const standalone=new Controller({get_settings:()=>({teamos_enabled:'0'})},{},{},()=>{throw Error('standalone');});standalone.client=h.client;const before=h.calls.length;standalone.start();await flush();assert.equal(h.calls.length,before);standalone.destroy();
+test('a legacy disabled setting still fetches rules and retries after the first save', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const h = harness();
+    h.bootstrapError = Object.assign(new Error('Standalone connection'), { status: 403 });
+    let installed;
+    const controller = new Controller({ get_settings: () => ({ teamos_enabled: '0' }) }, {}, {}, good => {
+        installed = good;
+        return false;
+    });
+    controller.client = h.client;
+    try {
+        controller.start();
+        await flush();
+        assert.equal(installed, null);
+        assert.equal(h.calls.filter(c => c.url.endsWith('/bootstrap')).length, 1);
+
+        h.bootstrapError = null;
+        t.mock.timers.tick(65000);
+        await flush();
+        assert.equal(h.calls.filter(c => c.url.endsWith('/bootstrap')).length, 2);
+        assert.equal(installed.config.rules[0].name, 'Rule');
+        assert.equal(h.calls.some(c => c.url.endsWith('/telemetry') && c.options.body.event === 'applied'), false);
+    } finally {
+        controller.destroy();
+    }
 });
 
 test('confirmed ACK revocation removes engine immediately; transient ACK errors keep it until lease',async t=>{
