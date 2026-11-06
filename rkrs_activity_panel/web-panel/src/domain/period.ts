@@ -230,6 +230,15 @@ export function ratingOf(days: readonly DayStat[]): number | null {
   return elapsed > 0 ? active / elapsed : null;
 }
 
+/**
+ * Рейтинг-доля → проценты с одним знаком, тем же порядком операций, что у
+ * dashboard-v1 (round(active/elapsed*100*10)/10; общий оракул округления).
+ */
+export function ratingPercent(rating: number | null): number | null {
+  if (rating === null) return null;
+  return Math.max(0, Math.min(100, Math.round(rating * 100 * 10) / 10));
+}
+
 /** Дни прошлого периода «до той же точки»: индексы < cut.dayIndex целиком + день отсечки. */
 export function previousUpToCut(days: readonly DayStat[], cut: PeriodCut | null, cutDay: DayStat | null): DayStat[] {
   if (!cut) return [...days];
