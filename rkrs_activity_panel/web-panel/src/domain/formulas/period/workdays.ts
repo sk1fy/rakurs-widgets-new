@@ -86,7 +86,7 @@ export const RECURRING_PAUSE_SEGMENTS = 8;
  * этого дня; порог max(2, ceil(0.6 × дней)); пауза — подряд ≥ 8 отрезков.
  */
 export function recurringPauses(days: readonly PeriodDaySegments[], startMinutes: number, endMinutes: number): RecurringPause[] {
-  const withData = days.filter((d) => d.first !== null && d.last !== null && d.kinds.length > 0);
+  const withData = days.filter((d) => !d.partial && d.coverage !== "partial" && d.first !== null && d.last !== null && d.kinds.length > 0);
   if (withData.length < 2) return [];
   const bounds = withData.map((d) => ({
     kinds: d.kinds,

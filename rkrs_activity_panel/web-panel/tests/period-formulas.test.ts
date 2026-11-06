@@ -159,6 +159,15 @@ describe("Итоги (§8.1)", () => {
     expect(byKey.outgoingMail?.delta).toEqual({ kind: "pct", ratio: 1, tone: "good" });
   });
 
+  it("omits the previous cut day only for employees whose current day is pending", () => {
+    const ready = curWeek(() => ({ active: 10 }));
+    const pending = curWeek((i) => i === 3 ? { state: "pending", counted: false } : { active: 10 });
+    const prev = prevWeekDays.map((d) => stat(d, { active: 10 }));
+    const cutDay = stat(prevWeekDays[3] as string, { active: 25 });
+    const totals = periodTotals(periodStats([employee(7, ready, prev, cutDay), employee(8, pending, prev, cutDay)]), [7, 8]);
+    expect(totals.tiles.find((tile) => tile.key === "active")).toMatchObject({ value: 70, previous: 85 });
+  });
+
   it("shows «нет прошлого периода» when previous is unavailable", () => {
     const t = periodTotals(periodStats([employee(7, curWeek(() => ({})), null)], { available: false }), [7]);
     expect(t.previousAvailable).toBe(false);
@@ -175,20 +184,21 @@ describe("По часам (§8.2)", () => {
     expect(r.calls[0]).toBeCloseTo((10 / 60 + 0) / 2);
   });
 
-  it("marks best/worst hours, sorts by rating, delta vs whole previous and footer means", () => {
-    const a = employee(7, curWeek(() => ({ hours: [[30, 0, 60], [6, 0, 60]] })), prevWeekDays.map((d) => stat(d, { hours: [[15, 0, 60], [6, 0, 60]] })), null, { cur: 0.4, prev: 0.3 });
+  it("includes elapsed zero-activity hours and compares through the cut day", () => {
+    const a = employee(7, curWeek(() => ({ hours: [[30, 0, 60], [6, 0, 60]] })), prevWeekDays.map((d) => stat(d, { hours: [[15, 0, 60], [6, 0, 60]] })), stat(prevWeekDays[3] as string, { hours: [[15, 0, 15], [0, 0, 0]] }), { cur: 0.4, prev: 0.3 });
     const b = employee(8, curWeek(() => ({ hours: [[0, 0, 60], [60, 30, 60]] })), prevWeekDays.map((d) => stat(d, { hours: [[0, 0, 60], [30, 0, 60]] })), null, { cur: 0.6, prev: 0.65 });
     const m = hourMatrix(periodStats([a, b]), [7, 8]);
     expect(m.rows.map((r) => r.employeeId)).toEqual([8, 7]);
     const r7 = m.rows[1]!;
     expect(r7.best).toBe(0);
     expect(r7.worst).toBe(1);
-    expect(r7.cells[0]?.delta).toBeCloseTo(0.25);
+    expect(r7.cells[0]?.delta).toBeCloseTo(0.5 - (3 * 0.25 + 1) / 4);
+    const historical = hourMatrix(periodStats([a], { cut: null }), [7]);
+    expect(historical.rows[0]?.cells[0]?.delta).toBeCloseTo(0.25);
     expect(r7.ratingDelta).toBeCloseTo(0.1);
     const r8 = m.rows[0]!;
-    // Худший — только среди уровней > 0: единственный положительный час — лучший.
     expect(r8.best).toBe(1);
-    expect(r8.worst).toBeNull();
+    expect(r8.worst).toBe(0);
     expect(m.footer.cells[1]?.level).toBeCloseTo((0.1 + 1) / 2);
     expect(m.footer.rating).toBeCloseTo(0.5);
   });
@@ -249,5 +259,6 @@ describe("Сравнение рабочих дней (§8.5)", () => {
     const early = "11111" + "0000000000" + "000000000000000";
     expect(recurringPauses([seg(base, 540, 600), seg(early, 540, 550), seg(early, 540, 550)], 540, 600)).toEqual([]);
     expect(recurringPauses([seg(base, 540, 600)], 540, 600)).toEqual([]);
+    expect(recurringPauses([seg(base, 540, 600), { ...seg(base, 540, 600), partial: true }, { ...seg(base, 540, 600), coverage: "partial" }], 540, 600)).toEqual([]);
   });
 });

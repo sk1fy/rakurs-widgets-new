@@ -100,6 +100,7 @@ export function HourMatrixCard({ stats, employees }: { stats: PeriodStats; emplo
   const [mode, setMode] = useState<MatrixMode>("level");
   const matrix = useMemo(() => hourMatrix(stats, employees.map((e) => e.id)), [stats, employees]);
   const byId = new Map(employees.map((e) => [e.id, e]));
+  const comparison = stats.previous.cut ? "до той же точки прошлого периода" : "к прошлому периоду целиком";
   const effective: MatrixMode = mode === "delta" && !stats.previous.available ? "level" : mode;
   const modes: { value: MatrixMode; label: string; disabled?: boolean }[] = [
     { value: "level", label: "Уровень" },
@@ -111,7 +112,7 @@ export function HourMatrixCard({ stats, employees }: { stats: PeriodStats; emplo
       <div className="ch">
         <div>
           <h3>По часам · {periodTitle(stats.current)}</h3>
-          <div className="sub">ячейка — средняя доля активного времени (CRM и звонки) в этот час за учтённые дни · ▲ лучший час · ▼ худший час · Δ — к прошлому периоду целиком</div>
+          <div className="sub">ячейка — средняя доля активного времени (CRM и звонки) в этот час за учтённые дни · ▲ лучший час · ▼ худший час · Δ {comparison}</div>
         </div>
         <div className="mini" role="tablist" aria-label="Показатель матрицы">
           {modes.map((m) => (
@@ -154,7 +155,7 @@ export function HourMatrixCard({ stats, employees }: { stats: PeriodStats; emplo
         </table>
       </div>
       <div className="legend pv-scale">
-        <span>{effective === "delta" ? "уровень часа к прошлому периоду целиком, п.п.:" : `доля ${effective === "calls" ? "времени звонков" : "активного времени"} в часе:`}</span>
+        <span>{effective === "delta" ? `уровень часа ${comparison}, п.п.` : `доля ${effective === "calls" ? "времени звонков" : "активного времени"} в часе:`}</span>
         {effective === "delta" ? (
           <>
             <span><i style={cellStyle("delta", -0.3)} />хуже</span>

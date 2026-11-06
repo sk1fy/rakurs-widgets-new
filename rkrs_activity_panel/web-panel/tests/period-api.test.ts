@@ -139,8 +139,8 @@ describe("loadPeriodStats (§5.1)", () => {
 describe("loadEmployeePeriodDays (§5.2)", () => {
   const p = { fromDay: "2026-11-02", toDay: "2026-11-04", startMinutes: 540, endMinutes: 560, cutoffUnix: cutoff };
   const raw = (): RawPeriodDaysResponse => ({
-    formula_version: "period-v1", timezone: tz, start_minutes: 540, end_minutes: 560, segment_minutes: 2,
-    days: [{ day: "2026-11-02", state: "ready", first: 540, last: 560, kinds: "1120000001", zones: "CCT------O" }, { day: "2026-11-03", state: "unavailable" }, { day: "2026-11-04", state: "today", first: null, last: null, kinds: "000.......", zones: "---......." }],
+    formula_version: "period-v1", timezone: tz, employee_id: 7, cutoff_unix: cutoff, start_minutes: 540, end_minutes: 560, segment_minutes: 2,
+    days: [{ day: "2026-11-02", state: "ready", first: 540, last: 560, partial: true, coverage: "verified", kinds: "1120000001", zones: "CCT------O" }, { day: "2026-11-03", state: "unavailable" }, { day: "2026-11-04", state: "today", first: null, last: null, kinds: "000.......", zones: "---......." }],
   });
 
   it("builds the request and keeps strips as returned", async () => {
@@ -151,12 +151,14 @@ describe("loadEmployeePeriodDays (§5.2)", () => {
     expect(url.pathname).toBe("/api/v1/activity/view/employees/7/period-days");
     expect(Object.fromEntries(url.searchParams)).toEqual({ from_day: "2026-11-02", to_day: "2026-11-04", start_minutes: "540", end_minutes: "560", cutoff_unix: String(cutoff) });
     expect(got.days.map((d) => d.state)).toEqual(["ready", "unavailable", "today"]);
-    expect(got.days[0]).toMatchObject({ kinds: "1120000001", zones: "CCT------O", first: 540, last: 560 });
+    expect(got.days[0]).toMatchObject({ kinds: "1120000001", zones: "CCT------O", first: 540, last: 560, partial: true, coverage: "verified" });
     expect(got.days[1]).toMatchObject({ kinds: "", first: null });
   });
 
   it.each<[string, (r: RawPeriodDaysResponse) => void]>([
     ["version", (r) => { r.formula_version = "dashboard-v1"; }],
+    ["employee", (r) => { r.employee_id = 8; }],
+    ["cutoff", (r) => { r.cutoff_unix++; }],
     ["strip length", (r) => { r.days[0]!.kinds = "11"; }],
     ["strip alphabet", (r) => { r.days[0]!.zones = "XXXXXXXXXX"; }],
     ["segment size", (r) => { r.segment_minutes = 5; }],

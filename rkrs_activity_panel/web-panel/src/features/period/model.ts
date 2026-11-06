@@ -33,7 +33,7 @@ export interface PeriodNavState {
 /** Навигация по периодам: назад — пока последний день не раньше history_from, вперёд — не дальше текущего. */
 export function periodNav(period: Period, today: string, historyFrom: string): PeriodNavState {
   const prev = shiftPeriod(period, -1);
-  const next = shiftPeriod(period, 1);
+  const next = period.end < historyFrom ? periodOf(period.kind, historyFrom) : shiftPeriod(period, 1);
   return { prev: canOpenPeriod(prev, today, historyFrom) ? prev : null, next: canOpenPeriod(next, today, historyFrom) ? next : null, isCurrent: periodContains(period, today) };
 }
 

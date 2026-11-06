@@ -1,6 +1,3 @@
-// Загрузка недели/месяца. Текущий период обновляется как дневной экран
-// (ACTIVE_REFRESH_MS); дни в состоянии pending перезапрашиваются по refresh_after.
-
 import { useEffect, useMemo } from "react";
 import { ACTIVE_REFRESH_MS, useResource, type Resource } from "../../app/hooks";
 import type { ActivitySource } from "../../api/source";
@@ -8,7 +5,7 @@ import type { EmployeePeriodDays, Period, PeriodStats } from "../../domain/perio
 import type { EmployeeId, PanelContext } from "../../domain/types";
 import type { DayWindow } from "../dashboard/model";
 
-export const PERIOD_REFRESH_MS = ACTIVE_REFRESH_MS;
+export const PERIOD_REFRESH_MS = { week: ACTIVE_REFRESH_MS, month: 5 * 60_000 };
 /** Не чаще одного внепланового запроса в 5 секунд, даже если refresh_after уже прошёл. */
 const MIN_PENDING_DELAY_MS = 5_000;
 
@@ -16,7 +13,7 @@ export function usePeriodStats(source: ActivitySource, panel: PanelContext, peri
   // Грузим всех сотрудников панели: смена выбора в боковой панели не перезапрашивает данные.
   const ids = useMemo(() => panel.employees.map((e) => e.id), [panel.employees]);
   const key = `period:${period.kind}:${period.start}:${win.startMinutes}:${win.endMinutes}:${ids.join(",")}`;
-  const stats = useResource(key, (signal) => source.loadPeriodStats({ kind: period.kind, anchor: period.start, startMinutes: win.startMinutes, endMinutes: win.endMinutes, cutoffUnix: null, employeeIds: ids }, signal), { refreshMs: isCurrent ? PERIOD_REFRESH_MS : null });
+  const stats = useResource(key, (signal) => source.loadPeriodStats({ kind: period.kind, anchor: period.start, startMinutes: win.startMinutes, endMinutes: win.endMinutes, cutoffUnix: null, employeeIds: ids }, signal), { refreshMs: isCurrent ? PERIOD_REFRESH_MS[period.kind] : null });
   const refreshAfter = stats.data?.refreshAfter ?? null;
   const { reload, updatedAt } = stats;
   // Каждый ответ с pending-днями планирует следующий запрос, даже если refresh_after не изменился.

@@ -7,11 +7,14 @@ import { usePanelScope } from "../../app/context";
 import { useNow } from "../../app/hooks";
 import { navigate } from "../../app/router";
 import { defaultHistoryFrom, periodTitle, previousPeriod, ratingPercent, weekdayShort, type PeriodKind, type PeriodStats } from "../../domain/period";
+import { computeMissedCalls } from "../../domain/formulas/missedCalls";
 import { hhmm, minutesToHHMM, todayKey, zoned } from "../../domain/time";
 import { Icon } from "../../ui/Icon";
 import { LoadingFeedback } from "../../ui/LoadingFeedback";
 import { ErrorState, MetaBadges } from "../../ui/primitives";
 import { PeriodSwitch } from "../dashboard/DateNav";
+import { HeaderIndicators } from "../dashboard/HeaderIndicators";
+import { useCurrentDayEvents, usePanelProblems } from "../dashboard/useDashboardData";
 import { resolveWindow } from "../dashboard/model";
 import { Sidebar } from "../dashboard/Sidebar";
 import { hasPendingDays, hasUnavailableDays, periodMeta, periodNav, periodRouteDate, resolvePeriod, selectedEmployees } from "./model";
@@ -34,6 +37,10 @@ export function PeriodPage({ kind, date }: { kind: PeriodKind; date: string | nu
   const today = todayKey(tz, now * 1000);
   const period = useMemo(() => resolvePeriod(kind, date, today), [kind, date, today]);
   const win = useMemo(() => resolveWindow(panel, prefs, today, now), [panel, prefs, today, now]);
+  const { data: currentEvents } = useCurrentDayEvents(source, panel, win);
+  const missed = useMemo(() => currentEvents ? computeMissedCalls(currentEvents.byEmployee, tz) : null, [currentEvents, tz]);
+  const problems = usePanelProblems(source, panel);
+  const problemsLoading = problems.status === "loading" || problems.refreshing || (problems.data?.kind === "ok" && problems.data.data.collecting === true);
   const winKey = `${win.startMinutes}:${win.endMinutes}`;
   const stableWin = useMemo(() => win, [winKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const nav = periodNav(period, today, defaultHistoryFrom(today));
@@ -48,15 +55,28 @@ export function PeriodPage({ kind, date }: { kind: PeriodKind; date: string | nu
   const sub = isCurrent
     ? `текущий период${cutoff ? ` · сейчас ${weekdayShort(cutoff.dayKey)} ${hhmm(data?.cutoffUnix ?? now, tz)}` : ""}`
     : `рабочее окно ${minutesToHHMM(win.startMinutes)}–${minutesToHHMM(win.endMinutes)}`;
-  const empty = data && employees.length > 0 && employees.every((e) => (data.byEmployee.get(e.id)?.current.days ?? []).every((d) => d.events === 0 && d.first === null));
+  const empty = data && employees.length > 0 && employees.every((e) => {
+    const days = data.byEmployee.get(e.id)?.current.days.filter((d) => d.state !== "future");
+    return days && days.length > 0 && days.every((d) =>
+      (d.state === "ready" || d.state === "today") && d.coverage === "verified" && !d.partial && d.events === 0 && d.first === null);
+  });
 
   return (
     <>
-      <AppHeader mode={source.mode} panelName={panel.name} viewKey={viewKey} />
+      <AppHeader mode={source.mode} panelName={panel.name} viewKey={viewKey} actions={
+        <HeaderIndicators
+          missed={missed}
+          missedUpdatedAt={currentEvents?.meta.snapshotAt ?? null}
+          problems={problems.data}
+          problemsLoading={problemsLoading}
+          problemsError={problems.error !== null}
+          visibleIds={employees.map((employee) => employee.id)}
+        />
+      } />
       <div className="wrap">
         <div className="secrow">
           <div className="sect">Статистика отдела · {kind === "week" ? "неделя" : "месяц"}</div>
-          <PeriodSwitch value={kind} onChange={(view) => (view === "day" ? navigate({ name: "dashboard", viewKey, date: isCurrent ? null : period.start }) : go({ kind: view, date: isCurrent ? null : period.start }))} />
+          <PeriodSwitch value={kind} onChange={(view) => (view === "day" ? navigate({ name: "dashboard", viewKey, date: isCurrent ? null : period.start < historyFrom ? historyFrom : period.start }) : go({ kind: view, date: isCurrent ? null : period.start }))} />
           <div className="pnav">
             <button type="button" className="nb" aria-label={kind === "week" ? "Предыдущая неделя" : "Предыдущий месяц"} disabled={!prev} title={prev ? undefined : "Раньше истории (33 дня) данных нет"} onClick={() => prev && go({ date: periodRouteDate(prev, today) })}>
               <Icon name="left" size={16} />
@@ -102,7 +122,7 @@ export function PeriodPage({ kind, date }: { kind: PeriodKind; date: string | nu
             {data && (
               <div className="note">
                 Рейтинг периода — сумма активных минут, делённая на сумму прошедших минут окна {minutesToHHMM(data.startMinutes)}–{minutesToHHMM(data.endMinutes)} ({data.timeZone}) по учтённым дням: будни учитываются всегда, выходные — только с активностью. Отрезки по 2 минуты, как на дневном экране.
-                {isCurrent && ` Текущий период обновляется каждые ${Math.round(PERIOD_REFRESH_MS / 1000)} секунд.`}
+                {isCurrent && ` Текущий период обновляется каждые ${kind === "month" ? `${PERIOD_REFRESH_MS.month / 60_000} минут` : `${PERIOD_REFRESH_MS.week / 1000} секунд`}.`}
               </div>
             )}
           </div>

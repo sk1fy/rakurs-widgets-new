@@ -1,6 +1,6 @@
 // Блок «По часам» (контракт period-v1 §8.2, R10).
 
-import type { DayStat, PeriodStats } from "../../period";
+import { comparablePreviousDays, type DayStat, type PeriodStats } from "../../period";
 import type { EmployeeId } from "../../types";
 
 export interface HourValue {
@@ -8,7 +8,7 @@ export interface HourValue {
   level: number | null;
   /** Доля времени звонков. */
   calls: number | null;
-  /** Уровень текущего − уровень прошлого периода (целиком), доля; null — сравнивать не с чем. */
+  /** Уровень текущего − уровень прошлого периода до той же точки, доля; null — сравнивать не с чем. */
   delta: number | null;
 }
 
@@ -17,7 +17,7 @@ export interface HourMatrixRow {
   cells: HourValue[];
   /** Индекс лучшего часа (▲) по уровню среди всех часов окна. */
   best: number | null;
-  /** Индекс худшего часа (▼) среди уровней > 0. */
+  /** Индекс худшего часа (▼) среди часов с прошедшим временем. */
   worst: number | null;
   rating: number | null;
   /** Рейтинг − рейтинг прошлого периода до той же точки, доля. */
@@ -61,7 +61,7 @@ function extremes(levels: (number | null)[]): { best: number | null; worst: numb
   levels.forEach((v, i) => {
     if (v === null) return;
     if (best === null || v > (levels[best] as number)) best = i;
-    if (v > 0 && (worst === null || v < (levels[worst] as number))) worst = i;
+    if (worst === null || v < (levels[worst] as number)) worst = i;
   });
   return { best, worst: worst === best ? null : worst };
 }
@@ -73,7 +73,8 @@ export function hourMatrix(stats: PeriodStats, employeeIds: readonly EmployeeId[
     const e = stats.byEmployee.get(id);
     if (!e) continue;
     const cur = hourLevels(e.current.days, n);
-    const prev = stats.previous.available && e.previous ? hourLevels(e.previous.days, n) : null;
+    const previous = stats.previous.available ? comparablePreviousDays(e, stats.previous.cut) : null;
+    const prev = previous ? hourLevels(previous, n) : null;
     const cells = cur.level.map((level, i) => {
       const before = prev?.level[i] ?? null;
       return { level, calls: cur.calls[i] ?? null, delta: level !== null && before !== null ? level - before : null };

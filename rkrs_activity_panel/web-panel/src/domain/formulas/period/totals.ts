@@ -1,7 +1,7 @@
 // Блок «Итоги» (контракт period-v1 §8.1). Σ — по выбранным сотрудникам и
 // counted дням; прошлый период — «до той же точки» (§4).
 
-import { KPI_INDEX, previousUpToCut, type DayStat, type PeriodStats } from "../../period";
+import { KPI_INDEX, comparablePreviousDays, type DayStat, type PeriodStats } from "../../period";
 import type { EmployeeId } from "../../types";
 
 /** Изменение к прошлому периоду: none — нет прошлого периода, same — оба 0. */
@@ -53,8 +53,8 @@ export function sumDays(days: readonly DayStat[]): PeriodSums {
 export function employeeSums(stats: PeriodStats, employeeId: EmployeeId): { current: PeriodSums; previous: PeriodSums | null } | null {
   const e = stats.byEmployee.get(employeeId);
   if (!e) return null;
-  const prev = stats.previous.available && e.previous ? sumDays(previousUpToCut(e.previous.days, stats.previous.cut, e.previous.cutDay)) : null;
-  return { current: sumDays(e.current.days), previous: prev };
+  const previous = stats.previous.available ? comparablePreviousDays(e, stats.previous.cut) : null;
+  return { current: sumDays(e.current.days), previous: previous ? sumDays(previous) : null };
 }
 
 export type TotalKey = "outgoingCalls" | "completedTasks" | "leadStatusChanges" | "events" | "outgoingMail" | "active" | "idle";

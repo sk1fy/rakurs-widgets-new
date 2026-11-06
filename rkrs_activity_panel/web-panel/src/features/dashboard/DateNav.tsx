@@ -1,10 +1,10 @@
-import type { PeriodKind } from "../../domain/period";
-import { addDays, addMonths, dayTitle } from "../../domain/time";
+import { defaultHistoryFrom, type PeriodKind } from "../../domain/period";
+import { addDays, dayTitle } from "../../domain/time";
 import { Icon } from "../../ui/Icon";
 
-/** Навигация по дням. F8: глубина истории — один месяц назад от сегодня. */
+/** Навигация по дням. F8: глубина истории — 33 календарных дня с учётом сегодня. */
 export function DateNav({ dayKey, today, sub, onChange }: { dayKey: string; today: string; sub: string; onChange: (day: string) => void }) {
-  const min = addMonths(today, -1);
+  const min = defaultHistoryFrom(today);
   return (
     <div className="pnav">
       <button type="button" className="nb" aria-label="Предыдущий день" disabled={dayKey <= min} onClick={() => onChange(addDays(dayKey, -1))}>

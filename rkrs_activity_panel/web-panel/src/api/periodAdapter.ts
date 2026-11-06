@@ -169,6 +169,7 @@ export function dayKeysBetween(from: string, to: string): string[] {
 export function parsePeriodDaysResponse(raw: RawPeriodDaysResponse, employeeId: EmployeeId, params: PeriodDaysParams): EmployeePeriodDays {
   if (!raw || raw.formula_version !== PERIOD_FORMULA_VERSION) throw invalid("Неизвестная версия расчёта периода");
   if (raw.start_minutes !== params.startMinutes || raw.end_minutes !== params.endMinutes || raw.segment_minutes !== SEGMENT_MINUTES || typeof raw.timezone !== "string") throw invalid();
+  if (raw.employee_id !== employeeId || !Number.isSafeInteger(raw.cutoff_unix) || raw.cutoff_unix < 0 || (params.cutoffUnix !== null && raw.cutoff_unix !== params.cutoffUnix)) throw invalid();
   const expected = dayKeysBetween(params.fromDay, params.toDay);
   if (!Array.isArray(raw.days) || raw.days.length !== expected.length) throw invalid();
   const segments = Math.ceil((params.endMinutes - params.startMinutes) / SEGMENT_MINUTES);
@@ -180,8 +181,9 @@ export function parsePeriodDaysResponse(raw: RawPeriodDaysResponse, employeeId: 
     const last = d.last ?? null;
     if (typeof d.kinds !== "string" || typeof d.zones !== "string" || d.kinds.length !== segments || d.zones.length !== segments) throw invalid();
     if (!/^[012.]*$/.test(d.kinds) || !/^[-CTIDO.]*$/.test(d.zones)) throw invalid();
-    if ((first !== null && !isMinute(first)) || (last !== null && !isMinute(last))) throw invalid();
-    return { day, state: d.state, first, last, kinds: d.kinds, zones: d.zones };
+    if ((first !== null && !isMinute(first)) || (last !== null && !isMinute(last)) || (first === null) !== (last === null)) throw invalid();
+    const coverage = d.coverage === "verified" || d.coverage === "partial" ? d.coverage : "unknown";
+    return { day, state: d.state, coverage, partial: d.partial === true, first, last, kinds: d.kinds, zones: d.zones };
   });
   return { employeeId, timeZone: raw.timezone, startMinutes: raw.start_minutes, endMinutes: raw.end_minutes, segmentMinutes: raw.segment_minutes, days };
 }

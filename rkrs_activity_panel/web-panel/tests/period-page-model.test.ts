@@ -23,6 +23,7 @@ describe("экран недели/месяца", () => {
     expect(periodNav(periodOf("week", "2026-10-05"), today, "2026-10-04").prev?.start).toBe("2026-09-28");
     expect(periodNav(periodOf("week", "2026-10-05"), today, "2026-10-05").prev).toBeNull();
     expect(periodNav(periodOf("month", "2026-10-05"), today, "2026-10-04").prev).toBeNull();
+    expect(periodNav(periodOf("week", "2026-10-05"), today, "2026-11-01").next?.start).toBe("2026-10-26");
     expect(periodRouteDate(periodOf("week", today), today)).toBeNull();
     expect(periodRouteDate(periodOf("week", "2026-10-28"), today)).toBe("2026-10-26");
   });

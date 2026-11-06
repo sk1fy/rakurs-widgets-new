@@ -100,6 +100,8 @@ export interface PeriodStats {
 export interface PeriodDaySegments {
   day: string;
   state: DayState;
+  coverage?: Coverage;
+  partial?: boolean;
   first: number | null;
   last: number | null;
   /** Символ на 2-минутный отрезок окна: 0 пауза, 1 CRM, 2 звонок, . ещё не наступило. Пусто для future/pending/unavailable. */
@@ -249,6 +251,13 @@ export function previousUpToCut(days: readonly DayStat[], cut: PeriodCut | null,
   const out = days.slice(0, cut.dayIndex);
   if (cutDay) out.push(cutDay);
   return out;
+}
+
+export function comparablePreviousDays(employee: EmployeePeriodStats, cut: PeriodCut | null): DayStat[] | null {
+  if (!employee.previous) return null;
+  const currentCutDay = cut ? employee.current.days[cut.dayIndex] : undefined;
+  const cutDayUnavailable = currentCutDay?.state === "pending" || currentCutDay?.state === "unavailable";
+  return previousUpToCut(employee.previous.days, cut, cutDayUnavailable ? null : employee.previous.cutDay);
 }
 
 const WEEKDAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];

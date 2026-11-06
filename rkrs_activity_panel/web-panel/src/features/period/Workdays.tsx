@@ -54,7 +54,7 @@ function DayStrip({ strip, mode, pauses, startMinutes, endMinutes }: { strip: Pe
     return (
       <div className="pd-strip empty">
         {runsOf(strip.kinds).filter((r) => r.value === ".").map((r) => <span key={r.from} className="fut" style={pos(r.from, r.to)} />)}
-        <span className="empty-l">Нет зарегистрированных событий</span>
+        <span className="empty-l">{strip.partial || strip.coverage === "partial" ? "Неполные данные ленты" : "Нет зарегистрированных событий"}</span>
       </div>
     );
   }
@@ -167,18 +167,19 @@ function WorkdayGroup({ employee, stats, today, open, onToggle }: { employee: Em
                 )}
                 {chosen.map((d) => {
                   const strip = stripByDay.get(d.day);
+                  const stripPartial = strip?.partial || strip?.coverage === "partial";
                   return (
                     <tr key={d.day}>
                       <td>
                         <div>
                           {dayLongLabel(d.day)}
                           {d.state === "today" && <span className="mut"> · идёт</span>}
-                          {d.partial && <span className="chip warn pv-mini-chip" title="День посчитан по неполной выборке событий">неполные</span>}
+                          {(d.partial || stripPartial) && <span className="chip warn pv-mini-chip" title="День посчитан по неполной выборке событий">неполные</span>}
                         </div>
                         <a className="link-btn small" href={href({ name: "dashboard", viewKey, date: d.day === today ? null : d.day })}>Открыть день</a>
                       </td>
                       <td className="pv-strip-cell">
-                        {strip ? <DayStrip strip={strip} mode={mode} pauses={pauses} startMinutes={stats.startMinutes} endMinutes={stats.endMinutes} /> : strips.status === "error" ? <span className="dim small">лента не загрузилась</span> : <Skeleton height={22} />}
+                        {strip && !strip.kinds ? <span className="dim small">Лента недоступна</span> : strip ? <DayStrip strip={strip} mode={mode} pauses={pauses} startMinutes={stats.startMinutes} endMinutes={stats.endMinutes} /> : strips.status === "error" ? <span className="dim small">лента не загрузилась</span> : <Skeleton height={22} />}
                       </td>
                       <td className="num">{d.first === null ? "—" : minutesToHHMM(d.first)}</td>
                       <td className="num">{d.last === null ? "—" : minutesToHHMM(d.last)}</td>
@@ -213,7 +214,6 @@ export function WorkdaysSection({ stats, employees, today }: { stats: PeriodStat
         <h2>Сравнение рабочих дней</h2>
         <div className="sp" />
         <div className="mini">
-          <button type="button" onClick={() => setOpen(new Map(ordered.map((e) => [e.id, true])))}>Развернуть все</button>
           <button type="button" onClick={() => setOpen(new Map(ordered.map((e) => [e.id, false])))}>Свернуть все</button>
         </div>
       </div>

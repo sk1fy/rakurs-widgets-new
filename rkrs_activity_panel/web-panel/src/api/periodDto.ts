@@ -59,6 +59,8 @@ export interface RawPeriodResponse {
 export interface RawPeriodDay {
   day: string;
   state: RawDayState;
+  coverage?: string;
+  partial?: boolean;
   first?: number | null;
   last?: number | null;
   /** 0 пауза, 1 CRM, 2 звонок, . ещё не наступило — символ на 2-минутный отрезок окна. */
@@ -71,6 +73,8 @@ export interface RawPeriodDay {
 export interface RawPeriodDaysResponse {
   formula_version: string;
   timezone: string;
+  employee_id: number;
+  cutoff_unix: number;
   start_minutes: number;
   end_minutes: number;
   segment_minutes: number;
