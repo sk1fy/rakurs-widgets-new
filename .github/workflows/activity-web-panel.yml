@@ -1,0 +1,41 @@
+name: Activity web panel
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/activity-web-panel.yml'
+      - 'rkrs_activity_panel/web-panel/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/activity-web-panel.yml'
+      - 'rkrs_activity_panel/web-panel/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: activity-web-panel-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-panel:
+    name: Test, lint and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: rkrs_activity_panel/web-panel
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: rkrs_activity_panel/web-panel/package-lock.json
+      - run: npm ci
+      - run: npm test -- --maxWorkers=2 --testTimeout=30000
+      - run: npm run lint
+      - run: npm run build

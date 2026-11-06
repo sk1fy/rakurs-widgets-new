@@ -24,7 +24,6 @@ export function useDashboardData(source: ActivitySource, panel: PanelContext, wi
   const tz = panel.timezone;
   const range = useMemo(() => dayRange(win, tz), [win, tz]);
   const prevRange = useMemo(() => previousDayRange(win, tz), [win, tz]);
-  const currentRange = useMemo(() => dayRange(currentWin, tz), [currentWin, tz]);
   const live = win.isToday;
 
   const today = useResource(`day:${range.from}:${range.to}`, (signal) => source.loadDayEvents(range, signal), { refreshMs: live ? DAY_REFRESH_MS : null });
@@ -33,9 +32,18 @@ export function useDashboardData(source: ActivitySource, panel: PanelContext, wi
     (signal) => source.loadActivityRatings({ ...range, surface: "dashboard", startMinutes: win.startMinutes, endMinutes: win.endMinutes, cutoffUnix }, signal),
     { refreshKey: `${today.updatedAt}:${cutoffUnix}` });
   const yesterday = useResource(`prev:${prevRange.from}:${prevRange.to}`, (signal) => source.loadDayEvents(prevRange, signal));
-  const managers = useMemo(() => panel.employees.map((e) => e.id), [panel.employees]);
-  const problems = useProblemLists(source, `problems:${todayKey(tz)}:${managers.join(",")}:${panel.pipelines.join(",")}`, managers, panel.pipelines);
-  const current = useResource(win.isToday ? null : `current:${currentRange.from}:${currentRange.to}`, (signal) => source.loadDayEvents(currentRange, signal), { refreshMs: ACTIVE_REFRESH_MS });
+  const problems = usePanelProblems(source, panel);
+  const current = useCurrentDayEvents(source, panel, currentWin, !live);
 
   return { today, ratings, yesterday, problems, current: win.isToday ? null : current };
+}
+
+export function usePanelProblems(source: ActivitySource, panel: PanelContext) {
+  const managers = useMemo(() => panel.employees.map((e) => e.id), [panel.employees]);
+  return useProblemLists(source, `problems:${todayKey(panel.timezone)}:${managers.join(",")}:${panel.pipelines.join(",")}`, managers, panel.pipelines);
+}
+
+export function useCurrentDayEvents(source: ActivitySource, panel: PanelContext, win: DayWindow, enabled = true) {
+  const range = dayRange(win, panel.timezone);
+  return useResource(enabled ? `current:${range.from}:${range.to}` : null, (signal) => source.loadDayEvents(range, signal), { refreshMs: DAY_REFRESH_MS });
 }

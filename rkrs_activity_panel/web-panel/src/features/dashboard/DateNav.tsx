@@ -1,9 +1,10 @@
-import { addDays, addMonths, dayTitle } from "../../domain/time";
+import { defaultHistoryFrom, type PeriodKind } from "../../domain/period";
+import { addDays, dayTitle } from "../../domain/time";
 import { Icon } from "../../ui/Icon";
 
-/** Навигация по дням. F8: глубина истории — один месяц назад от сегодня. */
+/** Навигация по дням. F8: глубина истории — 33 календарных дня с учётом сегодня. */
 export function DateNav({ dayKey, today, sub, onChange }: { dayKey: string; today: string; sub: string; onChange: (day: string) => void }) {
-  const min = addMonths(today, -1);
+  const min = defaultHistoryFrom(today);
   return (
     <div className="pnav">
       <button type="button" className="nb" aria-label="Предыдущий день" disabled={dayKey <= min} onClick={() => onChange(addDays(dayKey, -1))}>
@@ -29,19 +30,23 @@ export function DateNav({ dayKey, today, sub, onChange }: { dayKey: string; toda
   );
 }
 
-/** День / Неделя / Месяц: неделя и месяц не реализуются на этом этапе. */
-export function PeriodSwitch() {
+export type PeriodView = "day" | PeriodKind;
+
+const PERIOD_VIEWS: { value: PeriodView; label: string }[] = [
+  { value: "day", label: "День" },
+  { value: "week", label: "Неделя" },
+  { value: "month", label: "Месяц" },
+];
+
+/** День / Неделя / Месяц. */
+export function PeriodSwitch({ value, onChange }: { value: PeriodView; onChange: (view: PeriodView) => void }) {
   return (
     <div className="seg" role="tablist" aria-label="Период">
-      <button type="button" role="tab" aria-selected className="on">
-        День
-      </button>
-      <button type="button" role="tab" aria-selected={false} disabled title="Недельный режим появится позже">
-        Неделя
-      </button>
-      <button type="button" role="tab" aria-selected={false} disabled title="Месячный режим появится позже">
-        Месяц
-      </button>
+      {PERIOD_VIEWS.map((v) => (
+        <button key={v.value} type="button" role="tab" aria-selected={value === v.value} className={value === v.value ? "on" : undefined} onClick={() => value !== v.value && onChange(v.value)}>
+          {v.label}
+        </button>
+      ))}
     </div>
   );
 }

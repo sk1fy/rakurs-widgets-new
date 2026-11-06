@@ -4,17 +4,22 @@ import { filterByPipelines } from "../../domain/formulas/pipelineFilter";
 // Источник режима разработки. Все ответы помечены meta.source = "fixture".
 // Сценарии состояний для проверки экранов: ?fixture=error|rating-error|empty|partial|stale|slow.
 
-import { addDays, zoned, unixAt } from "../../domain/time";
+import { dayStatFromEvents, daySegmentsFromEvents } from "../../domain/formulas/period/dayStat";
+import { dayStateOf, defaultHistoryFrom, emptyDayStat, periodCut, periodOf, previousPeriod, previousUpToCut, ratingOf, windowHours, type DayState, type DayStat, type EmployeePeriodDays, type EmployeePeriodStats, type PeriodStats } from "../../domain/period";
+import { addDays, minutesOfDay, zoned, unixAt } from "../../domain/time";
 import type { CrmEvent, DayEvents, EmployeeId, EmployeeSessions, PanelContext, ProblemLists } from "../../domain/types";
 import { ApiError } from "../errors";
-import type { ActivitySource, ActivityRatingParams, ActivityRatings, DayRange, EventCard, Sourced } from "../source";
+import { dayKeysBetween } from "../periodAdapter";
+import type { ActivitySource, ActivityRatingParams, ActivityRatings, DayRange, EventCard, PeriodDaysParams, PeriodStatsParams, Sourced } from "../source";
 import { FIXTURE_TZ, fixtureMeta, fixturePanel, fixtureProblemLists, generateDay } from "./generator";
 
-export type FixtureScenario = "normal" | "error" | "rating-error" | "empty" | "partial" | "stale" | "slow" | "problems-initial" | "problems-collecting" | "problems-stopped";
+export type FixtureScenario = "normal" | "error" | "rating-error" | "empty" | "partial" | "stale" | "slow" | "problems-initial" | "problems-collecting" | "problems-stopped" | "period-error" | "period-pending";
+
+const SCENARIOS: readonly FixtureScenario[] = ["error", "rating-error", "empty", "partial", "stale", "slow", "problems-initial", "problems-collecting", "problems-stopped", "period-error", "period-pending"];
 
 export function fixtureScenario(): FixtureScenario {
   const value = new URLSearchParams(globalThis.location?.search ?? "").get("fixture");
-  return value === "error" || value === "rating-error" || value === "empty" || value === "partial" || value === "stale" || value === "slow" || value === "problems-initial" || value === "problems-collecting" || value === "problems-stopped" ? value : "normal";
+  return SCENARIOS.find((s) => s === value) ?? "normal";
 }
 
 const delay = (ms: number, signal?: AbortSignal) =>
@@ -112,6 +117,89 @@ export class FixtureSource implements ActivitySource {
     if (this.scenario === "problems-stopped") return { kind: "ok", data: { ...data, collecting: false, errorCode: "permission_denied", refreshAfter: this.now() + 420, leadsNoTasks: [], leadsWithFailedTasks: [], overdueTasks: [], meta: { ...data.meta, snapshotAt: 0, coverage: "unknown", stale: true, note: "Сбор остановлен из-за ошибки доступа. Следующая проверка — после серверной паузы." } } };
     if (this.scenario === "problems-initial") return { kind: "ok", data: { ...data, collecting: true, leadsNoTasks: [], leadsWithFailedTasks: [], overdueTasks: [], meta: { ...data.meta, snapshotAt: 0, coverage: "unknown" } } };
     return { kind: "ok", data: { ...data, collecting: this.scenario === "problems-collecting" } };
+  }
+
+  /** Синтетика period-v1: дни считаются из событий фикстур тем же правилом, что у Activity (§2–§4). */
+  private periodDay(employeeId: EmployeeId, day: string, state: DayState, win: { startMinutes: number; endMinutes: number; hours: number[] }, cutoffUnix: number | null, partial = false): DayStat {
+    if (state !== "ready" && state !== "today") return emptyDayStat(day, state);
+    const panel = fixturePanel(this.now());
+    const events = this.scenario === "empty" ? [] : filterByPipelines(generateDay(employeeId, day, this.now()).events, panel.pipelines);
+    return dayStatFromEvents(events, { dayKey: day, timeZone: panel.timezone, ...win }, cutoffUnix, { state, partial, coverage: "verified" });
+  }
+
+  /** История фикстур — 33 суток; в сценарии period-pending два последних прошедших дня ещё «считаются». */
+  private periodState(day: string, today: string, historyFrom: string): DayState {
+    const state = dayStateOf(day, today, historyFrom);
+    if (this.scenario === "period-pending" && state === "ready" && day >= addDays(today, -2)) return "pending";
+    return state;
+  }
+
+  async loadPeriodStats(params: PeriodStatsParams, signal?: AbortSignal): Promise<PeriodStats> {
+    await this.wait(signal);
+    if (this.scenario === "period-error") throw new ApiError({ code: "unavailable", message: "fixture: расчёт периода недоступен", status: 503, retryable: true });
+    const now = this.now();
+    const panel = fixturePanel(now);
+    const tz = panel.timezone;
+    const cutoffUnix = params.cutoffUnix ?? now;
+    const today = zoned(now, tz).dayKey;
+    const historyFrom = defaultHistoryFrom(today);
+    const current = periodOf(params.kind, params.anchor);
+    const previous = previousPeriod(current);
+    const cut = periodCut(current, today, minutesOfDay(cutoffUnix, tz));
+    const available = previous.days.every((d) => this.periodState(d, today, historyFrom) === "ready");
+    const win = { startMinutes: params.startMinutes, endMinutes: params.endMinutes, hours: windowHours(params.startMinutes, params.endMinutes) };
+    const ids = params.employeeIds ?? panel.employees.map((e) => e.id);
+    const byEmployee = new Map<EmployeeId, EmployeePeriodStats>(ids.map((employeeId) => {
+      const days = current.days.map((d) => {
+        const state = this.periodState(d, today, historyFrom);
+        return this.periodDay(employeeId, d, state, win, state === "today" ? cutoffUnix : null, state === "today" && this.scenario === "partial");
+      });
+      let prev: EmployeePeriodStats["previous"] = null;
+      if (available) {
+        const prevDays = previous.days.map((d) => this.periodDay(employeeId, d, "ready", win, null));
+        const cutDayKey = cut ? previous.days[cut.dayIndex] : undefined;
+        const cutDay = cut && cutDayKey ? this.periodDay(employeeId, cutDayKey, "ready", win, unixAt(cutDayKey, cut.minute, tz)) : null;
+        prev = { rating: ratingOf(previousUpToCut(prevDays, cut, cutDay)), ratingFull: ratingOf(prevDays), days: prevDays, cutDay };
+      }
+      const partial = days.some((d) => d.partial);
+      return [employeeId, { employeeId, partial, current: { rating: ratingOf(days), days }, previous: prev }] as const;
+    }));
+    const pending = current.days.some((d) => this.periodState(d, today, historyFrom) === "pending");
+    return {
+      kind: params.kind,
+      timeZone: tz,
+      startMinutes: params.startMinutes,
+      endMinutes: params.endMinutes,
+      cutoffUnix,
+      snapshotAt: now,
+      historyFrom,
+      refreshAfter: pending ? now + 60 : null,
+      hours: win.hours,
+      current,
+      previous: { ...previous, available, cut },
+      byEmployee,
+      partial: [...byEmployee.values()].some((e) => e.partial),
+      source: "fixture",
+    };
+  }
+
+  async loadEmployeePeriodDays(employeeId: EmployeeId, params: PeriodDaysParams, signal?: AbortSignal): Promise<EmployeePeriodDays> {
+    await this.wait(signal);
+    if (this.scenario === "period-error") throw new ApiError({ code: "unavailable", message: "fixture: расчёт периода недоступен", status: 503, retryable: true });
+    const now = this.now();
+    const panel = fixturePanel(now);
+    const tz = panel.timezone;
+    const today = zoned(now, tz).dayKey;
+    const historyFrom = defaultHistoryFrom(today);
+    const cutoffUnix = params.cutoffUnix ?? now;
+    const win = { timeZone: tz, startMinutes: params.startMinutes, endMinutes: params.endMinutes };
+    const days = dayKeysBetween(params.fromDay, params.toDay).map((day) => {
+      const state = this.periodState(day, today, historyFrom);
+      if (state !== "ready" && state !== "today") return { day, state, first: null, last: null, kinds: "", zones: "" };
+      const events = this.scenario === "empty" ? [] : filterByPipelines(generateDay(employeeId, day, now).events, panel.pipelines);
+      return daySegmentsFromEvents(events, { ...win, dayKey: day }, state === "today" ? cutoffUnix : null, state);
+    });
+    return { employeeId, timeZone: tz, startMinutes: params.startMinutes, endMinutes: params.endMinutes, segmentMinutes: 2, days };
   }
 
   async loadSessions(employeeId: EmployeeId, range: DayRange, signal?: AbortSignal): Promise<Sourced<EmployeeSessions>> {

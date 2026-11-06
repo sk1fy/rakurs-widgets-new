@@ -10,7 +10,10 @@ import { extractPipelineIds, openPipelineStatuses } from "../domain/formulas/pip
 import type { CallFacts, CrmEvent, DataMeta, DayEvents, Employee, EmployeeId, Group, PanelContext, ProblemLists, EmployeeSessions, WorkSession } from "../domain/types";
 import { ApiError } from "./errors";
 import { mapLimit, requestJson } from "./http";
-import type { ActivitySource, ActivityRatingParams, ActivityRatings, DayRange, EventCard, Sourced } from "./source";
+import { batches, dayKeysBetween, mergePeriodBatches, parsePeriodDaysResponse, parsePeriodResponse, PERIOD_DAYS_LIMIT, periodDaysQuery, periodQuery } from "./periodAdapter";
+import type { RawPeriodDaysResponse, RawPeriodResponse } from "./periodDto";
+import type { EmployeePeriodDays, PeriodStats } from "../domain/period";
+import type { ActivitySource, ActivityRatingParams, ActivityRatings, DayRange, EventCard, PeriodDaysParams, PeriodStatsParams, Sourced } from "./source";
 
 interface RawUser { id: number; name: string; group_id: number; group_name: string; avatar_url?: string; avatar?: string }
 interface RawEnrichment { object_kind: string; state: string; source: string; payload?: unknown; current: boolean }
@@ -293,6 +296,31 @@ export class AmocrmProViewerSource implements ActivitySource {
     const expectedIds = params.employeeIds ?? this.panelContext?.employees.map((e) => e.id) ?? [];
     if (expectedIds.some((id) => !byEmployee.has(id))) throw new ApiError({ code: "unavailable", message: "Расчёт активности вернул не всех сотрудников", retryable: true });
     return { formulaVersion: expectedVersion, dayKey: raw.day, timeZone: raw.timezone, startMinutes: raw.start_minutes, endMinutes: raw.end_minutes, cutoffUnix: raw.cutoff_unix ?? null, snapshotAt: raw.snapshot_at, partial: raw.partial, byEmployee };
+  }
+
+  /**
+   * Неделя/месяц (period-v1 §5.1): сотрудники пачками по 25. Первая пачка
+   * фиксирует серверную отсечку, остальные запрашиваются с ней же, чтобы все
+   * сотрудники были посчитаны на один момент.
+   */
+  async loadPeriodStats(params: PeriodStatsParams, signal?: AbortSignal): Promise<PeriodStats> {
+    const ids = params.employeeIds ?? this.panelContext?.employees.map((e) => e.id) ?? [];
+    const groups: (EmployeeId[] | null)[] = ids.length ? batches(ids) : [null];
+    const fetchBatch = async (group: EmployeeId[] | null, cutoffUnix: number | null) => {
+      const raw = await this.get<RawPeriodResponse>(`/period?${periodQuery(params, group, cutoffUnix)}`, signal);
+      return parsePeriodResponse(raw, params, cutoffUnix, group);
+    };
+    const first = await fetchBatch(groups[0] ?? null, params.cutoffUnix);
+    const cutoff = params.cutoffUnix ?? first.cutoffUnix;
+    const rest = await mapLimit(groups.slice(1), 4, (group) => fetchBatch(group, cutoff));
+    return mergePeriodBatches([first, ...rest]);
+  }
+
+  async loadEmployeePeriodDays(employeeId: EmployeeId, params: PeriodDaysParams, signal?: AbortSignal): Promise<EmployeePeriodDays> {
+    const count = dayKeysBetween(params.fromDay, params.toDay).length;
+    if (count === 0 || count > PERIOD_DAYS_LIMIT) throw new ApiError({ code: "invalid_argument", message: "Диапазон дней — от 1 до 31" });
+    const raw = await this.get<RawPeriodDaysResponse>(`/employees/${employeeId}/period-days?${periodDaysQuery(params)}`, signal);
+    return parsePeriodDaysResponse(raw, employeeId, params);
   }
 
   async loadDayEvents(range: DayRange, signal?: AbortSignal): Promise<DayEvents> {

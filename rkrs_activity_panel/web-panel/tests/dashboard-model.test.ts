@@ -99,4 +99,12 @@ describe("маршруты", () => {
     expect(parseHash(href(r))).toEqual(r);
     expect(parseHash("#/p/abc")).toEqual({ name: "dashboard", viewKey: "abc", date: null });
   });
+  it("неделя/месяц: ?period=week|month&date=<любой день периода>", () => {
+    const week = { name: "dashboard", viewKey: "abc", date: "2026-11-04", period: "week" } as const;
+    expect(href(week)).toBe("#/p/abc?period=week&date=2026-11-04");
+    expect(parseHash(href(week))).toEqual(week);
+    expect(parseHash("#/p/abc?period=month")).toEqual({ name: "dashboard", viewKey: "abc", date: null, period: "month" });
+    expect(parseHash("#/p/abc?period=year&date=2026-11-04")).toEqual({ name: "dashboard", viewKey: "abc", date: "2026-11-04" });
+    expect(href({ name: "dashboard", viewKey: "abc", date: "2026-11-04" })).toBe("#/p/abc?date=2026-11-04");
+  });
 });

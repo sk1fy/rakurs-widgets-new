@@ -3,14 +3,17 @@ import { Icon } from "../../ui/Icon";
 import { Avatar } from "../../ui/primitives";
 import type { EmployeeRow } from "./model";
 
-/** Боковая панель макета: отделы и сотрудники (личный фильтр зрителя). */
-export function Sidebar({ rows }: { rows: EmployeeRow[] | null }) {
+/**
+ * Боковая панель макета: отделы и сотрудники (личный фильтр зрителя).
+ * ratings — проценты недели/месяца вместо дневных (rows) на экране периода.
+ */
+export function Sidebar({ rows, ratings }: { rows: EmployeeRow[] | null; ratings?: ReadonlyMap<number, number | null> | null }) {
   const { panel, prefs, setPrefs } = usePanelScope();
   const hidden = new Set(prefs.hiddenEmployees);
   const selectedDepts = prefs.selectedDepartments;
   const deptOn = (id: string) => !selectedDepts.length || selectedDepts.includes(id);
   const visibleCount = panel.employees.filter((e) => !hidden.has(e.id) && deptOn(e.groupId)).length;
-  const percentOf = (id: number) => rows?.find((r) => r.employee.id === id)?.percent ?? null;
+  const percentOf = (id: number) => (ratings !== undefined ? ratings?.get(id) ?? null : rows?.find((r) => r.employee.id === id)?.percent ?? null);
 
   const toggleDept = (id: string) =>
     setPrefs((p) => {
