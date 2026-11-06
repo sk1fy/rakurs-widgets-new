@@ -634,3 +634,62 @@ a.mc-phone:hover{color:#ff8f8f;text-decoration:underline}
 .data-refresh-indicator{position:fixed;right:18px;bottom:18px;z-index:900;display:flex;align-items:center;gap:8px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--inset);color:var(--tx2);font-size:12px;pointer-events:none}
 .data-refresh-indicator .spin{width:12px;height:12px}
 @media(prefers-reduced-motion:reduce){.data-loading-overlay .spin,.data-refresh-indicator .spin{animation:none}}
+
+/* ===== Неделя / месяц (period-v1): только раскладка поверх .card, .tbl, .mt, .sum-card, .chip, .mini, .grp ===== */
+.pv .card .ch{margin-bottom:12px}
+.pv .card .sub{margin-bottom:0}
+.pv-delta b{font-weight:700}
+.pv-delta b.up{color:var(--up)}.pv-delta b.down{color:var(--down)}
+.pv-name{display:flex;align-items:center;gap:8px;min-width:0;white-space:nowrap}
+.pv-name .ava{width:24px;height:24px;font-size:10px}
+.pv-name .nm{overflow:hidden;text-overflow:ellipsis;max-width:190px}
+.pv-name .chip,.pv-mini-chip{height:18px;font-size:10px;padding:0 6px;margin-left:6px}
+.pv-tbl{max-height:none}
+.pv-tbl .tbl{min-width:640px}
+.tbl.hm th.num,.tbl.hm td.num{text-align:right}
+.tbl.hm td{vertical-align:middle}
+.tbl.hm td.hm-c,.tbl.hm td.hm-na{text-align:center;font-size:12px;font-variant-numeric:tabular-nums;padding:6px 4px;min-width:44px;position:relative;border-left:1px solid var(--card)}
+.tbl.hm td.hm-na{color:var(--tx4)}
+.hm-mk{position:absolute;top:1px;right:3px;font-size:8px;line-height:1}
+.hm-rt{white-space:nowrap}
+.hm-d{display:block;font-size:11px;font-weight:600}
+.hm-d.up{color:var(--up)}.hm-d.down{color:var(--down)}
+.tbl.hm tr.hm-total td{font-weight:600;border-top:2px solid var(--line)}
+.pv-scale{margin-top:10px}
+.pv-barcell{white-space:nowrap}
+.pv-barcell .num{font-variant-numeric:tabular-nums;margin-left:8px}
+.pv-bar{display:inline-block;vertical-align:middle;width:min(240px,40%);height:8px;border-radius:4px;background:var(--inset);overflow:hidden}
+.pv-bar i{display:block;height:100%;border-radius:4px}
+.pv-dl{font-size:12px;font-weight:600;margin-left:8px;color:var(--tx2)}
+.pv-dl.up{color:var(--up)}.pv-dl.down{color:var(--down)}
+.pv-g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:1100px){.pv-g2{grid-template-columns:minmax(0,1fr)}}
+.pv-chart{display:block;width:100%;height:auto;margin:4px 0 8px}
+.pv-chart .gl{stroke:var(--line2);stroke-width:1}
+.pv-chart text{font-size:11px;fill:var(--tx2);font-family:var(--font)}
+.pv-chart .vl{fill:#fff;font-weight:600;font-size:10px}
+.pv-chart .ax.today{fill:#fff;font-weight:700}
+.pv-ln{display:inline-block;width:18px!important;height:0!important;border-top:2px solid var(--tx2);border-radius:0!important;vertical-align:middle!important;margin-right:6px}
+.pv-ln.dashed{border-top-style:dashed}
+.pv-work .sec-h{margin-left:0}
+.pv-grp .grp-h .cnt{color:var(--tx2);font-size:12px;margin-left:12px}
+.pv-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 10px}
+.pv-chips{margin-bottom:14px}
+.pv-chip{cursor:pointer;position:relative;height:auto;min-height:24px;padding:3px 10px;font-weight:600}
+.pv-chip input{position:absolute;opacity:0;pointer-events:none;width:0;height:0}
+.pv-chip:focus-within{outline:2px solid var(--accent);outline-offset:1px}
+.pv-chip .n{font-weight:500;opacity:.8}
+.pv-chip.off{cursor:default;opacity:.5}
+.pv-mode{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:4px 0 10px}
+.pv-mode .sp{flex:1}
+.tbl.pv-days td{vertical-align:middle}
+.tbl.pv-days th.pv-axis{min-width:320px;width:55%;padding-bottom:0}
+.tbl.pv-days td.pv-strip-cell{min-width:320px}
+.pd-strip{position:relative;height:22px;border-radius:2px;background:rgba(0,0,0,.28);overflow:hidden}
+.pd-strip>span{position:absolute;top:0;bottom:0}
+.pd-strip .fut{background:var(--tl-future);opacity:.55}
+.pd-strip .pd-pause{z-index:2;border:1px dashed rgba(255,255,255,.85);border-radius:2px;background:rgba(255,255,255,.08)}
+.pd-strip.empty{background:var(--tl-off)}
+.pd-strip .empty-l{position:absolute;inset:0;display:grid;place-items:center;font-size:11px;color:var(--tx2)}
+.pv .grid-m{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
+.pv .mt .v.pv-long{font-size:16px;white-space:nowrap;margin-top:10px}

@@ -7,6 +7,7 @@ import { PanelShell } from "./PanelShell";
 import { useRoute, type Route } from "./router";
 
 const EmployeePage = lazy(() => import("../features/employee/EmployeePage").then((m) => ({ default: m.EmployeePage })));
+const PeriodPage = lazy(() => import("../features/period/PeriodPage").then((m) => ({ default: m.PeriodPage })));
 const OperatorPage = lazy(() => import("../features/operator/OperatorPage").then((m) => ({ default: m.OperatorPage })));
 const MissedCallsPage = lazy(() => import("../features/missed/MissedCallsPage").then((m) => ({ default: m.MissedCallsPage })));
 const SettingsPage = lazy(() => import("../features/settings/SettingsPage").then((m) => ({ default: m.SettingsPage })));
@@ -14,7 +15,7 @@ const SettingsPage = lazy(() => import("../features/settings/SettingsPage").then
 function PanelRoute({ route }: { route: Exclude<Route, { name: "home" | "not-found" }> & { viewKey: string } }) {
   switch (route.name) {
     case "dashboard":
-      return <DashboardPage date={route.date} />;
+      return route.period ? <PeriodPage kind={route.period} date={route.date} /> : <DashboardPage date={route.date} />;
     case "employee":
       return <EmployeePage employeeId={route.employeeId} date={route.date} />;
     case "operator":

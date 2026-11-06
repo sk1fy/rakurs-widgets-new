@@ -84,7 +84,7 @@ export function DashboardPage({ date }: { date: string | null }) {
       <div className="wrap">
         <div className="secrow">
           <div className="sect">Активность по группам</div>
-          <PeriodSwitch />
+          <PeriodSwitch value="day" onChange={(view) => view !== "day" && navigate({ name: "dashboard", viewKey, date: dayKey === today ? null : dayKey, period: view })} />
           <DateNav dayKey={dayKey} today={today} sub={nowLabel} onChange={(d) => navigate({ name: "dashboard", viewKey, date: d === today ? null : d })} />
           <div className="cmp" title="Показатели «/ N» — значение предыдущего дня до той же точки">
             {cmpLabel}

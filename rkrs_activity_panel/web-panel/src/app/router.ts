@@ -2,10 +2,12 @@
 // на сервер ни в запросе, ни в Referer.
 
 import { useSyncExternalStore } from "react";
+import type { PeriodKind } from "../domain/period";
 
 export type Route =
   | { name: "home" }
-  | { name: "dashboard"; viewKey: string; date: string | null }
+  /** period — неделя/месяц (?period=week|month), date — любой день периода; без period — день. */
+  | { name: "dashboard"; viewKey: string; date: string | null; period?: PeriodKind }
   | { name: "employee"; viewKey: string; employeeId: number; date: string | null }
   | { name: "operator"; viewKey: string; employeeId: number }
   | { name: "missed"; viewKey: string }
@@ -23,7 +25,10 @@ export function parseHash(hash: string): Route {
   if (parts[0] !== "p" || !parts[1]) return { name: "not-found" };
   const viewKey = parts[1];
   const rest = parts.slice(2);
-  if (!rest.length) return { name: "dashboard", viewKey, date };
+  if (!rest.length) {
+    const period = params.get("period");
+    return period === "week" || period === "month" ? { name: "dashboard", viewKey, date, period } : { name: "dashboard", viewKey, date };
+  }
   const id = Number(rest[1]);
   if (rest[0] === "employee" && Number.isInteger(id) && id > 0) return { name: "employee", viewKey, employeeId: id, date };
   if (rest[0] === "operator" && Number.isInteger(id) && id > 0) return { name: "operator", viewKey, employeeId: id };
@@ -37,7 +42,7 @@ export function href(route: Route): string {
   const q = (date: string | null) => (date ? `?date=${date}` : "");
   switch (route.name) {
     case "home": return "#/";
-    case "dashboard": return `#/p/${k(route.viewKey)}${q(route.date)}`;
+    case "dashboard": return `#/p/${k(route.viewKey)}${route.period ? `?period=${route.period}${route.date ? `&date=${route.date}` : ""}` : q(route.date)}`;
     case "employee": return `#/p/${k(route.viewKey)}/employee/${route.employeeId}${q(route.date)}`;
     case "operator": return `#/p/${k(route.viewKey)}/operator/${route.employeeId}`;
     case "missed": return `#/p/${k(route.viewKey)}/missed`;
