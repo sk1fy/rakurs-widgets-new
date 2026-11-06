@@ -31,6 +31,8 @@ export interface RawPeriodRange {
 
 export interface RawPeriodEmployee {
   employee_id: number;
+  /** Этап 1 backend: сотрудник посчитан по неполной выборке (бюджет сканирования). */
+  partial?: boolean;
   current: { rating: number | null; days: RawDayStat[] };
   /** null, если previous.available == false. */
   previous: { rating: number | null; rating_full: number | null; days: RawDayStat[]; cut_day: RawDayStat | null } | null;

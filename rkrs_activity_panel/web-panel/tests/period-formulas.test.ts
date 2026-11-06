@@ -116,12 +116,12 @@ function periodStats(employees: EmployeePeriodStats[], opts: { available?: boole
   return {
     kind: "week", timeZone: tz, startMinutes: 540, endMinutes: 660, cutoffUnix: unixAt("2026-11-05", 940, tz), snapshotAt: 0, historyFrom: "2026-10-04", refreshAfter: null,
     hours: [9, 10], current, previous: { ...previous, available: opts.available ?? true, cut: opts.cut === undefined ? { dayIndex: 3, minute: 940 } : opts.cut },
-    byEmployee: new Map(employees.map((e) => [e.employeeId, e])), source: "fixture",
+    byEmployee: new Map(employees.map((e) => [e.employeeId, e])), partial: false, source: "fixture",
   };
 }
 
 function employee(id: number, curDays: DayStat[], prevDays: DayStat[] | null, cutDay: DayStat | null = null, ratings: { cur?: number | null; prev?: number | null } = {}): EmployeePeriodStats {
-  return { employeeId: id, current: { rating: ratings.cur ?? null, days: curDays }, previous: prevDays ? { rating: ratings.prev ?? null, ratingFull: null, days: prevDays, cutDay } : null };
+  return { employeeId: id, partial: false, current: { rating: ratings.cur ?? null, days: curDays }, previous: prevDays ? { rating: ratings.prev ?? null, ratingFull: null, days: prevDays, cutDay } : null };
 }
 
 const weekDays = periodOf("week", "2026-11-05").days;

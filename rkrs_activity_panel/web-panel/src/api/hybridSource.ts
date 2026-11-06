@@ -1,9 +1,10 @@
 // Совместимое имя dev-режима: все чтения идут к amocrm-pro.
 // Ошибки и недоступные контракты не подменяются синтетическими данными.
 
+import type { EmployeePeriodDays, PeriodStats } from "../domain/period";
 import type { DayEvents, EmployeeId, EmployeeSessions, PanelContext, ProblemLists } from "../domain/types";
 import { AmocrmProViewerSource } from "./amocrmPro";
-import type { ActivitySource, ActivityRatingParams, ActivityRatings, DayRange, EventCard, Sourced } from "./source";
+import type { ActivitySource, ActivityRatingParams, ActivityRatings, DayRange, EventCard, PeriodDaysParams, PeriodStatsParams, Sourced } from "./source";
 
 export class HybridSource implements ActivitySource {
   readonly mode = "hybrid" as const;
@@ -39,5 +40,13 @@ export class HybridSource implements ActivitySource {
 
   loadSessions(employeeId: EmployeeId, range: DayRange, signal?: AbortSignal): Promise<Sourced<EmployeeSessions>> {
     return this.live.loadSessions(employeeId, range, signal);
+  }
+
+  loadPeriodStats(params: PeriodStatsParams, signal?: AbortSignal): Promise<PeriodStats> {
+    return this.live.loadPeriodStats(params, signal);
+  }
+
+  loadEmployeePeriodDays(employeeId: EmployeeId, params: PeriodDaysParams, signal?: AbortSignal): Promise<EmployeePeriodDays> {
+    return this.live.loadEmployeePeriodDays(employeeId, params, signal);
   }
 }

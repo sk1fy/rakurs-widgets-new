@@ -2,6 +2,7 @@
 // реализации: amocrm-pro viewer API, синтетика режима разработки и их
 // комбинация (hybrid). Отсутствующий контракт — явное значение, а не пустой ответ.
 
+import type { EmployeePeriodDays, PeriodKind, PeriodStats } from "../domain/period";
 import type { CallFacts, DayEvents, EmployeeId, EmployeeSessions, PanelContext, ProblemLists } from "../domain/types";
 
 export type DataMode = "live" | "hybrid" | "fixtures";
@@ -75,6 +76,28 @@ export interface ActivityRatings {
   byEmployee: Map<EmployeeId, ActivityEmployeeRating>;
 }
 
+/** Запрос недели/месяца (контракт period-v1 §5.1). */
+export interface PeriodStatsParams {
+  kind: PeriodKind;
+  /** Любой день периода, YYYY-MM-DD. */
+  anchor: string;
+  startMinutes: number;
+  endMinutes: number;
+  /** null — сервер берёт своё время и возвращает его. */
+  cutoffUnix: number | null;
+  /** По умолчанию — все сотрудники панели. */
+  employeeIds?: EmployeeId[];
+}
+
+/** Ленты дней сотрудника (§5.2), не больше 31 дня. */
+export interface PeriodDaysParams {
+  fromDay: string;
+  toDay: string;
+  startMinutes: number;
+  endMinutes: number;
+  cutoffUnix: number | null;
+}
+
 export interface ActivitySource {
   readonly mode: DataMode;
   loadActivityRatings(params: ActivityRatingParams, signal?: AbortSignal): Promise<ActivityRatings>;
@@ -86,4 +109,8 @@ export interface ActivitySource {
   loadEventCard(eventId: string, signal?: AbortSignal): Promise<EventCard>;
   loadProblemLists(params: { managers: EmployeeId[]; pipelines: string[] }, signal?: AbortSignal): Promise<Sourced<ProblemLists>>;
   loadSessions(employeeId: EmployeeId, range: DayRange, signal?: AbortSignal): Promise<Sourced<EmployeeSessions>>;
+  /** Статистика недели/месяца по сотрудникам (period-v1 §5.1). */
+  loadPeriodStats(params: PeriodStatsParams, signal?: AbortSignal): Promise<PeriodStats>;
+  /** 2-минутные ленты дней сотрудника для «Сравнения рабочих дней» (period-v1 §5.2). */
+  loadEmployeePeriodDays(employeeId: EmployeeId, params: PeriodDaysParams, signal?: AbortSignal): Promise<EmployeePeriodDays>;
 }

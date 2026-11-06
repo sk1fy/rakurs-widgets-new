@@ -61,6 +61,8 @@ export interface DayStat {
 
 export interface EmployeePeriodStats {
   employeeId: EmployeeId;
+  /** Сервер посчитал часть дней по неполной выборке событий (лимит сканирования). */
+  partial: boolean;
   current: { rating: number | null; days: DayStat[] };
   /** null, если прошлый период недоступен (previous.available = false). */
   previous: {
@@ -89,6 +91,8 @@ export interface PeriodStats {
   current: Period;
   previous: Period & { available: boolean; cut: PeriodCut | null };
   byEmployee: Map<EmployeeId, EmployeePeriodStats>;
+  /** Хоть один день или сотрудник посчитан по неполным событиям. */
+  partial: boolean;
   source: "amocrm-pro" | "fixture";
 }
 
