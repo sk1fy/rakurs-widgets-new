@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { createLiveActivityController as createController } from '../src/live-controller.js';
+import { LockManager } from './helpers/locks.js';
 
 // The server owns every amoCRM call. This emulates its task contract on top
 // of each test's CRM fixture, so CRM reads and PATCHes stay observable.
@@ -386,7 +387,7 @@ test('reloading an owned Imbox interval keeps it whole until the visible dialog 
     if (options.method === 'GET') return fn({ items: [] });
     const command = JSON.parse(options.data); writes.push(command); current = { id: 'next', kind: command.action, started_at: 200, context: command.context }; fn(current);
   }); return request; }, fail() { return request; } }; return request; } };
-  const controller = createLiveActivityController({ context: { widget, accountId: 42, userId: 7 }, apiOrigin: 'https://api.example.test', appOrigin: 'https://panel.example.test', storageImpl: storage, documentImpl: { hidden: false, querySelectorAll: selector => selector.includes('notification') ? ['77', '88'].map(id => ({ dataset: { id }, querySelector: () => null })) : [] }, locationImpl: route, fetchImpl: async () => ({ ok: true, status: 204 }) });
+  const controller = createLiveActivityController({ context: { widget, accountId: 42, userId: 7 }, apiOrigin: 'https://api.example.test', appOrigin: 'https://panel.example.test', storageImpl: storage, locksImpl: new LockManager(), documentImpl: { hidden: false, querySelectorAll: selector => selector.includes('notification') ? ['77', '88'].map(id => ({ dataset: { id }, querySelector: () => null })) : [] }, locationImpl: route, fetchImpl: async () => ({ ok: true, status: 204 }) });
   await idle(controller); controller.tick(); await settleImbox();
   assert.equal(writes.length, 0);
   assert.equal(controller.getSnapshot().active.serverId, 'restored-imbox');
