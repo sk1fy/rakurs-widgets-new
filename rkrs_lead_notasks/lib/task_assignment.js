@@ -38,12 +38,35 @@
         };
     }
 
+    function taskId(value) {
+        return Number.isSafeInteger(value) && value > 0 ? value : null;
+    }
+
+    function parseEvidence(value) {
+        if (value === null) { return null; }
+        try {
+            var evidence = JSON.parse(value);
+            if (evidence && evidence.kind === 'identified' && taskId(evidence.taskId) && taskId(evidence.responsibleUserId)) {
+                return evidence;
+            }
+        } catch (error) {}
+        return { kind: 'ambiguous' };
+    }
+
+    function matchesEvidence(task, evidence, context, accountId) {
+        return Boolean(task && taskId(task.id) === evidence.taskId &&
+            (task.entity_id === undefined || taskId(task.entity_id) === Number(context.entityId)) &&
+            (task.entity_type === undefined || task.entity_type === context.entityType) &&
+            (task.responsible_user_id === undefined || taskId(task.responsible_user_id) === evidence.responsibleUserId) &&
+            (task.account_id === undefined || taskId(task.account_id) === accountId));
+    }
+
     function OwnerTaskService(api, checker, options) {
         options = options || {};
         this.api = api;
         this.checker = checker;
         this.pending = new Map();
-        this.uncertain = new Set();
+        this.memoryEvidence = new Map();
         this.destroyed = false;
         this.accountId = Number(options.accountId) || 0;
         this.isCurrent = options.isCurrent || function () { return true; };
@@ -55,6 +78,23 @@
 
     OwnerTaskService.prototype.markerKey = function (context) {
         return ['rkrs_wt_task_write_v1', this.accountId, context.entityType, context.entityId].join(':');
+    };
+
+    OwnerTaskService.prototype.readEvidence = function (marker) {
+        return this.storage ? parseEvidence(this.storage.getItem(marker)) : this.memoryEvidence.get(marker) || null;
+    };
+
+    OwnerTaskService.prototype.writeEvidence = function (marker, evidence) {
+        if (!this.storage) { this.memoryEvidence.set(marker, evidence); return; }
+        var value = JSON.stringify(evidence);
+        this.storage.setItem(marker, value);
+        if (this.storage.getItem(marker) !== value) { throw new Error('Не удалось сохранить защиту от повторного создания задачи.'); }
+    };
+
+    OwnerTaskService.prototype.clearEvidence = function (marker) {
+        if (!this.storage) { this.memoryEvidence.delete(marker); return; }
+        this.storage.removeItem(marker);
+        if (this.storage.getItem(marker) !== null) { throw new Error('Не удалось снять защиту от повторного создания задачи.'); }
     };
 
     OwnerTaskService.prototype.create = function (context, draft) {
@@ -80,17 +120,28 @@
             self.checker.invalidate(context);
             var state = await self.checker.check(context, { force: true, forceApi: true });
             assertCurrent();
+            var evidence = self.readEvidence(marker);
             if (state.state === Constants.TASK_STATE.HAS_TASK) {
-                // A visible owner task resolves a previous ambiguous attempt.
-                self.uncertain.delete(key);
-                if (self.storage) { self.storage.removeItem(marker); }
+                if (evidence && evidence.kind === 'ambiguous') { self.clearEvidence(marker); }
                 return { alreadyExists: true };
             }
             if (state.state !== Constants.TASK_STATE.NO_TASK) {
                 throw new Error('Не удалось проверить задачи ответственного. Попробуйте позже.');
             }
             if (self.destroyed) { throw new Error('Создание задачи остановлено.'); }
-            if (self.uncertain.has(key) || self.storage && self.storage.getItem(marker)) {
+            if (evidence && evidence.kind === 'identified') {
+                var previous = null;
+                try { previous = await self.api.get('/api/v4/tasks/' + evidence.taskId); } catch (error) {}
+                assertCurrent();
+                if (matchesEvidence(previous, evidence, context, self.accountId)) {
+                    if (previous.is_completed === false || previous.is_completed === 0) { return { alreadyExists: true }; }
+                    if (previous.is_completed === true || previous.is_completed === 1) {
+                        self.clearEvidence(marker);
+                        evidence = null;
+                    }
+                }
+            }
+            if (evidence) {
                 throw new Error('Результат предыдущего создания неизвестен. Проверьте ленту сделки; повторное создание отключено для защиты от дублей.');
             }
             // POST is never retried automatically: an ambiguous response may already have created the task.
@@ -101,39 +152,44 @@
                 throw new Error('Ответственный за сделку изменился. Откройте создание задачи заново.');
             }
             if (self.storage) {
-                var markerValue = JSON.stringify({ createdAt: Date.now(), responsibleUserId: payload.responsible_user_id });
                 var count = 0;
+                var prefix = 'rkrs_wt_task_write_v1:' + self.accountId + ':';
                 for (var i = 0; i < self.storage.length; i += 1) {
-                    if (String(self.storage.key(i)).indexOf('rkrs_wt_task_write_v1:') === 0) { count += 1; }
+                    var storedKey = String(self.storage.key(i));
+                    if (storedKey.indexOf(prefix) === 0) {
+                        var storedEvidence = self.readEvidence(storedKey);
+                        if (storedEvidence && storedEvidence.kind === 'ambiguous') { count += 1; }
+                    }
                 }
                 if (count >= 256) { throw new Error('Достигнут лимит неподтверждённых созданий задач. Используйте стандартную форму amoCRM.'); }
-                self.storage.setItem(marker, markerValue);
-                if (self.storage.getItem(marker) !== markerValue) { throw new Error('Не удалось сохранить защиту от повторного создания задачи.'); }
             }
             assertCurrent();
-            self.uncertain.add(key);
+            evidence = { kind: 'ambiguous', createdAt: Date.now(), responsibleUserId: payload.responsible_user_id };
+            self.writeEvidence(marker, evidence);
             var response;
             try {
                 response = await self.api.post('/api/v4/tasks', [payload], { retry: false });
             } catch (error) {
                 // A definitive rejection did not execute the write. Network/5xx/abort results remain uncertain.
                 if ([400, 401, 403, 404, 405, 422, 429].indexOf(Number(error && error.status)) !== -1) {
-                    self.uncertain.delete(key);
-                    if (self.storage) { self.storage.removeItem(marker); }
+                    self.clearEvidence(marker);
                 }
                 self.checker.invalidate(context);
                 throw error;
             }
             self.checker.invalidate(context);
             var created = response && response._embedded && response._embedded.tasks || [];
-            if (!created.some(function (task) { return matchesResponsible(task, context); })) {
+            var identified = Array.isArray(created) && created.length === 1 && created[0] && taskId(created[0].id);
+            if (identified) {
+                self.writeEvidence(marker, { kind: 'identified', createdAt: evidence.createdAt,
+                    responsibleUserId: evidence.responsibleUserId, taskId: identified });
+            } else if (!Array.isArray(created) || !created.some(function (task) { return matchesResponsible(task, context); })) {
                 var confirmed = await self.checker.check(context, { force: true, forceApi: true });
                 if (confirmed.state !== Constants.TASK_STATE.HAS_TASK) {
                     throw new Error('Сервер не подтвердил задачу. Проверьте ленту сделки перед повторным созданием.');
                 }
             }
-            // Keep the marker until the Tasks read API observes the task. A second tab may
-            // still receive an eventually consistent empty list after a successful POST.
+            // Retain identified evidence until completion, since task lists may lag across tabs.
             return { alreadyExists: false };
         };
         var operation;

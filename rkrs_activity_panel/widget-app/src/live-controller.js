@@ -1,4 +1,5 @@
 import { createActivitySessionClient } from './session-client.js';
+import { createClientIdentity } from './client-identity.js';
 
 const playIcon = '<svg width="12" height="14" viewBox="0 0 12 14" fill="none" aria-hidden="true"><path d="M1.5 2v10l9-5-9-5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>';
 const stopIcon = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="2" fill="currentColor"/></svg>';
@@ -11,7 +12,7 @@ const cardActions = {
 const entityUrl = (type, id) => (['leads', 'contacts', 'companies', 'customers'].includes(type) && id ? `/${type}/detail/${id}` : '');
 
 // authorizedAjax caches tokens; Core requires a fresh disposable JWT for each call.
-export function createLiveActivityController({ context, apiOrigin, appOrigin, documentImpl = document, locationImpl = location, storageImpl, broadcastImpl = globalThis.BroadcastChannel }) {
+export function createLiveActivityController({ context, apiOrigin, appOrigin, documentImpl = document, locationImpl = location, storageImpl, broadcastImpl = globalThis.BroadcastChannel, locksImpl = globalThis.navigator?.locks }) {
   const listeners = new Set();
   let storage = storageImpl;
   try { if (storage === undefined && Number(context.accountId) > 0 && Number(context.userId) > 0) storage = globalThis.sessionStorage; } catch { /* Browser storage can be disabled. */ }
@@ -19,8 +20,8 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   try { widgetCode = context.widget.get_settings?.().widget_code || widgetCode; } catch { /* SDK metadata is optional. */ }
   const identity = `${apiOrigin}:${widgetCode}:${context.accountId}:${context.userId}`;
   const completionKey = `rkrs-activity-completion:${identity}`;
-  let clientId = crypto.randomUUID();
-  try { const key = `rkrs-activity-client:${identity}`; const stored = storage?.getItem(key); if (/^[0-9a-f-]{36}$/.test(stored || '')) clientId = stored; else storage?.setItem(key, clientId); } catch { /* CAS still guards other tabs. */ }
+  const clientIdentity = createClientIdentity({ storage, key: `rkrs-activity-client:${identity}`, locks: locksImpl });
+  let clientId = null, identityWarning = '';
   // View preferences and the last known enrolment outlive the tab; server state stays authoritative.
   let prefs = storageImpl;
   try { if (prefs === undefined) prefs = globalThis.localStorage; } catch { /* Preferences are optional. */ }
@@ -113,7 +114,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   const dayKey = value => `${value.year}-${value.month}-${value.day}`;
   // Employees outside the panel settings get no bar unless they still own unfinished work.
   const hidden = () => Boolean(client) && !state.enabled && !state.active && !state.completion && !client.getState().pending && !state.recoveryRequired && !(errorSource === 'state' && !state.ready && state.error);
-  const snapshot = () => structuredClone({ ...state, invalidated: stateReadStatus !== 'accepted', stateReadStatus, pending: client?.getState().pending || false, hidden: hidden() });
+  const snapshot = () => structuredClone({ ...state, readWarning: [state.readWarning, identityWarning].filter(Boolean).join(' · '), invalidated: stateReadStatus !== 'accepted', stateReadStatus, pending: client?.getState().pending || false, hidden: hidden() });
   const emit = () => { if (!disposed) listeners.forEach(fn => fn(snapshot())); };
   const sdkRequest = options => new Promise((resolve, reject) => {
     if (disposed) return reject(new Error('Виджет закрыт'));
@@ -367,6 +368,8 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   }
   async function run(action) {
     if (disposed || state.busy || !client) return false;
+    if (!clientId) await identityReady;
+    if (disposed || state.busy || !clientId) return false;
     invalidateReads();
     state.busy = true; state.error = ''; errorSource = ''; emit();
     try { return await action() !== false && !disposed; }
@@ -453,7 +456,15 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   };
   documentImpl.addEventListener?.('click', onCardClick, true);
   async function startImboxSession(id) {
-    if (!state.dialogs.some(row => row.id === String(id))) throw new Error('Откройте диалог Imbox'); const details = { client_id: clientId }; const entityId = dialogEntities.get(String(id)); if (entityId) { const entity = await client.loadLead(entityId); Object.assign(details, { entity_type: 'leads', entity_id: entityId }, entity.restricted ? {} : { entity_name: entity.name, pipeline_id: entity.pipeline_id || 0, status_id: entity.status_id || 0 }); } publishReceipt(await client.startImbox(id, details, state.active?.serverId || ''));
+    if (!state.dialogs.some(row => row.id === String(id))) throw new Error('Откройте диалог Imbox');
+    const details = { client_id: clientId };
+    const entityId = dialogEntities.get(String(id));
+    if (entityId) {
+      const entity = await client.loadLead(entityId);
+      if (disposed) throw new Error('Виджет закрыт');
+      Object.assign(details, { entity_type: 'leads', entity_id: entityId }, entity.restricted ? {} : { entity_name: entity.name, pipeline_id: entity.pipeline_id || 0, status_id: entity.status_id || 0 });
+    }
+    publishReceipt(await client.startImbox(id, details, state.active?.serverId || ''));
   }
   async function resumeCompletion() {
     const intent = state.completion;
@@ -569,8 +580,8 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       const lead = locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1] || '';
       if (!documentImpl.hidden && serverSettings.include_related_deals && state.ready && lead !== queueLead && Date.now() >= tasksRetryAt) { void loadTasks(); }
       const dialog = locationImpl.pathname.match(/\/imbox\/(\d+)/)?.[1];
-      if (lastDialog === null && state.active?.kind === 'imbox' && state.active.clientId === clientId && state.active.id === dialog) lastDialog = dialog;
-      if (!state.busy && (!state.recoveryRequired || (dialogTransition?.pending && client.getState().pending)) && stateReadStatus === 'accepted' && (state.ready || dialogTransition?.pending) && state.enabled && !state.completion && !documentImpl.hidden) {
+      if (clientId && lastDialog === null && state.active?.kind === 'imbox' && state.active.clientId === clientId && state.active.id === dialog) lastDialog = dialog;
+      if (clientId && !state.busy && (!state.recoveryRequired || (dialogTransition?.pending && client.getState().pending)) && stateReadStatus === 'accepted' && (state.ready || dialogTransition?.pending) && state.enabled && !state.completion && !documentImpl.hidden) {
         // A failed automatic write keeps its original command identity even if
         // navigation changes while its response is missing. Resolve it first.
         if (!dialogTransition && !client.getState().pending && dialog !== lastDialog) {
@@ -618,8 +629,14 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
         if (state.ready && Date.now() >= reads.history.nextAt && dayKey(parts(dayStart || Date.now())) !== dayKey(parts(Date.now()))) void loadHistory();
       }
     },
-    dispose() { disposed = true; invalidateReads(); confirmedCompletions.clear(); try { channel?.close(); } catch { /* Already closed. */ } documentImpl.removeEventListener?.('visibilitychange', onVisible); windowRef?.removeEventListener?.('focus', onVisible); documentImpl.removeEventListener?.('click', onNativeComplete, true); documentImpl.removeEventListener?.('click', onCardClick, true); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); documentImpl.querySelectorAll?.('.feed-note-wrapper-task[data-id]').forEach(clearCardAction); listeners.clear(); },
+    dispose() { disposed = true; clientIdentity.dispose(); invalidateReads(); confirmedCompletions.clear(); try { channel?.close(); } catch { /* Already closed. */ } documentImpl.removeEventListener?.('visibilitychange', onVisible); windowRef?.removeEventListener?.('focus', onVisible); documentImpl.removeEventListener?.('click', onNativeComplete, true); documentImpl.removeEventListener?.('click', onCardClick, true); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); documentImpl.querySelectorAll?.('.feed-note-wrapper-task[data-id]').forEach(clearCardAction); listeners.clear(); },
   };
+  const identityReady = clientIdentity.ready.then(value => {
+    if (disposed || !value) return;
+    clientId = value.id;
+    if (!value.persistent) identityWarning = 'Автоматическое продолжение Imbox после перезагрузки недоступно в этом браузере';
+    emit();
+  });
   if (client) void sync(true).then(ok => { if (ok && !disposed) refreshProjections(); });
   return controller;
 }

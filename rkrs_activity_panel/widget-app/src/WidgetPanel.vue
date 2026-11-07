@@ -16,6 +16,7 @@ const props = defineProps({
   settingsOnly: { type: Boolean, default: false },
 });
 const state = shallowRef(props.controller.getSnapshot());
+let mounted = false, queuedStartIntent = 0;
 const panel = ref(null);
 const popover = ref(null);
 const open = ref(null);
@@ -181,11 +182,13 @@ function outside(event) {
     close(false);
 }
 function selectScenario(kind) {
+  queuedStartIntent++;
   props.controller.selectScenario(kind);
   close();
 }
 // A task row opens its card when the card is known; the play button starts it.
 function openTask(task) {
+  queuedStartIntent++;
   close(false);
   if (task.url) window.location.href = task.url;
   else props.controller.selectTask(task.id);
@@ -204,11 +207,14 @@ async function selectImbox(id) {
 // Work on a queued task happens in its card, so a confirmed start opens it.
 async function startQueued(task) {
   if (!canMutate.value) return;
+  const intent = ++queuedStartIntent;
+  const origin = window.location.href;
+  const target = task.url;
   close(false);
   if (state.value.scenario !== "tasks") props.controller.selectScenario("tasks");
   const started = await props.controller.startTask(task.id);
-  if (started === true && task.url && window.location.pathname !== task.url)
-    window.location.href = task.url;
+  if (started === true && mounted && intent === queuedStartIntent && window.location.href === origin && target && window.location.pathname !== target)
+    window.location.href = target;
 }
 function smartAction() {
   if (activeTask.value) window.location.href = activeTaskView.value.url;
@@ -242,6 +248,7 @@ async function recover() {
   if (result !== false && completing && !state.value.completion && !state.value.pending && open.value === "complete") close();
 }
 onMounted(() => {
+  mounted = true;
   unsubscribe = props.controller.subscribe((snapshot) => {
     state.value = snapshot || props.controller.getSnapshot();
     if (state.value.active?.kind === "imbox")
@@ -256,6 +263,8 @@ onMounted(() => {
   eventRoot.addEventListener("keydown", keydown);
 });
 onBeforeUnmount(() => {
+  mounted = false;
+  queuedStartIntent++;
   unsubscribe?.();
   eventDocument?.removeEventListener("pointerdown", outside);
   eventRoot?.removeEventListener("keydown", keydown);

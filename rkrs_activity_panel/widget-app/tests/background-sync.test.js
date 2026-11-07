@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createLiveActivityController } from '../src/live-controller.js';
+import { LockManager, memoryStorage } from './helpers/locks.js';
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-function fixture({ storage = null, apiOrigin = 'https://api.example.test' } = {}) {
+function fixture({ storage = memoryStorage(), apiOrigin = 'https://api.example.test' } = {}) {
   const calls = [], held = [], channels = [];
   let current = null, history = [];
   const hold = new Set();
@@ -38,7 +39,7 @@ function fixture({ storage = null, apiOrigin = 'https://api.example.test' } = {}
   } } };
   class Channel { constructor() { channels.push(this); } postMessage() {} close() {} }
   const documentImpl = { hidden: false, querySelectorAll: () => [], addEventListener(name, fn) { events[name] = fn; }, removeEventListener() {}, defaultView: { addEventListener(name, fn) { events[name] = fn; }, removeEventListener() {} } };
-  const controller = createLiveActivityController({ context: { widget, accountId: 42, userId: 7 }, apiOrigin, appOrigin: 'https://panel.example.test', storageImpl: storage, broadcastImpl: Channel, documentImpl, locationImpl: route });
+  const controller = createLiveActivityController({ context: { widget, accountId: 42, userId: 7 }, apiOrigin, appOrigin: 'https://panel.example.test', storageImpl: storage, locksImpl: new LockManager(), broadcastImpl: Channel, documentImpl, locationImpl: route });
   return { controller, calls, hold, held, failures, route, events, channels, documentImpl, setCurrent(value) { current = value; }, setHistory(value) { history = value; } };
 }
 
