@@ -100,11 +100,10 @@
     }
     function identity() {
         var user = constant('user');
-        return String(constant('account').id || '') + ':' + String(user.id || constant('user_id')) + ':' + String(user.is_admin || user.rights && user.rights.is_admin || false);
+        return String(constant('account').id || '') + ':' + String(user.id || constant('user_id')) + ':' + String(admin());
     }
     function admin() {
-        var user = constant('user');
-        return [true, 1, '1', 'Y', 'true'].indexOf(user.is_admin === undefined ? user.rights && user.rights.is_admin : user.is_admin) >= 0;
+        return [true, 1, '1', 'Y', 'true'].indexOf(constant('user_rights').is_admin) >= 0;
     }
     function mount(widget, body, config) {
         var target = body && (body.nodeType ? body : body[0]);

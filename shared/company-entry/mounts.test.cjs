@@ -15,7 +15,9 @@ function fixture(relative, authority, isAdmin = true) {
     const body = window.document.getElementById('settings');
     const calls = [], opened = [], controls = [];
     let accountId = '123', proofCount = 0;
-    const crm = { constant(key) { return { account: { id: accountId }, user: { id: 42, is_admin: isAdmin }, user_id: 42 }[key]; }, data: {} };
+    const user = { id: 42 };
+    let userRights = { is_admin: isAdmin };
+    const crm = { constant(key) { return { account: { id: accountId }, user, user_rights: userRights, user_id: 42 }[key]; }, data: {} };
     function product() {
         const button = window.document.createElement('button'); button.textContent = 'Существующие настройки продукта';
         button.onclick = () => controls.push('used'); body.appendChild(button);
@@ -67,7 +69,7 @@ function fixture(relative, authority, isAdmin = true) {
     vm.runInNewContext(fs.readFileSync(path.join(root, relative), 'utf8'), context);
     const widget = { params: {}, get_settings: () => ({ oauth_client_uuid: '20000000-0000-4000-8000-000000000002' }), get_version: () => '1.2.5' };
     Constructor.call(widget);
-    return { widget, body, calls, opened, controls, close() { widget.callbacks.destroy(); dom.window.close(); }, switchAccount() { accountId = '456'; } };
+    return { widget, body, calls, opened, controls, close() { widget.callbacks.destroy(); dom.window.close(); }, switchAccount() { accountId = '456'; }, setUserRights(rights) { userRights = rights; }, setLegacyAdmin(value) { user.is_admin = value; user.rights = { is_admin: value }; } };
 }
 const sources = ['rkrs_lead_notasks/script.js', 'rkrs_activity_panel/widget/script.js', 'rkrs_lead_distribution/widget/script.js', 'integration-packages/amocrm-pro-service/widget/script.js'];
 test('all actual settings callbacks share account-wide authority and preserve product controls', async () => {
@@ -105,6 +107,37 @@ test('ordinary employees see no company-entry CTA in each actual settings callba
             f.widget.callbacks.settings(f.body); await tick();
             assert.equal(f.body.querySelector('[data-teamos-company-entry]'), null);
             assert.equal(f.calls.length, 0);
+        } finally { f.close(); }
+    }
+});
+test('missing or denied SDK user_rights cannot be overridden by legacy user flags', async () => {
+    for (const source of sources) {
+        for (const rights of [undefined, {}, { is_admin: false }, { is_admin: 'false' }]) {
+            const f = fixture(source, { present: false, creates: 0 });
+            try {
+                f.setUserRights(rights);
+                f.setLegacyAdmin(true);
+                f.widget.callbacks.settings(f.body); await tick();
+                assert.equal(f.body.querySelector('[data-teamos-company-entry]'), null);
+                assert.equal(f.calls.length, 0);
+            } finally { f.close(); }
+        }
+    }
+});
+test('revoking SDK admin rights prevents entry and closes the block until settings reopen', async () => {
+    for (const source of sources) {
+        const authority = { present: true, creates: 0 };
+        const f = fixture(source, authority);
+        try {
+            f.widget.callbacks.settings(f.body); await tick(); await tick();
+            const button = f.body.querySelector('[data-teamos-company-entry] button');
+            assert.equal(button.textContent, 'Перейти в компанию');
+            f.setUserRights({ is_admin: false });
+            button.click(); await tick(); await tick();
+            assert.equal(f.opened.length, 0);
+            assert.equal(f.calls.filter(call => call.url.endsWith('/entries')).length, 0);
+            f.widget.callbacks.settings(f.body); await tick();
+            assert.equal(f.body.querySelector('[data-teamos-company-entry]'), null);
         } finally { f.close(); }
     }
 });
