@@ -12,8 +12,10 @@ define([
     './lib/teamos.js?v=1.2.5',
     './lib/deployment.js?v=1.2.5',
     './lib/teamos_controller.js?v=1.2.5',
-    './lib/migration.js?v=1.2.5'
-], function ($, Modal, Constants, QueueModule, ApiFactory, RulesFactory, SnapshotFactory, CatalogFactory, RuntimeFactory, TaskAssignmentFactory, TeamOSFactory, Deployment, TeamControllerFactory, MigrationFactory) {
+    './lib/migration.js?v=1.2.5',
+    './lib/company-entry.js?v=1.2.5',
+    './lib/company-entry-deployment.js?v=1.2.5'
+], function ($, Modal, Constants, QueueModule, ApiFactory, RulesFactory, SnapshotFactory, CatalogFactory, RuntimeFactory, TaskAssignmentFactory, TeamOSFactory, Deployment, TeamControllerFactory, MigrationFactory, CompanyEntry, CompanyEntryDeployment) {
     'use strict';
 
     var ApiModule = ApiFactory(QueueModule);
@@ -29,6 +31,7 @@ define([
     return function () {
         var self = this;
         var runtimeController = null;
+        var companyEntry = null;
         var managedConfig;
         var managedKey = '';
         var team = new TeamController(self, $, Deployment, function (good) {
@@ -173,6 +176,8 @@ define([
             settings: function ($body) {
                 includeCss();
                 team.render($body);
+                if (companyEntry) { companyEntry.destroy(); }
+                companyEntry = CompanyEntry.mount(self, $body, CompanyEntryDeployment);
                 return true;
             },
 
@@ -191,6 +196,7 @@ define([
             },
 
             destroy: function () {
+                if (companyEntry) { companyEntry.destroy(); companyEntry = null; }
                 team.destroy();
                 team.migration.repository.api.destroy();
                 managedConfig = undefined;

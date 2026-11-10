@@ -1,5 +1,5 @@
 /** amoCRM AMD adapter. Authentication is provided by the documented SDK. */
-define([], function () {
+define(['./lib/company-entry.js', './lib/company-entry-deployment.js'], function (CompanyEntry, CompanyEntryDeployment) {
   var ASSETS = "__RKRS_DISTRIBUTION_ASSETS_URL__";
   var API = "__RKRS_DISTRIBUTION_API_URL__";
   var BUNDLE = "__RKRS_DISTRIBUTION_BUNDLE__";
@@ -55,6 +55,7 @@ define([], function () {
     return attempt;
   }
   return function () {
+    var companyEntry = null;
     var self = this,
       alive = true,
       generation = 0,
@@ -247,6 +248,8 @@ define([], function () {
       },
       settings: function (body) {
         bindCustomSettings(body);
+        if (companyEntry) { companyEntry.destroy(); }
+        companyEntry = CompanyEntry.mount(self, body, CompanyEntryDeployment);
         return true;
       },
       advancedSettings: function () {
@@ -261,6 +264,7 @@ define([], function () {
         return true;
       },
       destroy: function () {
+        if (companyEntry) { companyEntry.destroy(); companyEntry = null; }
         alive = false;
         dispose();
         identity = "";

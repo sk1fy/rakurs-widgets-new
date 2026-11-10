@@ -53,8 +53,8 @@ function setup(options = {}) {
   requireModule.undef = (url) => calls.undef.push(url);
   vm.runInNewContext(source, {
     define(deps, factory) {
-      assert.equal(deps.length, 0);
-      Widget = factory();
+      assert.deepEqual(Array.from(deps), ["./lib/company-entry.js", "./lib/company-entry-deployment.js"]);
+      Widget = factory({ mount() { return { destroy() {} }; } }, {});
     },
     require: requireModule,
     fetch(url, config) {

@@ -37,3 +37,8 @@ const loader = readFileSync("../widget/script.js", "utf8")
   .replaceAll("__RKRS_DISTRIBUTION_BUNDLE__", js);
 writeFileSync("public/widget-assets/widget-loader.js", loader);
 copyFileSync("node_modules/requirejs/require.js", "public/require.js");
+
+mkdirSync("public/widget-assets/lib", { recursive: true });
+for (const name of ["company-entry.js", "company-entry-deployment.js"]) {
+  copyFileSync(`../widget/lib/${name}`, `public/widget-assets/lib/${name}`);
+}
