@@ -32,4 +32,3 @@ with tempfile.TemporaryDirectory(prefix='company-entry-package-') as directory:
                 bundle.writestr(entry, source.read_bytes())
 print(archive)
 print('sha256:', hashlib.sha256(archive.read_bytes()).hexdigest())
-
