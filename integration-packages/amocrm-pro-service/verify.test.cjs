@@ -34,6 +34,8 @@ function fixture(ajax) {
     vm.runInNewContext(fs.readFileSync(path.join(root,file),'utf8'),{APP,window:{APP,crypto:dom.window.crypto},document,Event:dom.window.Event,Promise,setTimeout,clearTimeout,require:req,define(deps,fn){factory=fn(...deps.map(name=>name==='jquery'?$:name==='./backend-client.js'?{}:modules[name]));}});
     return factory;
   }
+  modules['./lib/company-entry.js'] = load('lib/company-entry.js');
+  modules['./lib/company-entry-deployment.js'] = load('lib/company-entry-deployment.js');
   modules['./lib/legacy-widget.js'] = load('lib/legacy-widget.js');
   modules['./lib/distribution-adapter.js'] = load('lib/distribution-adapter.js');
   const Widget = load('script.js');

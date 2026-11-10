@@ -45,11 +45,12 @@ const configured = source.replace(/(["'])__RKRS_ACTIVITY_ASSETS_URL__\1/, () =>
 );
 if (configured === source) throw new Error("Missing loader URL placeholder.");
 writeFileSync(path.join(staging, "script.js"), configured);
+execFileSync(process.execPath, [path.join(root, "../../shared/company-entry/sync.mjs"), "--target", staging], { env: process.env });
 const zip = path.join(root, "dist-package/rkrs-activity-prototype.zip");
 rmSync(zip, { force: true });
 execFileSync(
   "zip",
-  ["-qr", zip, "script.js", "manifest.json", "i18n", "images"],
+  ["-qr", zip, "script.js", "manifest.json", "i18n", "images", "lib"],
   { cwd: staging }
 );
 console.log(

@@ -68,6 +68,7 @@ if (
 )
   throw new Error("Placeholder or local/secret configuration in ZIP");
 writeFileSync(`${folder}/script.js`, source);
+execFileSync(process.execPath, ["../../shared/company-entry/sync.mjs", "--target", folder], { env: process.env });
 const files = [];
 function walk(dir) {
   for (const name of readdirSync(dir).sort()) {

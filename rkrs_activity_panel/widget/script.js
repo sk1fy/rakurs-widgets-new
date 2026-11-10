@@ -1,5 +1,5 @@
 /** rkrs_activity — тонкий AMD-загрузчик прототипа. UI находится в UMD-бандле. */
-define([], function () {
+define(['./lib/company-entry.js', './lib/company-entry-deployment.js'], function (CompanyEntry, CompanyEntryDeployment) {
     var ASSETS = '__RKRS_ACTIVITY_ASSETS_URL__';
     var appPromise = null;
     var loadedApp = null;
@@ -80,6 +80,7 @@ define([], function () {
 
     return function () {
         var self = this;
+        var companyEntry = null;
         var instanceId = ++nextInstanceId;
         var alive = true;
         var generation = 0;
@@ -165,10 +166,13 @@ define([], function () {
                 if (!target || typeof target.appendChild !== 'function') { target = null; }
                 revive();
                 run('openSettings', target);
+                if (companyEntry) { companyEntry.destroy(); }
+                companyEntry = CompanyEntry.mount(self, target, CompanyEntryDeployment);
                 return true;
             },
             onSave: function () { return true; },
             destroy: function () {
+                if (companyEntry) { companyEntry.destroy(); companyEntry = null; }
                 if (!alive) { return true; }
                 alive = false;
                 generation += 1;

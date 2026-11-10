@@ -69,3 +69,8 @@ copyFileSync(
 console.log(
   `Remote release: dist-remote/${js} + release.json (build ${build})\nLocal AMD preview: http://127.0.0.1:5174/`
 );
+
+mkdirSync(path.join(root, "public/widget-assets/lib"), { recursive: true });
+for (const name of ["company-entry.js", "company-entry-deployment.js"]) {
+  copyFileSync(path.join(root, "../widget/lib", name), path.join(root, "public/widget-assets/lib", name));
+}

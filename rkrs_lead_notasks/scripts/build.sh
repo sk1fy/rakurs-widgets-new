@@ -26,6 +26,7 @@ for (const input of [coreOrigin, backendOrigin]) {
 }
 fs.writeFileSync(process.env.TASK_CONTROL_BUILD_DIR + '/lib/deployment.js', 'define([], function () { return ' + JSON.stringify({coreOrigin,backendOrigin}) + '; });\n');
 JS
+node "$PROJECT_DIR/../shared/company-entry/sync.mjs" --target "$TEMP_DIR"
 cd "$TEMP_DIR"
 TASK_CONTROL_ZIP_EPOCH=${SOURCE_DATE_EPOCH:-$(git -C "$PROJECT_DIR" log -1 --format=%ct 2>/dev/null || printf '315532800')}
 export TASK_CONTROL_ZIP_EPOCH

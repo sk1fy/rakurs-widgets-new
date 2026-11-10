@@ -21,3 +21,7 @@
 сохраняются как исходные материалы. ZIP и каталоги сборки генерируются заново
 и не хранятся в Git. Копии изображений внутри `widget/images/` нужны каждому
 самостоятельному пакету amoCRM.
+
+Для входа в компанию из настроек все установочные пакеты используют
+[общий модуль company-entry](shared/company-entry/README.md). При упаковке нужны
+`COMPANY_ENTRY_CORE_ORIGIN` и `COMPANY_ENTRY_FRONTEND_ORIGIN` с публичными HTTPS origins.

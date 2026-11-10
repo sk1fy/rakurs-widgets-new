@@ -18,9 +18,9 @@ test("release hash pins actual bytes and ZIP is reproducible and free of placeho
     "--api-url",
     "https://core.example.test/api/v1/widget/distribution",
   ];
-  execFileSync(process.execPath, args);
+  execFileSync(process.execPath, args, { env: { ...process.env, COMPANY_ENTRY_CORE_ORIGIN: "https://core.example.test", COMPANY_ENTRY_FRONTEND_ORIGIN: "https://teamos.example.test" } });
   const first = readFileSync("dist-package/rkrs-lead-distribution.zip");
-  execFileSync(process.execPath, args);
+  execFileSync(process.execPath, args, { env: { ...process.env, COMPANY_ENTRY_CORE_ORIGIN: "https://core.example.test", COMPANY_ENTRY_FRONTEND_ORIGIN: "https://teamos.example.test" } });
   assert.deepEqual(
     readFileSync("dist-package/rkrs-lead-distribution.zip"),
     first,

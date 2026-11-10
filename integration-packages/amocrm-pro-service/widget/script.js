@@ -1,8 +1,9 @@
 /* Preserve the existing diagnostic widget and add distribution in its own host. */
-define(['jquery', './lib/legacy-widget.js', './lib/distribution-adapter.js'], function ($, Legacy, Distribution) {
+define(['jquery', './lib/legacy-widget.js', './lib/distribution-adapter.js', './lib/company-entry.js', './lib/company-entry-deployment.js'], function ($, Legacy, Distribution, CompanyEntry, CompanyEntryDeployment) {
   'use strict';
   return function () {
     var self = this;
+    var companyEntry = null;
     Legacy.call(self);
     var legacy = self.callbacks;
     var facade = Object.create(self);
@@ -37,11 +38,19 @@ define(['jquery', './lib/legacy-widget.js', './lib/distribution-adapter.js'], fu
       },
       init: function () { return both('init', arguments); },
       bind_actions: function () { return both('bind_actions', arguments); },
-      settings: function () { return both('settings', arguments); },
+      settings: function (body) {
+        var result = both('settings', arguments);
+        if (companyEntry) companyEntry.destroy();
+        companyEntry = CompanyEntry.mount(self, body, CompanyEntryDeployment);
+        return result;
+      },
       advancedSettings: function () { return distribution.advancedSettings.apply(facade, arguments); },
       dpSettings: function () { return distribution.dpSettings.apply(facade, arguments); },
       onSave: function () { return both('onSave', arguments); },
-      destroy: function () { return both('destroy', arguments); }
+      destroy: function () {
+        if (companyEntry) { companyEntry.destroy(); companyEntry = null; }
+        return both('destroy', arguments);
+      }
     };
     return self;
   };
