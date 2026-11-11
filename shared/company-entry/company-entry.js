@@ -100,11 +100,10 @@
     }
     function identity() {
         var user = constant('user');
-        return String(constant('account').id || '') + ':' + String(user.id || constant('user_id')) + ':' + String(user.is_admin || user.rights && user.rights.is_admin || false);
+        return String(constant('account').id || '') + ':' + String(user.id || constant('user_id')) + ':' + String(admin());
     }
     function admin() {
-        var user = constant('user');
-        return [true, 1, '1', 'Y', 'true'].indexOf(user.is_admin === undefined ? user.rights && user.rights.is_admin : user.is_admin) >= 0;
+        return [true, 1, '1', 'Y', 'true'].indexOf(constant('user_rights').is_admin) >= 0;
     }
     function mount(widget, body, config) {
         var target = body && (body.nodeType ? body : body[0]);
@@ -140,7 +139,7 @@
                 proof: async function (signal) {
                     var client = widget.get_settings().oauth_client_uuid;
                     if (!uuid(client)) { throw new Error('Не настроена OAuth интеграция виджета.'); }
-                    var value = await json('/ajax/v2/integrations/' + encodeURIComponent(client) + '/disposable_token', { credentials: 'same-origin', cache: 'no-store', signal: signal });
+                    var value = await json('/ajax/v2/integrations/' + encodeURIComponent(client) + '/disposable_token', { credentials: 'same-origin', cache: 'no-store', headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' }, signal: signal });
                     if (!value || typeof value.token !== 'string' || !value.token) { throw new Error('Не получен токен amoCRM. Повторите проверку.'); }
                     return value.token;
                 },
