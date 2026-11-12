@@ -42,7 +42,7 @@ const layoutCss = `${shifted
   // would run past the page once the bar pushes it down.
   `body.${layoutClass} #wappi-embed__container{height:calc(100vh - var(${heightVar},65px)) !important;height:calc(100dvh - var(${heightVar},65px)) !important;min-height:0;}`,
   `body.${layoutClass} #wappi-embed__container #app,body.${layoutClass} #wappi-embed__container .mainWindow,body.${layoutClass} #wappi-embed__container .vac-card-window,body.${layoutClass} #wappi-chat-target #app,body.${layoutClass} #wappi-chat-target .mainWindow,body.${layoutClass} #wappi-chat-target .vac-card-window{height:100% !important;min-height:0;}`,
-  ".card-task.rkrs-ap-active-task-card{background:linear-gradient(135deg,rgba(211,254,255,.15) 0%,rgba(211,254,255,.05) 100%) !important;border-left:3px solid #27ae60 !important;box-shadow:0 2px 8px rgba(39,174,96,.15) !important;}",
+  ".card-task.rkrs-ap-active-task-card{background:linear-gradient(135deg,rgba(211,254,255,.15),rgba(211,254,255,.05)) var(--palette-background-default,#f2f2f2) !important;border-left:3px solid #27ae60 !important;box-shadow:0 2px 8px rgba(39,174,96,.15) !important;}",
 ].join("")}`;
 
 function safeStorage() {
