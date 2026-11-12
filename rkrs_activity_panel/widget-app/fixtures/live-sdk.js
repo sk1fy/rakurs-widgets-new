@@ -19,8 +19,9 @@ export function createLiveSDK({ failState = 0, failToken = 0, enabled = true, cu
       const url = new URL(options.url, 'http://fixture.invalid');
       if (url.origin !== 'http://fixture.invalid' && url.origin !== apiOrigin) throw new Error(`Unexpected fixture origin ${url.origin}`);
       const path = url.pathname.replace('/api/v1/widget/activity/', '');
-      const kind = url.pathname.endsWith('/disposable_token') ? 'token' : path === 'state' ? 'state' : path === 'tasks/19' ? 'detail' : path;
-      const entry = { kind, method: options.method, body: options.data ? JSON.parse(options.data) : null, aborted: false };
+      const body = options.data ? JSON.parse(options.data) : null;
+      const kind = url.pathname.endsWith('/disposable_token') ? 'token' : path === 'tasks/19' ? 'detail' : path === 'sessions' && body?.action === 'start_task' ? 'start' : path;
+      const entry = { kind, method: options.method, body, aborted: false };
       requests.push(entry);
       let done, fail;
       const request = { done(fn) { done = fn; return request; }, fail(fn) { fail = fn; return request; }, abort() { entry.aborted = true; } };
@@ -39,15 +40,22 @@ export function createLiveSDK({ failState = 0, failToken = 0, enabled = true, cu
         else if (kind === 'tasks/19/complete') { Object.assign(task, { is_completed: true, result_text: entry.body.result }); queueContainsTask = false; done({ ...task }); }
         else if (kind === 'leads/12') done({ id: 12, name: 'Тестовая сделка' });
         else if (kind === 'sessions' && options.method === 'GET') done({ items: structuredClone(history) });
-        else if (kind === 'sessions' && options.method === 'POST') {
+        else if ((kind === 'sessions' || kind === 'start') && options.method === 'POST') {
           const command = entry.body;
           commands.push(structuredClone(command));
           if ((command.action === 'stop' ? command.session_id : command.expected_session_id) !== (current?.id || '')) {
             fail(error(409, 'Fixture session changed')); onChange(); return;
           }
+          if (kind === 'start' && (command.context.task_id !== task.id || task.responsible_user_id !== userId || task.is_completed)) {
+            fail(error(422, 'Fixture task is unavailable')); onChange(); return;
+          }
           const stopped = current ? { ...current, stopped_at: Math.floor(Date.now() / 1000) } : null;
           if (stopped) history.push(stopped);
-          current = command.action === 'stop' ? null : { id: `fixture-session-${++sequence}`, kind: command.action === 'work' ? 'work' : command.action === 'pause' ? 'pause' : 'activity', started_at: Math.floor(Date.now() / 1000), context: command.context };
+          const sessionContext = kind === 'start' ? {
+            client_id: command.context.client_id, task_id: task.id, task_name: task.text, task_type_id: task.task_type_id,
+            task_type_name: task.task_type_name, entity_type: task.entity_type, entity_id: task.entity_id, entity_name: task.entity_name,
+          } : command.context;
+          current = command.action === 'stop' ? null : { id: `fixture-session-${++sequence}`, kind: kind === 'start' || command.action === 'work' ? 'work' : command.action === 'pause' ? 'pause' : 'activity', started_at: Math.floor(Date.now() / 1000), context: sessionContext };
           done(command.action === 'stop' ? stopped : structuredClone(current));
         } else fail(error(404, `Unsupported fixture request ${path}`));
         onChange();

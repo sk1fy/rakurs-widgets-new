@@ -20,7 +20,7 @@ const flush = () => new Promise(setImmediate);
 
 function fixture(t) {
   const dom = new JSDOM('<div id="app"></div>', { url: 'https://crm.test/leads/detail/1', runScripts: 'outside-only', pretendToBeVisual: true });
-  const state = { enabled: true, ready: true, scenario: 'tasks', tasks: [{ id: '19', title: 'Task', url: '#task', dueTime: '10:00' }], dialogs: [], active: null, history: [], settings: {}, elapsedSeconds: 0, totalSeconds: 0 };
+  const state = { live: true, enabled: true, ready: true, scenario: 'tasks', tasks: [{ id: '19', title: 'Task', url: '#task', dueTime: '10:00' }], dialogs: [], active: null, history: [], settings: {}, elapsedSeconds: 0, totalSeconds: 0 };
   const pending = [];
   let listener;
   const controller = { getSnapshot: () => state, subscribe(fn) { listener = fn; return () => {}; }, selectScenario() {}, startTask(id) { return new Promise(resolve => pending.push({ id, resolve })); } };
@@ -31,39 +31,65 @@ function fixture(t) {
   return { dom, app, state, pending,
     click() { dom.window.document.querySelector('.rkrs-smart-action').click(); },
     update() { listener({ ...state }); },
+    confirm(index, url = '#confirmed') {
+      const command = pending[index];
+      state.active = { id: command.id, kind: 'tasks', url };
+      listener({ ...state });
+      command.resolve(true);
+    },
   };
 }
 
 test('queued start cannot redirect after route change', async t => {
   const f = fixture(t); f.click();
   f.dom.window.history.pushState({}, '', '/audit-other-card?tab=2#note');
-  f.pending[0].resolve(true); await flush();
+  f.confirm(0); await flush();
   assert.equal(f.dom.window.location.href, 'https://crm.test/audit-other-card?tab=2#note');
 });
 
 test('queued start cannot redirect after component unmount', async t => {
   const f = fixture(t); f.click(); f.app.unmount();
-  f.pending[0].resolve(true); await flush();
+  f.confirm(0); await flush();
   assert.equal(f.dom.window.location.href, 'https://crm.test/leads/detail/1');
 });
 
-test('current successful queued start opens the captured target', async t => {
+test('current successful queued start opens the confirmed card even with a stale queue URL', async t => {
   const f = fixture(t); f.click();
   f.state.tasks[0].url = '#changed';
-  f.pending[0].resolve(true); await flush();
-  assert.equal(f.dom.window.location.hash, '#task');
+  f.confirm(0); await flush();
+  assert.equal(f.dom.window.location.hash, '#confirmed');
 });
 
 test('a newer queued start supersedes the earlier one', async t => {
   const f = fixture(t); f.click();
   f.state.tasks = [{ id: '20', title: 'Next', url: '#next', dueTime: '10:00' }]; f.update(); await flush(); f.click();
-  f.pending[0].resolve(true); await flush();
+  f.confirm(0); await flush();
   assert.equal(f.dom.window.location.hash, '');
-  f.pending[1].resolve(true); await flush();
-  assert.equal(f.dom.window.location.hash, '#next');
+  f.confirm(1, '#next-confirmed'); await flush();
+  assert.equal(f.dom.window.location.hash, '#next-confirmed');
 });
 
 test('failed queued start leaves the route untouched', async t => {
   const f = fixture(t); f.click(); f.pending[0].resolve(false); await flush();
+  assert.equal(f.dom.window.location.hash, '');
+});
+
+test('a confirmed start with no card stays on the current route', async t => {
+  const f = fixture(t); f.click(); f.confirm(0, ''); await flush();
+  assert.equal(f.dom.window.location.hash, '');
+});
+
+test('only task start renders the start spinner while commands are busy', async t => {
+  const f = fixture(t);
+  const document = f.dom.window.document;
+  f.state.busy = true;
+  f.state.operation = 'command';
+  f.update(); await flush();
+  assert.equal(document.querySelector('.rkrs-task-spinner'), null);
+  f.state.operation = 'start_task';
+  f.update(); await flush();
+  assert.match(document.querySelector('.rkrs-task-starting').textContent, /Запускаем…/);
+  assert.ok(document.querySelector('.rkrs-task-spinner'));
+  assert.equal(document.querySelector('.rkrs-smart-action').disabled, true);
   assert.equal(f.dom.window.location.hash, '');
 });

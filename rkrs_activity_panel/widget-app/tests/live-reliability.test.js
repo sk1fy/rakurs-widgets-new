@@ -16,6 +16,21 @@ function fixture(t, options = {}) {
   return { sdk, controller, document: dom.window.document, click() { dom.window.document.querySelector('.js-complete-task span').click(); }, hide(value = true) { hidden = value; }, count(kind) { return sdk.requests.filter(r => r.kind === kind).length; } };
 }
 
+test('a confirmed task switch preserves the total and refreshes history on the next tick', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1800000600000 });
+  const f = fixture(t);
+  await flush();
+  assert.equal(f.controller.getSnapshot().totalSeconds, 600);
+  const historyReads = f.count('sessions');
+  assert.equal(await f.controller.startTask('19'), true);
+  assert.equal(f.controller.getSnapshot().totalSeconds, 600);
+  assert.equal(f.count('sessions'), historyReads);
+  f.controller.tick();
+  await flush();
+  assert.equal(f.controller.getSnapshot().totalSeconds, 600);
+  assert.ok(f.controller.getSnapshot().history.some(row => row.id === 'captured-work'));
+});
+
 for (const cache of [false, true]) {
   test(`initial state failure stays visible and recovers with ${cache ? 'cached disabled' : 'empty'} enrollment`, async t => {
     const dom = new JSDOM('', { url: 'https://crm.example.test/' });
@@ -226,7 +241,8 @@ for (const omission of [{ complete: false }, { stale: true }]) {
     assert.equal(state.tasks[0].completed, true);
     assert.equal(state.selectedTaskId, null, 'the confirmed task is not offered as next work');
     assert.equal(await f.controller.startTask('19'), false);
-    assert.deepEqual(f.sdk.commands.map(command => command.action), ['stop']);
+    assert.deepEqual(f.sdk.commands.map(command => command.action), ['stop', 'start_task']);
+    assert.equal(f.sdk.state().current, null);
   });
 }
 
@@ -381,3 +397,23 @@ for (const obsolete of ['hidden', 'disposed']) {
     assert.deepEqual(f.sdk.commands.map(command => command.action), ['stop']);
   });
 }
+
+
+test('task start waits for one authoritative command without requesting task detail', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1800000000000 });
+  const f = fixture(t, { current: null }); await flush();
+  const requests = f.sdk.requests.length;
+  f.sdk.hold('start');
+  const start = f.controller.startTask('19'); await flush();
+  assert.deepEqual(f.sdk.requests.slice(requests).map(row => [row.method, row.kind]), [['GET', 'token'], ['POST', 'start']]);
+  assert.equal(f.controller.getSnapshot().operation, 'start_task');
+  assert.equal(f.controller.getSnapshot().active, null);
+  f.sdk.task.entity_id = 99;
+  f.sdk.release('start');
+  assert.equal(await start, true);
+  assert.equal(f.controller.getSnapshot().operation, null);
+  assert.equal(f.controller.getSnapshot().active.url, '/leads/detail/99');
+  assert.equal(f.sdk.requests.length, requests + 2);
+  t.mock.timers.tick(90000); f.controller.tick(); await flush();
+  assert.ok(f.sdk.requests.slice(requests + 2).some(row => row.kind === 'sessions' && row.method === 'GET'));
+});

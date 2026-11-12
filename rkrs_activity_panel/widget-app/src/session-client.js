@@ -12,7 +12,7 @@ export function createActivitySessionClient({ baseURL, getToken, authorizedReque
   if (storage && storageKey) {
     try {
       const saved = JSON.parse(storage.getItem(storageKey) || 'null');
-      if (saved && /^[0-9a-f-]{36}$/i.test(saved.id) && ['work', 'activity', 'pause', 'stop'].includes(saved.body?.action)) pending = saved;
+      if (saved && /^[0-9a-f-]{36}$/i.test(saved.id) && ['start_task', 'work', 'activity', 'pause', 'stop'].includes(saved.body?.action)) pending = saved;
     } catch { /* Storage is optional; server state remains authoritative. */ }
   }
   function remember() {
@@ -83,8 +83,9 @@ export function createActivitySessionClient({ baseURL, getToken, authorizedReque
   }
   return {
     startTask(context, expectedSessionId) {
-      if (!Number.isSafeInteger(context?.task_id) || context.task_id <= 0) return Promise.reject(new Error('Real CRM task_id required'));
-      return command({ action: 'work', context, expected_session_id: expectedSessionId });
+      const { task_id, client_id } = context || {};
+      if (!Number.isSafeInteger(task_id) || task_id <= 0) return Promise.reject(new Error('Real CRM task_id required'));
+      return command({ action: 'start_task', context: { task_id, client_id }, expected_session_id: expectedSessionId });
     },
     startImbox(dialogId, context, expectedSessionId) {
       if (!String(dialogId).match(/^\d+$/)) return Promise.reject(new Error('Real Imbox dialog ID required'));

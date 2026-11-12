@@ -96,15 +96,20 @@ test('the panel never calls amoCRM from the browser', async () => {
   } finally { globalThis.fetch = original; }
 });
 
-test('live controller loads real CRM task and context, writes through SDK and restores interval', async () => {
+test('live controller writes a task ID through the SDK and uses the returned card', async () => {
   let current={}, written;
   const listeners=[];
-  const context={userId:7,widget:{$authorizedAjax(options){const result={done(fn){queueMicrotask(()=>{let value;if(options.url.endsWith('/state'))value={current,enabled:true,settings:{consider_future_tasks:true}};else if(options.method==='GET')value={items:[]};else {written=JSON.parse(options.data);current={id:'session',kind:'work',started_at:100,context:written.context};value=current;}fn(value);});return result;},fail(){return result;}};return result;}}};
+  const context={userId:7,widget:{$authorizedAjax(options){const result={done(fn){queueMicrotask(()=>{let value;if(options.url.endsWith('/state'))value={current,enabled:true,settings:{consider_future_tasks:true}};else if(options.method==='GET')value={items:[]};else {written=JSON.parse(options.data);current={id:'session',kind:'work',started_at:100,context:{...written.context, entity_name:'Real deal', entity_type:'leads', entity_id:12}};value=current;}fn(value);});return result;},fail(){return result;}};return result;}}};
   const fetchImpl=async url=>({ok:true,status:200,json:async()=>url.includes('tasks?')?{_embedded:{tasks:[{id:19,responsible_user_id:7,text:'CRM task',task_type_id:1,complete_till:200}]}}:url.endsWith('tasks/19')?{id:19,responsible_user_id:7,text:'CRM task',task_type_id:1,entity_type:'leads',entity_id:12}:url.endsWith('leads/12')?{name:'Real deal',pipeline_id:2,status_id:3}:url.includes('pipelines')?{name:'Sales',_embedded:{statuses:[{id:3,name:'New',color:'#fff'}]}}:{_embedded:{task_types:[{id:1,name:'Call'}]}}});
   const controller=createLiveActivityController({context,apiOrigin:'https://api.example.test',appOrigin:'https://panel.example.test',fetchImpl,documentImpl:{querySelectorAll(){return[];}},locationImpl:{pathname:'/'}});
   await new Promise(resolve=>{const unsubscribe=controller.subscribe(state=>{listeners.push(state);if(!state.busy && state.tasks.length){unsubscribe();resolve();}});});
   assert.equal(controller.getSnapshot().tasks[0].title,'CRM task');
-  await controller.startTask('19');assert.equal(written.context.entity_name,'Real deal');assert.equal(written.context.status_name,'New');assert.equal(written.expected_session_id,'');assert.equal(controller.getSnapshot().active.id,'19');controller.dispose();
+  assert.equal(await controller.startTask('19'), true);
+  assert.match(written.context.client_id, /^[0-9a-f-]{36}$/i);
+  assert.deepEqual(written, { action: 'start_task', context: { task_id: 19, client_id: written.context.client_id }, expected_session_id: '' });
+  assert.equal(controller.getSnapshot().active.id, '19');
+  assert.equal(controller.getSnapshot().active.url, '/leads/detail/12');
+  controller.dispose();
 });
 
 test('Imbox route transition records visible dialog and only closes its own interval', async () => {
@@ -195,6 +200,13 @@ function employeeFixture({ enabled = true, failState = 0, failStop = 0, failPatc
       const command = JSON.parse(options.data); writes.push({ command, id: options.headers['Idempotency-Key'] });
       if (command.action === 'stop' && failStop-- > 0) return onFailure({ status: 503 });
       if (command.action === 'stop') { current = {}; return fn({ id: command.session_id, stopped_at: 200 }); }
+      if (command.action === 'start_task') {
+        if (command.context.task_id !== task.id) return onFailure({ status: 404 });
+        if (task.responsible_user_id !== 7) return onFailure({ status: 403, responseJSON: { error: { code: 'permission_denied' } } });
+        if (task.is_completed) return onFailure({ status: 422 });
+        current = { id: 'new-session', kind: 'work', started_at: 200, context: { ...command.context, task_name: task.text } };
+        return fn(current);
+      }
       current = { id: 'new-session', kind: command.action, started_at: 200, context: command.context };
       fn(current);
     }); return request; }, fail(fn) { onFailure = fn; return request; }, abort() {} };
@@ -231,14 +243,17 @@ test('disabled panel blocks every new mutation and CRM completion, but allows st
   assert.equal(controller.getSnapshot().active, null); controller.dispose();
 });
 
-test('own queue and task preflight reject other responsible users; comments are not a completed counter', async () => {
+test('the server rejects another employee’s task start and completion; comments are not a completed counter', async () => {
   const fixture = employeeFixture({ initial: { responsible_user_id: 8 }, rows: [{ id: 19, responsible_user_id: 8 }, { id: 20, responsible_user_id: 7, complete_till: 200 }, { id: 21, responsible_user_id: 7, is_completed: true }] });
   const controller = fixture.create(); await idle(controller);
   assert.deepEqual(controller.getSnapshot().tasks.map(row => row.id), ['20']);
   assert.equal(controller.getSnapshot().completedCount, null);
   assert.equal(await controller.startTask('19'), false);
+  assert.match(controller.getSnapshot().error, /Нет доступа/);
   await controller.refresh(); assert.equal(await controller.completeTask('19', 'Done'), false);
-  assert.equal(fixture.writes.length, 0); assert.equal(fixture.patches.length, 0); controller.dispose();
+  assert.deepEqual(fixture.writes.map(row => row.command.action), ['start_task']);
+  assert.equal(controller.getSnapshot().active.serverId, 'server-work');
+  assert.equal(fixture.patches.length, 0); controller.dispose();
 });
 
 test('CRM completion records the result and stops the captured interval', async () => {

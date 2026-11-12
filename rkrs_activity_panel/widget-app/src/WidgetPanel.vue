@@ -66,7 +66,8 @@ const activeTask = computed(
 const activeTaskView = computed(() => {
   if (!activeTask.value) return null;
   const { id, title, entityName, url } = state.value.active;
-  return state.value.tasks.find((task) => task.id === id) || { id, title, entityName, url };
+  const queued = state.value.tasks.find((task) => task.id === id);
+  return { ...(queued || { id, title, entityName }), url: state.value.live ? url : (queued?.url ?? url) };
 });
 const queue = computed(() =>
   pending.value.filter((task) => task.id !== activeTaskView.value?.id)
@@ -104,7 +105,8 @@ const smartReady = computed(() =>
   activeTask.value ? Boolean(activeTaskView.value.url)
     : available.value && Boolean(upcoming.value) && (view.value === "tasks" || running.value)
 );
-const canSmart = computed(() => smartReady.value && (activeTask.value || canMutate.value));
+const startingTask = computed(() => state.value.operation === "start_task");
+const canSmart = computed(() => !startingTask.value && smartReady.value && (activeTask.value || canMutate.value));
 const smartTitle = computed(() =>
   activeTask.value ? "Перейти к активной задаче"
     : !upcoming.value ? "Нет задач для выполнения"
@@ -209,12 +211,13 @@ async function startQueued(task) {
   if (!canMutate.value) return;
   const intent = ++queuedStartIntent;
   const origin = window.location.href;
-  const target = task.url;
   close(false);
   if (state.value.scenario !== "tasks") props.controller.selectScenario("tasks");
   const started = await props.controller.startTask(task.id);
-  if (started === true && mounted && intent === queuedStartIntent && window.location.href === origin && target && window.location.pathname !== target)
-    window.location.href = target;
+  if (started !== true || !mounted || intent !== queuedStartIntent || window.location.href !== origin) return;
+  const confirmed = activeTaskView.value;
+  if (confirmed?.id === task.id && confirmed.url && window.location.pathname !== confirmed.url)
+    window.location.href = confirmed.url;
 }
 function smartAction() {
   if (activeTask.value) window.location.href = activeTaskView.value.url;
@@ -439,13 +442,16 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="rkrs-smart-action"
-            :class="{ 'rkrs-start': !activeTask, 'rkrs-off': !smartReady }"
-            :aria-label="smartTitle"
-            :title="smartTitle"
+            :class="{ 'rkrs-start': !activeTask, 'rkrs-off': !smartReady && !startingTask, 'rkrs-starting': startingTask }"
+            :aria-label="startingTask ? 'Запускаем…' : smartTitle"
+            :title="startingTask ? 'Запускаем…' : smartTitle"
             :disabled="!canSmart"
             @click="smartAction"
           >
-            <WidgetIcon :name="activeTask ? 'goto' : 'play'" :size="24" />
+            <span v-if="startingTask" class="rkrs-task-starting" role="status">
+              <span class="rkrs-task-spinner" aria-hidden="true" />Запускаем…
+            </span>
+            <WidgetIcon v-else :name="activeTask ? 'goto' : 'play'" :size="24" />
           </button>
         </div>
       </div>
