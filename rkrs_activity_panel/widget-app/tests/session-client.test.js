@@ -15,7 +15,7 @@ test("network retry preserves command identity but gets a fresh disposable JWT",
 });
 test("stop carries the acknowledged session ID and result, with no client actor override", async()=>{
  const bodies=[];const client=createActivitySessionClient({baseURL:"https://api.example.test",getToken:async()=>"jwt",fetchImpl:async(_,o)=>{const body=JSON.parse(o.body);bodies.push(body);return {ok:true,json:async()=>({id:"server-session",stopped_at:body.action==="stop"?100:0})};}});
- await client.startTask({task_id:8,entity_id:9,entity_type:"leads"}, "");await client.stopSession("server-session", "Done");assert.equal(bodies[1].session_id,"server-session");assert.equal(bodies[1].context.task_result,"Done");assert.equal(bodies[0].employee_id,undefined);assert.equal(client.getState().pending,false);client.dispose();
+ await client.startTask({task_id:8,entity_id:9,entity_type:"leads"}, "");await client.stopSession("server-session", "Done");assert.equal(bodies[1].session_id,"server-session");assert.equal(bodies[1].context.task_result,"Done");assert.deepEqual(bodies[0],{action:'start_task',context:{task_id:8},expected_session_id:''});assert.equal(client.getState().pending,false);client.dispose();
 });
 test('SDK transport uses the explicit controller session identity', async () => {
   const calls=[];
@@ -46,6 +46,7 @@ test('pending identity survives reload and a state read without storing credenti
   await second.retryPending();
   assert.equal(calls[0].headers['Idempotency-Key'], calls[2].headers['Idempotency-Key']);
   assert.equal(calls[0].data, calls[2].data);
+  assert.equal(JSON.parse(calls[2].data).action, 'start_task');
   assert.equal(values.has('employee-7'), false);
   assert.ok(!JSON.stringify([...values]).includes('jwt'));
   second.dispose();
@@ -103,5 +104,20 @@ test('late state is transport data only and explicit CAS is required for every s
   await assert.rejects(client.startTask({ task_id: 3 }), /Explicit expected session ID/);
   assert.equal(client.getState().pending, false);
   assert.equal(client.stop, undefined);
+  client.dispose();
+});
+
+
+test('a persisted legacy work command retries with its original body and key', async () => {
+  const id = 'a0ee1dca-76a6-4720-b1dc-c6a0ba52c07e';
+  const body = { action: 'work', context: { task_id: 19, entity_id: 12, entity_type: 'leads' }, expected_session_id: '' };
+  const storage = { getItem: () => JSON.stringify({ id, body }), removeItem() {} };
+  let command;
+  const client = createActivitySessionClient({ baseURL: 'https://api.example.test', storage, storageKey: 'employee-7', authorizedRequest: async options => { command = options; return { id: 'acknowledged' }; } });
+  assert.equal(client.getState().pending, true);
+  await client.retryPending();
+  assert.equal(command.headers['Idempotency-Key'], id);
+  assert.deepEqual(JSON.parse(command.data), body);
+  assert.equal(client.getState().pending, false);
   client.dispose();
 });

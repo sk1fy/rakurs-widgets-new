@@ -390,6 +390,17 @@
   background: var(--rkrs-blue);
   color: #fff !important;
 }
+.rkrs-task-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-inline-end-color: transparent;
+  border-radius: 50%;
+  animation: rkrs-task-spin 700ms linear infinite;
+}
+@keyframes rkrs-task-spin {
+  to { transform: rotate(360deg); }
+}
 .rkrs-smart-action:hover:not(:disabled) {
   background: #4a97f0;
 }
@@ -997,6 +1008,9 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .rkrs-task-spinner {
+    animation: none;
+  }
   .rkrs-widget button {
     transition: none;
   }

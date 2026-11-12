@@ -32,7 +32,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     view = { ...view, ...patch };
     try { prefs?.setItem(viewKey, JSON.stringify(view)); } catch { /* Preferences stay in memory. */ }
   }
-  const state = { live: true, enabled: view.enabled === true, ready: false, completion: null, busy: false, scenario: 'tasks', tasks: [], dialogs: [], selectedTaskId: null, active: null, history: [], settings: { compact: view.compact === true }, error: '', readWarning: '', historyStale: true, recoveryRequired: false, queue: { complete: true, stale: false, fetchedAt: 0, warning: false, note: '' }, elapsedSeconds: 0, totalSeconds: 0, completedCount: null };
+  const state = { live: true, enabled: view.enabled === true, ready: false, completion: null, operation: null, get busy() { return this.operation !== null; }, scenario: 'tasks', tasks: [], dialogs: [], selectedTaskId: null, active: null, history: [], settings: { compact: view.compact === true }, error: '', readWarning: '', historyStale: true, recoveryRequired: false, queue: { complete: true, stale: false, fetchedAt: 0, warning: false, note: '' }, elapsedSeconds: 0, totalSeconds: 0, completedCount: null };
   let ownTaskIds = new Set(), disposed = false, lastSync = 0, lastTasks = 0, tasksRetryAt = 0, tasksFailures = 0, serverSettings = {}, client, lastDialog = null, dialogTransition = null, queueLead = '', closedSeconds = 0, dayStart = 0;
   let revision = 0, managementPending = false, stateReadStatus = 'accepted', errorSource = '', invalidationQueued = false;
   const reads = Object.fromEntries(['state', 'history', 'queue'].map(name => [name, { token: 0, current: null }]));
@@ -366,12 +366,12 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     if (state.active?.kind === 'tasks' && !rows.some(row => String(row.id) === state.active.id)) await reconcileCompletedTask(state.active.id);
     return true;
   }
-  async function run(action) {
+  async function run(action, operation = 'command') {
     if (disposed || state.busy || !client) return false;
     if (!clientId) await identityReady;
     if (disposed || state.busy || !clientId) return false;
     invalidateReads();
-    state.busy = true; state.error = ''; errorSource = ''; emit();
+    state.operation = operation; state.error = ''; errorSource = ''; emit();
     try { return await action() !== false && !disposed; }
     catch (error) {
       if (!disposed) {
@@ -385,22 +385,13 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       return false;
     } finally {
       invalidateReads();
-      if (!disposed) { state.busy = false; scanDOM(); emit(); refreshProjections(); if (stateReadStatus !== 'accepted') void refreshBackground(false); }
+      if (!disposed) {
+        state.operation = null;
+        scanDOM(); emit();
+        if (operation !== 'start_task') refreshProjections();
+        if (stateReadStatus !== 'accepted') void refreshBackground(false);
+      }
     }
-  }
-  async function taskContext(id) {
-    const task = await client.loadTask(Number(id), { context: true });
-    assertOwnedTask(task, id);
-    if (task.is_completed) { lastTasks = 0; throw new Error('Задача уже завершена. Обновите очередь.'); }
-    const value = { client_id: clientId, task_id: task.id, task_name: task.text || '', task_type_id: task.task_type_id, entity_id: task.entity_id, entity_type: task.entity_type };
-    const entity = task.entity;
-    // The card summary is best effort on the server; without it only IDs are recorded.
-    if (['leads','contacts','companies','customers'].includes(task.entity_type) && task.entity_id && entity?.id === task.entity_id) {
-      Object.assign(value, { entity_name: entity.name, pipeline_id: entity.pipeline_id || 0, status_id: entity.status_id || 0 });
-      if (entity.pipeline_id) Object.assign(value, { pipeline_name: entity.pipeline_name || '', status_name: entity.status_name || '', status_color: entity.status_color || '' });
-    }
-    value.task_type_name = task.task_type_name || '';
-    return value;
   }
   function scanDOM() {
     if (disposed) return;
@@ -517,7 +508,17 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   const controller = {
     getSnapshot: snapshot, subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     selectScenario(value) { state.scenario = value; emit(); }, selectTask(id) { state.selectedTaskId = id; emit(); },
-    startTask(id = state.selectedTaskId) { return run(async () => { assertAvailable(); publishReceipt(await client.startTask(await taskContext(id), state.active?.serverId || '')); }); },
+    startTask(id = state.selectedTaskId) { return run(async () => {
+      assertAvailable();
+      const previous = state.active;
+      const receipt = await client.startTask({ task_id: Number(id), client_id: clientId }, previous?.serverId || '');
+      if (previous && previous.kind !== 'pause' && dayStart && !state.history.some(row => row.id === previous.serverId)) {
+        const closedAt = receipt.started_at * 1000;
+        closedSeconds += Math.max(0, Math.floor((closedAt - Math.max(previous.startedAt, dayStart)) / 1000));
+      }
+      reads.history.nextAt = 0;
+      publishReceipt(receipt);
+    }, 'start_task'); },
     startOther(name) { return run(async () => { assertAvailable(); name = validateText(name, 'Название активности', true); publishReceipt(await client.startActivity(name, { client_id: clientId }, state.active?.serverId || '')); }); },
     startImbox(id) { return run(async () => { assertAvailable(); await startImboxSession(id); lastDialog = String(id); }); },
     pause() { return run(async () => { assertAvailable(); publishReceipt(await client.startPause(state.active?.serverId || '')); }); },
@@ -626,7 +627,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       if (!state.busy && !documentImpl.hidden && !client.getState().pending && !state.recoveryRequired) {
         if (Date.now()-lastSync >= 90000) void refreshBackground(false);
         if (state.ready && !state.completion && Date.now()-lastTasks >= 60000 && Date.now() >= tasksRetryAt) void loadTasks();
-        if (state.ready && Date.now() >= reads.history.nextAt && dayKey(parts(dayStart || Date.now())) !== dayKey(parts(Date.now()))) void loadHistory();
+        if (state.ready && Date.now() >= reads.history.nextAt && (state.historyStale || dayKey(parts(dayStart || Date.now())) !== dayKey(parts(Date.now())))) void loadHistory();
       }
     },
     dispose() { disposed = true; clientIdentity.dispose(); invalidateReads(); confirmedCompletions.clear(); try { channel?.close(); } catch { /* Already closed. */ } documentImpl.removeEventListener?.('visibilitychange', onVisible); windowRef?.removeEventListener?.('focus', onVisible); documentImpl.removeEventListener?.('click', onNativeComplete, true); documentImpl.removeEventListener?.('click', onCardClick, true); requests.forEach(request => { try { request.abort?.(); } catch { /* Continue disposing other SDK requests. */ } }); requests.clear(); client?.dispose(); documentImpl.querySelectorAll?.('.feed-note-wrapper-task[data-id]').forEach(clearCardAction); listeners.clear(); },
