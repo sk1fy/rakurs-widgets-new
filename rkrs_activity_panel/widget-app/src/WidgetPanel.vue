@@ -10,6 +10,7 @@ import {
 import TaskQueueRow from "./TaskQueueRow.vue";
 import WidgetIcon from "./WidgetIcon.vue";
 import WidgetSettings from "./WidgetSettings.vue";
+import WidgetToast from "./WidgetToast.vue";
 
 const props = defineProps({
   controller: { type: Object, required: true },
@@ -18,6 +19,7 @@ const props = defineProps({
 const state = shallowRef(props.controller.getSnapshot());
 let mounted = false, queuedStartIntent = 0;
 const panel = ref(null);
+const toasts = ref(null);
 const popover = ref(null);
 const open = ref(null);
 const queueTab = ref("timed");
@@ -130,6 +132,22 @@ const imboxTitle = computed(() =>
 const timerCaption = computed(() =>
   paused.value ? "время на паузе" : view.value === "imbox" ? "время в imbox" : "время в задаче"
 );
+const operationPending = computed(() => Boolean(state.value.pending || state.value.completion));
+const panelError = computed(() => {
+  if (props.settingsOnly) return state.value.live ? state.value.error : "";
+  if (state.value.error) return state.value.error;
+  if (state.value.busy) return "";
+  if (operationPending.value) return "Нужно восстановить предыдущую операцию.";
+  if (state.value.recoveryRequired || state.value.stateReadStatus === "failed")
+    return "Состояние изменилось. Обновите данные.";
+  return "";
+});
+const readWarning = computed(() =>
+  !props.settingsOnly && state.value.readWarning !== panelError.value ? state.value.readWarning : ""
+);
+const recoveryLabel = computed(() =>
+  operationPending.value ? "Восстановить операцию" : "Обновить данные"
+);
 let unsubscribe;
 let eventRoot;
 let eventDocument;
@@ -181,7 +199,7 @@ function keydown(event) {
 function outside(event) {
   if (!open.value) return;
   const path = event.composedPath();
-  if (!path.includes(popover.value) && !path.includes(lastTrigger))
+  if (!path.includes(popover.value) && !path.includes(lastTrigger) && !path.includes(toasts.value))
     close(false);
 }
 function selectScenario(kind) {
@@ -249,7 +267,9 @@ async function complete() {
 async function recover() {
   const completing = Boolean(state.value.completion);
   const result = await props.controller.refresh();
-  if (result !== false && completing && !state.value.completion && !state.value.pending && open.value === "complete") close();
+  if (result === false) return;
+  if (open.value === "more" || (open.value === "complete" && completing && !operationPending.value))
+    close();
 }
 onMounted(() => {
   mounted = true;
@@ -291,7 +311,6 @@ onBeforeUnmount(() => {
         <h2>Настройки панели активности</h2>
         <span v-if="!state.live" class="rkrs-demo">ДЕМО</span>
       </div>
-      <p v-if="state.live && state.error" class="rkrs-error" role="alert">{{ state.error }}</p>
       <WidgetSettings :controller="controller" :snapshot="state" />
     </template>
     <template v-else>
@@ -455,14 +474,6 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </div>
-      <p v-if="state.readWarning" class="rkrs-queue-note rkrs-queue-warning" role="status">{{ state.readWarning }}</p>
-      <p v-if="state.historyStale" class="rkrs-queue-note" role="status">Итог дня уточняется</p>
-      <p v-if="state.error || (!state.busy && (state.pending || state.completion || state.recoveryRequired || state.stateReadStatus === 'failed'))" class="rkrs-error" role="alert">
-        {{ state.error || (state.pending || state.completion ? "Нужно восстановить предыдущую операцию." : "Состояние изменилось. Обновите данные.") }}
-        <button v-if="state.live" type="button" class="rkrs-button" :disabled="state.busy" @click="recover">
-          {{ state.pending || state.completion ? "Восстановить операцию" : "Обновить данные" }}
-        </button>
-      </p>
       <div
         v-if="
           running &&
@@ -541,6 +552,15 @@ onBeforeUnmount(() => {
           </button>
         </template>
         <template v-else-if="open === 'more'">
+          <button
+            v-if="state.live && panelError"
+            type="button"
+            class="rkrs-menu-item"
+            :disabled="state.busy"
+            @click="recover"
+          >
+            <WidgetIcon name="refresh" :size="16" />{{ recoveryLabel }}
+          </button>
           <button
             v-if="view === 'tasks' || activeTask"
             type="button"
@@ -675,4 +695,12 @@ onBeforeUnmount(() => {
       </div>
     </template>
   </section>
+  <div ref="toasts" class="rkrs-toast-stack">
+    <WidgetToast :message="panelError" error>
+      <button v-if="state.live && !settingsOnly" type="button" :disabled="state.busy" @click="recover">
+        {{ recoveryLabel }}
+      </button>
+    </WidgetToast>
+    <WidgetToast :message="readWarning" />
+  </div>
 </template>
