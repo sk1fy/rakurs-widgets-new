@@ -22,7 +22,14 @@ function mount(t, { cachedDisabled = false, pending = false, ...options } = {}) 
   const app = window.RkrsActivityPrototype;
   app.mountPanel({ widget: sdk.widget, accountId, userId });
   t.after(() => { app.unmountAll(sdk.widget); dom.window.close(); });
-  return { sdk, panel: () => window.document.querySelector('[data-rkrs-prototype-surface="panel"]')?.shadowRoot, place: () => clocks.forEach(fn => fn()) };
+  return {
+    sdk,
+    panel: () => window.document.querySelector('[data-rkrs-prototype-surface="panel"]')?.shadowRoot,
+    place: () => clocks.forEach(fn => fn()),
+    afterTransition: () => new Promise(resolve => {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
+    }),
+  };
 }
 
 for (const cachedDisabled of [false, true]) for (const failure of ['state', 'authorization']) {
@@ -33,13 +40,15 @@ for (const cachedDisabled of [false, true]) for (const failure of ['state', 'aut
     const error = f.panel()?.querySelector('[role="alert"]');
     assert.ok(error, 'failed initialization restores the real Vue panel');
     assert.match(error.textContent, failure === 'state' ? /Fixture state unavailable/ : /Fixture authorization failed/);
-    const retry = error.querySelector('button');
+    assert.equal(error.closest('.rkrs-widget'), null, 'notifications stay outside the measured panel');
+    const retry = error.closest('.rkrs-toast').querySelector('button');
     assert.equal(retry.textContent.trim(), 'Обновить данные');
     assert.equal(retry.disabled, false);
     f.sdk.setEnabled(!cachedDisabled); retry.click(); await flush(); f.place(); await flush();
     if (cachedDisabled) assert.equal(f.panel(), undefined, 'accepted disabled idle state removes the panel');
     else {
       assert.ok(f.panel());
+      await f.afterTransition();
       assert.equal(f.panel().querySelector('[role="alert"]'), null);
       assert.match(f.panel().textContent, /Проверить предложение/);
     }
@@ -61,7 +70,7 @@ test('accepted disabled employee with a pending command keeps the mounted recove
   const f = mount(t, { enabled: false, pending: true });
   await flush(); f.place(); await flush();
   assert.ok(f.panel());
-  const recovery = f.panel().querySelector('[role="alert"] button');
+  const recovery = f.panel().querySelector('.rkrs-toast button');
   assert.ok(recovery);
   assert.equal(recovery.textContent.trim(), 'Восстановить операцию');
   assert.equal(recovery.disabled, false);

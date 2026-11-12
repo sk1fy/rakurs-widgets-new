@@ -3,6 +3,7 @@ defineProps({ name: String, size: { type: Number, default: 18 } });
 const paths = {
   chevron: "m6 9 6 6 6-6",
   tasks: "M9 5h11M9 12h11M9 19h11M3 5h.01M3 12h.01M3 19h.01",
+  refresh: "M20 7v5h-5M4 17v-5h5m10.4-4A8 8 0 0 0 5 7m14 10a8 8 0 0 1-14.4-1",
   history: "M3 11a9 9 0 1 1 2.7 7M3 4v7h7M12 7v5l3 2",
   settings:
     "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8M9 3h6l.7 3 2.7 1 2.6 2-1.4 3 .4 3-2.4 2-1.1 3h-3l-2.5 1-2.5-2-3-1v-3L3 12l1.5-2.5V7l3-1Z",

@@ -448,19 +448,61 @@
 .rkrs-icon-button:hover {
   color: #fff !important;
 }
-.rkrs-error {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  padding: 9px 20px !important;
-  background: #4d2836;
-  color: #ffd8de;
-  font-size: 12px;
-  z-index: 1;
+.rkrs-toast-stack {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  width: min(360px, calc(100vw - 40px));
+  pointer-events: none;
 }
-.rkrs-error .rkrs-button {
-  margin-left: 12px !important;
+.rkrs-toast {
+  box-sizing: border-box;
+  max-width: 100%;
+  padding: 12px 18px;
+  border: 1px solid #f0d397;
+  border-radius: 8px;
+  background: #fff8e7;
+  color: #734800;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font: 14px/1.35 "PT Sans", Arial, sans-serif;
+  overflow-wrap: anywhere;
+}
+.rkrs-toast-error {
+  background: #fff1f0;
+  color: #b42318;
+  border-color: #ffd0cc;
+}
+.rkrs-toast button {
+  display: block;
+  margin-top: 8px;
+  padding: 4px 8px;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.rkrs-toast button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .rkrs-toast-enter-active,
+  .rkrs-toast-leave-active {
+    transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+  .rkrs-toast-enter-from,
+  .rkrs-toast-leave-to {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
 }
 .rkrs-active-note {
   position: absolute;
@@ -471,9 +513,6 @@
   background: var(--rkrs-card);
   color: #bacddd;
   font-size: 11px;
-}
-.rkrs-error + .rkrs-active-note {
-  top: calc(100% + 36px);
 }
 
 /* Dropdowns stay flush with the panel, as amoCRM's own top menus do. */
