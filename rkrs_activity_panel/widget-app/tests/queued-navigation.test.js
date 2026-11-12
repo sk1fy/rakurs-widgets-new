@@ -88,7 +88,7 @@ test('only task start renders the start spinner while commands are busy', async 
   assert.equal(document.querySelector('.rkrs-task-spinner'), null);
   f.state.operation = 'start_task';
   f.update(); await flush();
-  assert.match(document.querySelector('.rkrs-task-starting').textContent, /Запускаем…/);
+  assert.equal(document.querySelector('.rkrs-summary-status').textContent, 'Запускаем…');
   assert.ok(document.querySelector('.rkrs-task-spinner'));
   assert.equal(document.querySelector('.rkrs-smart-action').disabled, true);
   assert.equal(f.dom.window.location.hash, '');

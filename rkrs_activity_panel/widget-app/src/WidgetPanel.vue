@@ -115,7 +115,8 @@ const smartTitle = computed(() =>
     : "Начать следующую задачу"
 );
 const statusText = computed(() =>
-  activeTask.value ? "В работе"
+  startingTask.value ? "Запускаем…"
+    : activeTask.value ? "В работе"
     : paused.value ? `Пауза · ${duration(state.value.elapsedSeconds)}`
     : running.value ? "Идёт учёт"
     : "Следующая задача"
@@ -323,6 +324,7 @@ onBeforeUnmount(() => {
                 </button>
                 <span
                   class="rkrs-summary-status"
+                  aria-live="polite"
                   :title="running ? `Время в работе: ${duration(state.elapsedSeconds)}` : undefined"
                   >{{ statusText }}</span
                 >
@@ -435,22 +437,20 @@ onBeforeUnmount(() => {
               </button>
             </div>
             <div class="rkrs-timer-block">
-              <span class="rkrs-timer-caption">{{ timerCaption }}</span
+              <span class="rkrs-timer-caption" aria-live="polite">{{ startingTask ? "Запускаем…" : timerCaption }}</span
               ><span class="rkrs-timer-value" role="timer" aria-label="Время текущей активности">{{ duration(state.elapsedSeconds) }}</span>
             </div>
           </template>
           <button
             type="button"
             class="rkrs-smart-action"
-            :class="{ 'rkrs-start': !activeTask, 'rkrs-off': !smartReady && !startingTask, 'rkrs-starting': startingTask }"
+            :class="{ 'rkrs-start': !activeTask, 'rkrs-off': !smartReady && !startingTask }"
             :aria-label="startingTask ? 'Запускаем…' : smartTitle"
             :title="startingTask ? 'Запускаем…' : smartTitle"
             :disabled="!canSmart"
             @click="smartAction"
           >
-            <span v-if="startingTask" class="rkrs-task-starting" role="status">
-              <span class="rkrs-task-spinner" aria-hidden="true" />Запускаем…
-            </span>
+            <span v-if="startingTask" class="rkrs-task-spinner" aria-hidden="true" />
             <WidgetIcon v-else :name="activeTask ? 'goto' : 'play'" :size="24" />
           </button>
         </div>
