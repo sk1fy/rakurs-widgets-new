@@ -11,8 +11,19 @@ const cardActions = {
 };
 const entityUrl = (type, id) => (['leads', 'contacts', 'companies', 'customers'].includes(type) && id ? `/${type}/detail/${id}` : '');
 
-// authorizedAjax caches tokens; Core requires a fresh disposable JWT for each call.
-export function createLiveActivityController({ context, apiOrigin, appOrigin, documentImpl = document, locationImpl = location, storageImpl, broadcastImpl = globalThis.BroadcastChannel, locksImpl = globalThis.navigator?.locks }) {
+const manualRequest = { usePrefetchedToken: true };
+
+function isFreshToken(token) {
+  const parts = token?.split('.') || [];
+  if (parts.length !== 3 || !parts.every(part => /^[A-Za-z0-9_-]+$/.test(part))) return false;
+  try {
+    const { exp } = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return Number.isFinite(exp) && exp * 1000 > Date.now() + 5000;
+  } catch { return false; }
+}
+
+// authorizedAjax caches tokens; Core requires an unused disposable JWT for each call.
+export function createLiveActivityController({ context, apiOrigin, appOrigin, tokenSlot, documentImpl = document, locationImpl = location, storageImpl, broadcastImpl = globalThis.BroadcastChannel, locksImpl = globalThis.navigator?.locks }) {
   const listeners = new Set();
   let storage = storageImpl;
   try { if (storage === undefined && Number(context.accountId) > 0 && Number(context.userId) > 0) storage = globalThis.sessionStorage; } catch { /* Browser storage can be disabled. */ }
@@ -116,32 +127,64 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   const hidden = () => Boolean(client) && !state.enabled && !state.active && !state.completion && !client.getState().pending && !state.recoveryRequired && !(errorSource === 'state' && !state.ready && state.error);
   const snapshot = () => structuredClone({ ...state, readWarning: [state.readWarning, identityWarning].filter(Boolean).join(' · '), invalidated: stateReadStatus !== 'accepted', stateReadStatus, pending: client?.getState().pending || false, hidden: hidden() });
   const emit = () => { if (!disposed) listeners.forEach(fn => fn(snapshot())); };
-  const sdkRequest = options => new Promise((resolve, reject) => {
-    if (disposed) return reject(new Error('Виджет закрыт'));
+  function assertOpen() {
+    if (disposed) throw new Error('Виджет закрыт');
+  }
+  function sdkAuth() {
     const ajax = context.widget.$?.ajax || globalThis.jQuery?.ajax || globalThis.$?.ajax;
     const clientUUID = context.widget.get_settings?.().oauth_client_uuid;
-    if (typeof ajax !== 'function' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientUUID || '')) return reject(new Error('Недоступна авторизация amoCRM: нет OAuth UUID интеграции'));
-    const fail = xhr => {
-      const code = xhr?.responseJSON?.error?.code;
-      const error = new Error(errorMessages[code] || xhr?.responseJSON?.error?.message || 'Не удалось получить данные Activity');
-      error.status = xhr?.status;
-      error.code = code;
-      error.retryAfter = Number(xhr?.getResponseHeader?.('Retry-After')) || 0;
-      reject(error);
-    };
-    const tokenRequest = ajax({ url: `/ajax/v2/integrations/${encodeURIComponent(clientUUID)}/disposable_token`, method: 'GET', dataType: 'json', cache: false, timeout: 20000 });
-    requests.add(tokenRequest);
-    tokenRequest.done(value => {
-      requests.delete(tokenRequest);
-      if (disposed) return reject(new Error('Виджет закрыт'));
-      if (typeof value?.token !== 'string' || !value.token) return reject(new Error('Не получен токен amoCRM'));
+    if (typeof ajax !== 'function' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientUUID || '')) throw new Error('Недоступна авторизация amoCRM: нет OAuth UUID интеграции');
+    return { ajax, clientUUID };
+  }
+  function trackedAjax(ajax, options) {
+    assertOpen();
+    return new Promise((resolve, reject) => {
       let request;
-      try { request = ajax({ ...options, type: options.method, timeout: 20000, processData: false, xhrFields: { withCredentials: false }, headers: { ...options.headers, 'X-Auth-Token': value.token } }); }
+      try { request = ajax(options); }
       catch { return reject(new Error('Не удалось отправить запрос Activity')); }
       requests.add(request);
-      request.done(result => { requests.delete(request); if (disposed) reject(new Error('Виджет закрыт')); else resolve(result); }).fail(xhr => { requests.delete(request); fail(xhr); });
-    }).fail(xhr => { requests.delete(tokenRequest); fail(xhr); });
-  });
+      request.done(result => {
+        requests.delete(request);
+        if (disposed) reject(new Error('Виджет закрыт')); else resolve(result);
+      }).fail(xhr => {
+        requests.delete(request);
+        const code = xhr?.responseJSON?.error?.code;
+        const error = new Error(errorMessages[code] || xhr?.responseJSON?.error?.message || 'Не удалось получить данные Activity');
+        error.status = xhr?.status;
+        error.code = code;
+        error.retryAfter = Number(xhr?.getResponseHeader?.('Retry-After')) || 0;
+        reject(error);
+      });
+    });
+  }
+  async function freshToken({ ajax, clientUUID }) {
+    const value = await trackedAjax(ajax, { url: `/ajax/v2/integrations/${encodeURIComponent(clientUUID)}/disposable_token`, method: 'GET', dataType: 'json', cache: false, timeout: 20000 });
+    if (typeof value?.token !== 'string' || !value.token) throw new Error('Не получен токен amoCRM');
+    return value.token;
+  }
+  function prefetchToken() {
+    if (disposed || !client || !tokenSlot) return;
+    let auth;
+    try { auth = sdkAuth(); } catch { return; }
+    const slot = tokenSlot(auth.clientUUID);
+    if (slot.token === undefined) slot.token = freshToken(auth).catch(() => null);
+  }
+  async function sdkRequest(options, { usePrefetchedToken } = {}) {
+    assertOpen();
+    const auth = sdkAuth();
+    const slot = usePrefetchedToken && tokenSlot?.(auth.clientUUID);
+    let token;
+    if (slot?.token) {
+      const pendingToken = slot.token;
+      slot.token = null;
+      token = await pendingToken;
+      assertOpen();
+      if (!isFreshToken(token)) token = null;
+    }
+    if (!token) token = await freshToken(auth);
+    assertOpen();
+    return trackedAjax(auth.ajax, { ...options, type: options.method, timeout: 20000, processData: false, xhrFields: { withCredentials: false }, headers: { ...options.headers, 'X-Auth-Token': token } });
+  }
   try { client = createActivitySessionClient({ baseURL: apiOrigin, authorizedRequest: sdkRequest, storage, storageKey: `rkrs-activity-command:${identity}`, onCommand: announce }); }
   catch { state.error = 'Не настроен адрес API Activity (VITE_ACTIVITY_API_ORIGIN)'; }
   function assertAvailable() {
@@ -446,16 +489,16 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
     if (id) { if (button.parentNode.dataset.rkrsApCardAction === 'stop') controller.stop(); else controller.startTask(id); }
   };
   documentImpl.addEventListener?.('click', onCardClick, true);
-  async function startImboxSession(id) {
+  async function startImboxSession(id, authOptions) {
     if (!state.dialogs.some(row => row.id === String(id))) throw new Error('Откройте диалог Imbox');
     const details = { client_id: clientId };
     const entityId = dialogEntities.get(String(id));
     if (entityId) {
-      const entity = await client.loadLead(entityId);
+      const entity = await client.loadLead(entityId, authOptions);
       if (disposed) throw new Error('Виджет закрыт');
       Object.assign(details, { entity_type: 'leads', entity_id: entityId }, entity.restricted ? {} : { entity_name: entity.name, pipeline_id: entity.pipeline_id || 0, status_id: entity.status_id || 0 });
     }
-    publishReceipt(await client.startImbox(id, details, state.active?.serverId || ''));
+    publishReceipt(await client.startImbox(id, details, state.active?.serverId || '', entityId ? undefined : authOptions));
   }
   async function resumeCompletion() {
     const intent = state.completion;
@@ -507,11 +550,12 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
   }
   const controller = {
     getSnapshot: snapshot, subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    prefetchToken,
     selectScenario(value) { state.scenario = value; emit(); }, selectTask(id) { state.selectedTaskId = id; emit(); },
     startTask(id = state.selectedTaskId) { return run(async () => {
       assertAvailable();
       const previous = state.active;
-      const receipt = await client.startTask({ task_id: Number(id), client_id: clientId }, previous?.serverId || '');
+      const receipt = await client.startTask({ task_id: Number(id), client_id: clientId }, previous?.serverId || '', manualRequest);
       if (previous && previous.kind !== 'pause' && dayStart && !state.history.some(row => row.id === previous.serverId)) {
         const closedAt = receipt.started_at * 1000;
         closedSeconds += Math.max(0, Math.floor((closedAt - Math.max(previous.startedAt, dayStart)) / 1000));
@@ -519,22 +563,22 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, do
       reads.history.nextAt = 0;
       publishReceipt(receipt);
     }, 'start_task'); },
-    startOther(name) { return run(async () => { assertAvailable(); name = validateText(name, 'Название активности', true); publishReceipt(await client.startActivity(name, { client_id: clientId }, state.active?.serverId || '')); }); },
-    startImbox(id) { return run(async () => { assertAvailable(); await startImboxSession(id); lastDialog = String(id); }); },
-    pause() { return run(async () => { assertAvailable(); publishReceipt(await client.startPause(state.active?.serverId || '')); }); },
+    startOther(name) { return run(async () => { assertAvailable(); name = validateText(name, 'Название активности', true); publishReceipt(await client.startActivity(name, { client_id: clientId }, state.active?.serverId || '', manualRequest)); }); },
+    startImbox(id) { return run(async () => { assertAvailable(); await startImboxSession(id, manualRequest); lastDialog = String(id); }); },
+    pause() { return run(async () => { assertAvailable(); publishReceipt(await client.startPause(state.active?.serverId || '', manualRequest)); }); },
     stop() { return run(async () => {
       if (client.getState().pending) throw new Error('Сначала восстановите незавершённую команду кнопкой обновления');
       // An explicit stop may abandon an unconfirmed CRM completion; it never
       // retries the CRM write and still closes only the acknowledged interval.
       if (state.recoveryRequired || stateReadStatus !== 'accepted' || !state.ready) throw Object.assign(new Error('Обновите состояние перед действием'), { code: 'state_changed' });
-      publishReceipt(await client.stopSession(state.active?.serverId));
+      publishReceipt(await client.stopSession(state.active?.serverId, '', manualRequest));
       rememberCompletion(null);
     }); },
     completeTask(id, result = '') { return run(async () => {
       assertAvailable();
       result = validateText(result, 'Результат задачи');
       if (!result) throw new Error('Для завершения задачи укажите результат.');
-      const task = await client.loadTask(Number(id));
+      const task = await client.loadTask(Number(id), manualRequest);
       assertOwnedTask(task, id);
       await ownedState();
       if (!state.enabled) throw new Error('Панель задач отключена');

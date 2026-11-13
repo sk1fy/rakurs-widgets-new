@@ -65,13 +65,16 @@ function createLiveActivityController(options) {
   const settings = widget.get_settings?.() || {};
   widget.get_settings = () => ({ ...settings, oauth_client_uuid: 'a0ee1dca-76a6-4720-b1dc-c6a0ba52c07e' });
   let count = 0;
+  const unusedTokens = new Set();
   widget.$ = { ajax(request) {
     if (request.url.includes('/disposable_token')) {
       assert.equal(request.cache, false);
-      const result = { done(fn) { fn({ token: `fresh-${++count}` }); return result; }, fail() { return result; }, abort() {} };
+      const token = `fresh-${++count}`;
+      unusedTokens.add(token);
+      const result = { done(fn) { fn({ token }); return result; }, fail() { return result; }, abort() {} };
       return result;
     }
-    assert.equal(request.headers['X-Auth-Token'], `fresh-${count}`);
+    assert.ok(unusedTokens.delete(request.headers['X-Auth-Token']), 'each Activity request uses a different issued token');
     assert.equal(request.xhrFields.withCredentials, false);
     if (/\/api\/v1\/widget\/activity\/(tasks|leads)\b/.test(request.url)) {
       const outcome = serverTasks(options.fetchImpl || (async () => { throw Error('unexpected CRM'); }), request, Number(options.context.userId), options.queueMeta).then(value => ({ value }), xhr => ({ xhr }));
@@ -351,6 +354,8 @@ test('disposing a pending SDK read prevents late callbacks from issuing more rea
   const calls = [];
   const widget = { $authorizedAjax(options) { calls.push(options); const request = { done(fn) { resolve = fn; return request; }, fail() { return request; }, abort() {} }; return request; } };
   const controller = createLiveActivityController({ context: { widget, accountId: 42, userId: 7 }, apiOrigin: 'https://api.example.test', appOrigin: 'https://panel.example.test', storageImpl: null, documentImpl: { querySelectorAll: () => [] }, locationImpl: { pathname: '/' }, fetchImpl: async () => { throw Error('unexpected CRM request'); } });
+  await settleImbox();
+  assert.equal(calls.length, 1);
   let emitted = 0; controller.subscribe(() => emitted++);
   controller.dispose(); resolve({ enabled: true, current: {}, settings: {} }); await settleImbox();
   assert.equal(calls.length, 1); assert.equal(emitted, 0); assert.equal(controller.getSnapshot().ready, false);
