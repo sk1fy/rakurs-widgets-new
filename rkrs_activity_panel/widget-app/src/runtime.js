@@ -6,6 +6,7 @@ import { createActivityController } from "./model.js";
 
 const registered = new WeakSet();
 const records = new Map();
+const tokenSlots = new Map();
 const storagePrefix = "rkrs_activity_prototype_v1";
 const fixedHosts = new Set();
 // amoCRM calls destroy and render again on every area change. A detached
@@ -59,6 +60,12 @@ function identity(context) {
   )}:${encodeURIComponent(context.userId ?? "demo")}`;
 }
 
+function tokenSlotFor(key, clientUUID) {
+  const binding = `${key}:${clientUUID.toLowerCase()}`;
+  if (!tokenSlots.has(binding)) tokenSlots.set(binding, {});
+  return tokenSlots.get(binding);
+}
+
 function unavailableController(message) {
   const state = {
     live: true, ready: false, enabled: false, busy: false, pending: false,
@@ -107,7 +114,12 @@ function recordFor(context) {
       controller: demo ? createActivityController({
         storage: safeStorage(),
         storageKey: key,
-      }) : authenticated ? createLiveActivityController({ context, apiOrigin: import.meta.env.VITE_ACTIVITY_API_ORIGIN, appOrigin: import.meta.env.VITE_ACTIVITY_APP_ORIGIN }) : unavailableController("Виджет не подключён: недоступны авторизация amoCRM или данные сотрудника. Обновите страницу CRM."),
+      }) : authenticated ? createLiveActivityController({
+        context,
+        apiOrigin: import.meta.env.VITE_ACTIVITY_API_ORIGIN,
+        appOrigin: import.meta.env.VITE_ACTIVITY_APP_ORIGIN,
+        tokenSlot: (clientUUID) => tokenSlotFor(key, clientUUID),
+      }) : unavailableController("Виджет не подключён: недоступны авторизация amoCRM или данные сотрудника. Обновите страницу CRM."),
       panel: null,
       panelWanted: false,
       settings: null,
@@ -184,6 +196,22 @@ function removePanel(record) {
   syncLayout();
 }
 
+function prefetchOnShow(record) {
+  const { host, cleanup } = record.panel;
+  const prefetch = () => {
+    if (!document.hidden && host.isConnected && !record.hidden && !hiddenRoute()) {
+      record.controller.prefetchToken();
+      document.removeEventListener("visibilitychange", prefetch);
+    }
+  };
+  document.addEventListener("visibilitychange", prefetch);
+  record.panel.cleanup = () => {
+    document.removeEventListener("visibilitychange", prefetch);
+    cleanup?.();
+  };
+  prefetch();
+}
+
 function surface(target, controller, settingsOnly = false) {
   const host = document.createElement("div");
   host.setAttribute(
@@ -240,6 +268,7 @@ function placePanel(record) {
   const target = slot || document.body;
   record.panel = surface(target, record.controller);
   if (!slot) fixPanel(record.panel);
+  if (record.mode === "live") prefetchOnShow(record);
   if (record.bridgeTarget)
     record.bridgeTarget.removeEventListener(
       "rkrs-activity-demo-action",

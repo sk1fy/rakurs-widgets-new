@@ -4,7 +4,12 @@ export const accountId = 42;
 export const userId = 7;
 export const viewKey = `rkrs-activity-view:${apiOrigin}:rkrs_activity_panel:${accountId}:${userId}`;
 
-export function createLiveSDK({ failState = 0, failToken = 0, enabled = true, current = null, extraTasks = [], settings = {}, onChange = () => {} } = {}) {
+function disposableToken(sequence) {
+  const payload = btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 60, jti: sequence })).replace(/=+$/, '');
+  return `eyJhbGciOiJIUzI1NiJ9.${payload}.Zml4dHVyZQ`;
+}
+
+export function createLiveSDK({ failState = 0, failToken = 0, enabled = true, current = null, extraTasks = [], settings = {}, onChange = () => {}, tokenFor = disposableToken } = {}) {
   const task = { id: 19, responsible_user_id: userId, text: 'Проверить предложение', task_type_id: 1, task_type_name: 'Звонок', entity_type: 'leads', entity_id: 12, entity_name: 'Тестовая сделка', complete_till: Math.floor(Date.now() / 1000) + 300, is_completed: false, result_text: '' };
   const requests = [], commands = [], held = [], history = [];
   const holds = new Set();
@@ -21,7 +26,7 @@ export function createLiveSDK({ failState = 0, failToken = 0, enabled = true, cu
       const path = url.pathname.replace('/api/v1/widget/activity/', '');
       const body = options.data ? JSON.parse(options.data) : null;
       const kind = url.pathname.endsWith('/disposable_token') ? 'token' : path === 'tasks/19' ? 'detail' : path === 'sessions' && body?.action === 'start_task' ? 'start' : path;
-      const entry = { kind, method: options.method, body, aborted: false };
+      const entry = { kind, method: options.method, body, aborted: false, token: options.headers?.['X-Auth-Token'], commandId: options.headers?.['Idempotency-Key'] };
       requests.push(entry);
       let done, fail;
       const request = { done(fn) { done = fn; return request; }, fail(fn) { fail = fn; return request; }, abort() { entry.aborted = true; } };
@@ -29,7 +34,10 @@ export function createLiveSDK({ failState = 0, failToken = 0, enabled = true, cu
         if (rejection) { fail(error(503, 'Fixture request failed')); onChange(); return; }
         if (kind === 'token') {
           if (failToken-- > 0) fail(error(401, 'Fixture authorization failed'));
-          else done({ token: `fixture-token-${++sequence}` });
+          else {
+            entry.token = tokenFor(++sequence);
+            done({ token: entry.token });
+          }
         } else if (kind === 'state') {
           if (failState-- > 0) fail(error(503, 'Fixture state unavailable'));
           else done(state());
