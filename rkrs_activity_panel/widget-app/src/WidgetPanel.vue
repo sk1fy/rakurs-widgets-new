@@ -238,9 +238,20 @@ async function startQueued(task) {
   if (confirmed?.id === task.id && confirmed.url && window.location.pathname !== confirmed.url)
     window.location.href = confirmed.url;
 }
-function smartAction() {
-  if (activeTask.value) window.location.href = activeTaskView.value.url;
-  else startQueued(upcoming.value);
+async function smartAction() {
+  if (!activeTask.value) return startQueued(upcoming.value);
+  const check = props.controller.checkActiveTaskCompletion?.();
+  if (check) {
+    const intent = ++queuedStartIntent;
+    const origin = window.location.href;
+    const session = state.value.active.serverId;
+    const result = await check;
+    if (!mounted || intent !== queuedStartIntent || window.location.href !== origin) return;
+    if (result === "stopped" && !state.value.active && upcoming.value) return startQueued(upcoming.value);
+    if (result !== "open" || state.value.active?.serverId !== session) return;
+    if (window.location.pathname === activeTaskView.value.url) return;
+  }
+  window.location.href = activeTaskView.value.url;
 }
 function start() {
   if (view.value === "other") props.controller.startOther(otherName.value.trim());
