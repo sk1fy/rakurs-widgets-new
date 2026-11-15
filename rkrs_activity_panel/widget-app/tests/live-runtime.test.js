@@ -55,6 +55,40 @@ function unusedTokens(sdk) {
   return sdk.requests.filter(r => r.kind === 'token' && !sent.has(r.token));
 }
 
+for (const delayedSave of [false, true]) {
+  test(`the queue action starts the next task after ${delayedSave ? 'delayed' : 'immediate'} native completion`, { timeout: 5000 }, async t => {
+    const now = Math.floor(Date.now() / 1000);
+    const started = Promise.withResolvers();
+    const f = mount(t, {
+      current: { id: 'active-work', kind: 'work', started_at: now - 60, context: { task_id: 19, entity_type: 'leads', entity_id: 12 } },
+      extraTasks: [{ id: 20, responsible_user_id: userId, text: 'Next task', entity_type: 'leads', entity_id: 12, complete_till: now + 600 }],
+      onChange() { if (f.sdk.state().current?.context.task_id === 20) started.resolve(); },
+    });
+    f.document.body.insertAdjacentHTML('beforeend', '<div class="feed-note-wrapper-task" data-id="19"><div class="card-task__actions"><button class="js-complete-task">Выполнить</button></div></div>');
+    const complete = f.document.querySelector('.js-complete-task');
+    complete.addEventListener('click', () => {
+      f.sdk.task.is_completed = !delayedSave;
+      complete.remove();
+    });
+    await flush(); f.place(); await flush();
+
+    complete.click();
+    f.panel().querySelector('.rkrs-smart-action').click();
+    if (delayedSave) {
+      await flush();
+      assert.equal(f.sdk.requests.filter(request => request.kind === 'detail').length, 1);
+      assert.deepEqual(f.sdk.commands, []);
+      f.sdk.task.is_completed = true;
+    }
+    await started.promise;
+    await flush();
+
+    assert.deepEqual(f.sdk.commands.map(command => command.action), ['stop', 'start_task']);
+    assert.equal(f.sdk.state().current.context.task_id, 20);
+    assert.equal(f.panel().querySelector('.rkrs-task-title').textContent.trim(), 'Next task');
+  });
+}
+
 test('first foreground show prefetches once and a remount after disposal uses the same token', async t => {
   const f = mount(t, { hidden: true, pathname: '/settings/widgets' });
   await flush(); f.place(); await flush();
