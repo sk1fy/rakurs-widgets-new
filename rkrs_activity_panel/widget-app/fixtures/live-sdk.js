@@ -54,14 +54,15 @@ export function createLiveSDK({ failState = 0, failToken = 0, enabled = true, cu
           if ((command.action === 'stop' ? command.session_id : command.expected_session_id) !== (current?.id || '')) {
             fail(error(409, 'Fixture session changed')); onChange(); return;
           }
-          if (kind === 'start' && (command.context.task_id !== task.id || task.responsible_user_id !== userId || task.is_completed)) {
+          const startedTask = kind === 'start' ? [task, ...extraTasks].find(row => row.id === command.context.task_id) : null;
+          if (kind === 'start' && (!startedTask || startedTask.responsible_user_id !== userId || startedTask.is_completed)) {
             fail(error(422, 'Fixture task is unavailable')); onChange(); return;
           }
           const stopped = current ? { ...current, stopped_at: Math.floor(Date.now() / 1000) } : null;
           if (stopped) history.push(stopped);
           const sessionContext = kind === 'start' ? {
-            client_id: command.context.client_id, task_id: task.id, task_name: task.text, task_type_id: task.task_type_id,
-            task_type_name: task.task_type_name, entity_type: task.entity_type, entity_id: task.entity_id, entity_name: task.entity_name,
+            client_id: command.context.client_id, task_id: startedTask.id, task_name: startedTask.text, task_type_id: startedTask.task_type_id,
+            task_type_name: startedTask.task_type_name, entity_type: startedTask.entity_type, entity_id: startedTask.entity_id, entity_name: startedTask.entity_name,
           } : command.context;
           current = command.action === 'stop' ? null : { id: `fixture-session-${++sequence}`, kind: kind === 'start' || command.action === 'work' ? 'work' : command.action === 'pause' ? 'pause' : 'activity', started_at: Math.floor(Date.now() / 1000), context: sessionContext };
           done(command.action === 'stop' ? stopped : structuredClone(current));

@@ -101,7 +101,11 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, to
   const onNativeComplete = event => {
     const target = event.target?.nodeType === 3 ? event.target.parentNode : event.target;
     const id = target?.closest?.(nativeCompletion)?.closest?.('.feed-note-wrapper-task[data-id]')?.dataset?.id;
-    if (!disposed && state.active?.kind === 'tasks' && state.active.id === id) completionChecks.set(id, { until: Date.now() + 180000, next: Date.now() + 2000 });
+    if (!disposed && state.active?.kind === 'tasks' && state.active.id === id) {
+      const now = Date.now();
+      const firstCheckAt = now + 2000;
+      completionChecks.set(id, { until: now + 180000, firstCheckAt, next: firstCheckAt });
+    }
   };
   documentImpl.addEventListener?.('click', onNativeComplete, true);
   const entityLabels = { leads: 'Сделка', contacts: 'Контакт', companies: 'Компания', customers: 'Покупатель' };
@@ -328,13 +332,16 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, to
   // the very interval observed for that task is closed.
   async function reconcileCompletedTask(id) {
     const active = state.active, observed = revision;
-    if (disposed || documentImpl.hidden || active?.kind !== 'tasks' || active.id !== id || state.busy || client.getState().pending || state.completion || state.recoveryRequired) return false;
+    if (disposed || documentImpl.hidden || active?.kind !== 'tasks' || active.id !== id) return;
     if (completionReads.has(active.serverId)) return completionReads.get(active.serverId);
+    if (state.busy || client.getState().pending || state.completion || state.recoveryRequired) return;
     const observation = (async () => {
       let task;
-      try { task = await client.loadTask(Number(id)); } catch { return false; }
-      if (disposed || documentImpl.hidden || revision !== observed || !task.is_completed || state.active?.serverId !== active.serverId) return false;
-      return run(async () => {
+      try { task = await client.loadTask(Number(id)); } catch { return; }
+      if (disposed || documentImpl.hidden || revision !== observed || state.active?.serverId !== active.serverId) return;
+      if (task.is_completed === false && !confirmedCompletions.has(id)) return 'open';
+      if (task.is_completed !== true) return;
+      const stopped = await run(async () => {
         confirmedCompletions.add(id);
         const row = state.tasks.find(task => task.id === id);
         if (row) row.completed = true;
@@ -346,10 +353,20 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, to
         const result = typeof task.result_text === 'string' && new TextEncoder().encode(task.result_text).length <= 2000 ? task.result_text : '';
         publishReceipt(await client.stopSession(active.serverId, result));
       });
+      if (stopped) return 'stopped';
     })();
     completionReads.set(active.serverId, observation);
     try { return await observation; }
     finally { if (completionReads.get(active.serverId) === observation) completionReads.delete(active.serverId); }
+  }
+  async function verifyNativeCompletion(active, check) {
+    const beforeFirstCheck = Date.now() < check.firstCheckAt;
+    const result = await reconcileCompletedTask(active.id);
+    if (result !== 'open' || !beforeFirstCheck) return result;
+    check.next = Math.max(check.next, check.firstCheckAt + 5000);
+    const wait = check.firstCheckAt - Date.now();
+    if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+    if (state.active?.serverId === active.serverId) return reconcileCompletedTask(active.id);
   }
   function loadTasks() {
     const leadId = locationImpl.pathname.match(/\/leads\/detail\/(\d+)/)?.[1] || '';
@@ -552,6 +569,13 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, to
     getSnapshot: snapshot, subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     prefetchToken,
     selectScenario(value) { state.scenario = value; emit(); }, selectTask(id) { state.selectedTaskId = id; emit(); },
+    checkActiveTaskCompletion() {
+      const active = state.active;
+      if (active?.kind !== 'tasks') return;
+      const check = completionChecks.get(active.id);
+      if (check && Date.now() <= check.until) return verifyNativeCompletion(active, check);
+      if (confirmedCompletions.has(active.id)) return completionReads.get(active.serverId) ?? Promise.resolve();
+    },
     startTask(id = state.selectedTaskId) { return run(async () => {
       assertAvailable();
       const previous = state.active;
@@ -618,7 +642,7 @@ export function createLiveActivityController({ context, apiOrigin, appOrigin, to
         else if (!documentImpl.hidden && !state.busy && state.ready && Date.now() >= check.next) {
           // Each check is a live amoCRM read inside the shared budget.
           check.next = Date.now() + 5000;
-          void reconcileCompletedTask(id).then(completed => { if (completed) completionChecks.delete(id); });
+          void reconcileCompletedTask(id).then(result => { if (result === 'stopped') completionChecks.delete(id); });
         }
       }
       // The controller outlives navigation: related deals follow the opened lead card.
