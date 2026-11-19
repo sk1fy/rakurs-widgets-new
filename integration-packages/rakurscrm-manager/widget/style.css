@@ -11,7 +11,7 @@
 .rkrs-manager-card__main {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 12px 20px;
     padding: 16px;
@@ -32,41 +32,79 @@
     line-height: 1.45;
 }
 
-.rkrs-manager-card a.rkrs-manager-card__action {
+.rkrs-manager-card .rkrs-manager-card__action {
     display: inline-flex;
     align-items: center;
     gap: 8px;
     box-sizing: border-box;
     min-height: 40px;
     padding: 8px 12px;
+    border: 0;
     border-radius: 6px;
+    cursor: pointer;
     background: #1c56a9;
     color: #fff;
+    font: inherit;
     font-size: 14px;
     font-weight: 700;
     line-height: 1.4;
     text-decoration: none;
 }
 
-.rkrs-manager-card a.rkrs-manager-card__action:hover {
+.rkrs-manager-card .rkrs-manager-card__action:hover {
     background: #174586;
     color: #fff;
 }
 
-.rkrs-manager-card a.rkrs-manager-card__action:focus-visible {
+.rkrs-manager-card .rkrs-manager-card__action:focus-visible {
     outline: 2px solid #1c56a9;
     outline-offset: 2px;
 }
 
 .rkrs-manager-card .rkrs-manager-card__note {
     margin: 0;
-    padding: 10px 16px;
-    background: #f6f8fb;
+
     color: #516173;
     font-size: 13px;
     line-height: 1.5;
 }
 
-.rkrs-manager-card__main + .rkrs-manager-card__note {
+.rkrs-manager-card__actions,
+.rkrs-manager-card__footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+}
+
+.rkrs-manager-card__footer {
+    padding: 10px 16px;
     border-top: 1px solid #e7ecf2;
+    background: #f6f8fb;
+}
+
+.rkrs-manager-card > .rkrs-manager-card__note {
+    padding: 10px 16px;
+}
+
+.rkrs-manager-card .rkrs-manager-card__activate {
+    border: 1px solid #1c56a9;
+    background: #fff;
+    color: #1c56a9;
+}
+
+.rkrs-manager-card .rkrs-manager-card__retry {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: #1c56a9;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.rkrs-manager-card .rkrs-manager-card__action[hidden],
+.rkrs-manager-card .rkrs-manager-card__retry[hidden] {
+    display: none;
 }
