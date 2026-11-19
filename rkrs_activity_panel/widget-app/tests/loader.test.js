@@ -53,8 +53,12 @@ function setup(options = {}) {
   requireModule.undef = (url) => calls.undef.push(url);
   vm.runInNewContext(source, {
     define(deps, factory) {
-      assert.deepEqual(Array.from(deps), ["./lib/company-entry.js", "./lib/company-entry-deployment.js"]);
-      Widget = factory({ mount() { return { destroy() {} }; } }, {});
+      assert.deepEqual(Array.from(deps), [
+        "./lib/company-entry.js", "./lib/company-entry-deployment.js",
+        "./lib/installation-activation.js", "./lib/installation-activation-deployment.js",
+      ]);
+      const moduleStub = { mount() { return { destroy() {} }; } };
+      Widget = factory(moduleStub, {}, options.activation ?? moduleStub, { coreOrigin: "https://core.example.invalid" });
     },
     require: requireModule,
     fetch(url, config) {

@@ -1,5 +1,6 @@
 /** rkrs_activity — тонкий AMD-загрузчик прототипа. UI находится в UMD-бандле. */
-define(['./lib/company-entry.js', './lib/company-entry-deployment.js'], function (CompanyEntry, CompanyEntryDeployment) {
+define(['./lib/company-entry.js', './lib/company-entry-deployment.js', './lib/installation-activation.js',
+    './lib/installation-activation-deployment.js'], function (CompanyEntry, CompanyEntryDeployment, Activation, ActivationDeployment) {
     var ASSETS = '__RKRS_ACTIVITY_ASSETS_URL__';
     var appPromise = null;
     var loadedApp = null;
@@ -81,6 +82,7 @@ define(['./lib/company-entry.js', './lib/company-entry-deployment.js'], function
     return function () {
         var self = this;
         var companyEntry = null;
+        var activation = null;
         var instanceId = ++nextInstanceId;
         var alive = true;
         var generation = 0;
@@ -168,11 +170,14 @@ define(['./lib/company-entry.js', './lib/company-entry-deployment.js'], function
                 run('openSettings', target);
                 if (companyEntry) { companyEntry.destroy(); }
                 companyEntry = CompanyEntry.mount(self, target, CompanyEntryDeployment);
+                if (activation) { activation.destroy(); }
+                activation = Activation && ActivationDeployment && Activation.mount(self, target, ActivationDeployment.coreOrigin);
                 return true;
             },
             onSave: function () { return true; },
             destroy: function () {
                 if (companyEntry) { companyEntry.destroy(); companyEntry = null; }
+                if (activation) { activation.destroy(); activation = null; }
                 if (!alive) { return true; }
                 alive = false;
                 generation += 1;
