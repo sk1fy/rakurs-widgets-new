@@ -6,7 +6,7 @@
 ## Сборка
 
 ```sh
-python3 integration-packages/rakurscrm-manager/pack.py --output /tmp/rakurscrm-manager-1.0.0.zip
+python3 integration-packages/rakurscrm-manager/pack.py --output /tmp/widget.zip
 ```
 
 ## Установка
@@ -22,6 +22,9 @@ Client ID и Client Secret в Core через действующий секре�
 задайте воронку и стартовый этап для нужных клиентских виджетов.
 Сервер использует эту привязку для обращений к amoCRM после закрытия
 браузера. ZIP содержит интерфейс настроек и ссылку на кабинет.
+
+Для обновления откройте редактирование уже созданной приватной интеграции
+в amoМаркете и загрузите новый `widget.zip` поверх текущей версии.
 
 [Структура виджета amoCRM](https://www.amocrm.ru/developers/content/integrations/structure)
 [Документация по OAuth](https://www.amocrm.ru/developers/content/oauth/oauth)
