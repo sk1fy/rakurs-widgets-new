@@ -46,6 +46,16 @@ const configured = source.replace(/(["'])__RKRS_ACTIVITY_ASSETS_URL__\1/, () =>
 if (configured === source) throw new Error("Missing loader URL placeholder.");
 writeFileSync(path.join(staging, "script.js"), configured);
 execFileSync(process.execPath, [path.join(root, "../../shared/company-entry/sync.mjs"), "--target", staging], { env: process.env });
+const activationOrigin = process.env.RKRS_ACTIVATION_CORE_ORIGIN ?? "";
+if (activationOrigin) {
+  const core = new URL(activationOrigin);
+  if (core.protocol !== "https:" || core.origin !== activationOrigin) {
+    throw new Error("RKRS_ACTIVATION_CORE_ORIGIN must be an exact HTTPS origin.");
+  }
+}
+cpSync(path.join(root, "../widget/lib/installation-activation.js"), path.join(staging, "lib/installation-activation.js"));
+writeFileSync(path.join(staging, "lib/installation-activation-deployment.js"),
+  `define([], function () { return { coreOrigin: ${JSON.stringify(activationOrigin)} }; });\n`);
 const zip = path.join(root, "dist-package/rkrs-activity-prototype.zip");
 rmSync(zip, { force: true });
 execFileSync(
