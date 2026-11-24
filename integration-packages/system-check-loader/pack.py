@@ -8,7 +8,7 @@ shared = root.parent / "system-check/widget"
 images = root.parent / "rakurscrm-manager/widget/images"
 assets = root / "dist/public"
 files = {"app.js": root / "runtime/app.js", "style.css": shared / "style.css"}
-for name in ("card.js", "editor.js", "preferences.js", "editor.css"):
+for name in ("card.js", "editor.js", "preferences.js", "editor.css", "loader-dialog.css"):
     files[name] = root / "runtime" / name
 for name in ("phone.js", "installation-activation.js"):
     files["lib/" + name] = shared / "lib" / name
