@@ -1,0 +1,5 @@
+@import url("./style.css");
+
+.rkrs-system-dialog:has(link[href$="/loader-dialog.css"]) .widget_settings_block__item_field:has(input[name="card_config"]) {
+    display:none!important;
+}

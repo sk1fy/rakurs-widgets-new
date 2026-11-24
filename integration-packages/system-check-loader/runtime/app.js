@@ -1,19 +1,12 @@
 define(['module', './lib/installation-activation.js', './editor.js', './card.js', './preferences.js'],
 function (module, activation, edit, card, preferences) {
     'use strict';
-    const stylesheet = new URL('style.css', module.uri).href;
+    const stylesheet = new URL('loader-dialog.css', module.uri).href;
     const editorStyles = new URL('editor.css', module.uri).href;
     const release = new URL(module.uri).pathname.split('/').at(-2);
     return function createApp(widget) {
-        let form, slot, editor, styles;
+        let form, slot, editor;
         let pageRequest, cardRequest;
-        function loadStyles(target) {
-            if (styles) styles.remove();
-            styles = document.createElement('link');
-            styles.rel = 'stylesheet';
-            styles.href = editorStyles;
-            target.append(styles);
-        }
         function ids() {
             const account = window.APP.constant('account');
             const deal = window.APP.data?.current_card?.id || location.pathname.match(/\/leads\/detail\/(\d+)/)?.[1];
@@ -23,7 +16,6 @@ function (module, activation, edit, card, preferences) {
             init() { activation.sync(widget); },
             settings(target) {
                 if (form) form.destroy();
-                if (target) loadStyles(target);
                 form = activation.mount(widget, target, stylesheet);
             },
             advancedSettings(target) {
@@ -31,10 +23,15 @@ function (module, activation, edit, card, preferences) {
                 pageRequest = new AbortController();
                 if (editor) editor.remove();
                 editor = document.createElement('section');
-                editor.className = 'rkrs-loader-editor';
+                editor.className = 'rkrs-loader-settings-host';
+                const shadow = editor.attachShadow({ mode: 'open' });
+                const styles = document.createElement('link');
+                styles.rel = 'stylesheet';
+                styles.href = editorStyles;
+                const page = document.createElement('div');
+                page.className = 'rkrs-loader-editor';
+                shadow.append(styles, page);
                 target.append(editor);
-                loadStyles(target);
-                const page = editor;
                 const settings = widget.get_settings();
                 const signal = pageRequest.signal;
                 activation.showWhenActivated(widget, page, () =>
@@ -74,7 +71,6 @@ function (module, activation, edit, card, preferences) {
                 if (form) form.destroy();
                 if (slot) slot.remove();
                 if (editor) editor.remove();
-                if (styles) styles.remove();
             }
         };
     };

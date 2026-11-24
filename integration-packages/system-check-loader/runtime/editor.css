@@ -1,4 +1,5 @@
 .rkrs-loader-editor {
+    all:initial; display:block; direction:ltr; background:#fff;
     --rkse-ink:#172d31; --rkse-muted:#526966; --rkse-line:#d8e3df; --rkse-tint:#eff6f3;
     --rkse-teal:#17695b; --rkse-paper:#fff;
     box-sizing:border-box; container-type:inline-size; max-width:1110px; padding:clamp(12px,3vw,36px);
@@ -65,4 +66,3 @@
 .rkrs-loader-editor .rkse-fault {display:flex;min-height:32px;margin-top:8px}
 @container(max-width:690px) {.rkrs-loader-editor .rkse-layout{grid-template-columns:1fr}.rkrs-loader-editor .rkse-header{gap:8px}}
 @media(forced-colors:active){.rkrs-loader-editor .rkse-switch input{appearance:auto}.rkrs-loader-editor .rkse-switch input::before{display:none}.rkrs-loader-editor .rkse-colors input:checked+span{outline:2px solid Highlight}}
-.rkrs-system-dialog .widget_settings_block__item_field:has(input[name="card_config"]) {display:none!important}
