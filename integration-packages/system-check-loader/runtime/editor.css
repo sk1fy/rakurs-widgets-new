@@ -1,0 +1,13 @@
+.rkrs-loader-editor {padding:24px;max-width:980px;color:inherit}
+.rkrs-loader-editor h3 {font-size:22px;margin:0 0 20px}
+.rkrs-loader-editor .layout {display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:28px}
+.rkrs-loader-editor fieldset {border:0;margin:0 0 20px;padding:0;min-width:0}
+.rkrs-loader-editor legend {font-weight:bold;margin:0 0 10px}
+.rkrs-loader-editor .fields {display:grid;gap:8px}
+.rkrs-loader-editor .form-control,.rkrs-loader-editor select {display:block;width:100%;box-sizing:border-box;padding:8px;margin-top:4px;font:inherit;color:inherit;background:transparent;border:1px solid #a9b0b8;border-radius:4px}
+.rkrs-loader-editor button {cursor:pointer;padding:8px 12px;border-radius:4px;margin:4px 8px 4px 0}
+.rkrs-loader-editor .btn-primary {background:#407ce6;color:white}
+.rkrs-loader-editor button:disabled {opacity:.55;cursor:default}
+.rkrs-loader-editor small {display:block}
+.rkrs-system-dialog .widget_settings_block__item_field:has(input[name="card_config"]) {display:none!important}
+@media(max-width:650px){.rkrs-loader-editor .layout{grid-template-columns:1fr}}

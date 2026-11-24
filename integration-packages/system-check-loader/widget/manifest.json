@@ -1,0 +1,34 @@
+{
+  "widget": {
+    "name": "widget.name",
+    "description": "widget.description",
+    "short_description": "widget.short_description",
+    "version": "1.1.0",
+    "interface_version": 5,
+    "init_once": false,
+    "locale": [
+      "ru"
+    ],
+    "installation": true
+  },
+  "locations": [
+    "settings",
+    "lcard-1",
+    "advanced_settings"
+  ],
+  "settings": {
+    "system_contact": {
+      "name": "settings.system_contact",
+      "type": "text",
+      "required": false
+    },
+    "card_config": {
+      "name": "settings.card_config",
+      "type": "text",
+      "required": false
+    }
+  },
+  "advanced": {
+    "title": "advanced.title"
+  }
+}
