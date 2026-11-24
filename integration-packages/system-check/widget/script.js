@@ -16,7 +16,6 @@ define(['./lib/installation-activation.js'], function (Activation) {
                 return true;
             },
             render: function () {
-                Activation.sync(widget);
                 if (widget.system().area !== 'lcard') { return true; }
                 var slot = document.getElementById(slotId);
                 if (!slot) {
@@ -27,10 +26,10 @@ define(['./lib/installation-activation.js'], function (Activation) {
                     });
                     slot = document.getElementById(slotId);
                 }
-                var account = window.APP.constant('account');
-                if (slot) {
+                if (slot) Activation.showWhenActivated(widget, slot, function () {
+                    var account = window.APP.constant('account');
                     slot.textContent = 'Виджет загружен. Аккаунт amoCRM: ' + (account && account.id || 'ID недоступен');
-                }
+                });
                 return true;
             },
             destroy: function () {

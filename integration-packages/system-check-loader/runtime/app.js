@@ -32,13 +32,13 @@ function (module, activation, edit, card) {
                 editor.className = 'rkrs-loader-editor';
                 target.append(editor);
                 loadStyles(target);
-                edit(editor, widget.get_settings().widget_code, { ...ids(), deal: '12345 (пример)' }, raw => {
+                const page = editor;
+                activation.showWhenActivated(widget, page, () => edit(page, widget.get_settings().widget_code, { ...ids(), deal: '12345 (пример)' }, raw => {
                     saved = raw;
                     widget.set_settings?.({ ...widget.get_settings(), card_config: raw });
-                });
+                }));
             },
             render() {
-                activation.sync(widget);
                 if (widget.system().area !== 'lcard') return;
                 const id = 'rkrs-loader-check-account';
                 if (!document.getElementById(id)) {
@@ -50,7 +50,8 @@ function (module, activation, edit, card) {
                 slot = document.getElementById(id);
                 if (!slot) return;
                 const settings = widget.get_settings();
-                card.draw(slot, card.decode(saved ?? settings.card_config), ids());
+                const target = slot;
+                activation.showWhenActivated(widget, target, () => card.draw(target, card.decode(saved ?? settings.card_config), ids()));
             },
             onSave() { return !form || form.allowSave(); },
             destroy() {
