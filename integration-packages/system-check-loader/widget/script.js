@@ -64,7 +64,7 @@ define([], function () {
                 settingsPending = true;
                 return run('settings', body?.nodeType === 1 ? body : body?.[0]);
             },
-            onSave: () => !settingsPending && !!app && app.onSave(),
+            onSave: () => widget.get_settings().active !== 'Y' || (!settingsPending && !!app && app.onSave()),
             destroy() {
                 generation++;
                 if (app) app.destroy();

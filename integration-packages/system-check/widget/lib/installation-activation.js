@@ -55,7 +55,8 @@ define(['./phone.js'], function (phones) {
     }
 
     function mount(widget, target, stylesheet) {
-        if (!target) return null;
+        // amoCRM owns the consent and Install controls until the widget is active.
+        if (!target || widget.get_settings().active !== 'Y') return null;
         const scope = target.closest('.modal, .modal-window, .widget-settings') || target.closest('.widget_settings_block') || target;
         const styles = document.createElement('link');
         styles.rel = 'stylesheet';
