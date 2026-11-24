@@ -1,75 +1,128 @@
 define(['./card.js', './preferences.js'], function (card, preferences) {
     'use strict';
-    return async function edit(root, code, ids, saved) {
-        root.textContent = 'Загружаем настройки…';
-        let raw;
-        try {
-            raw = (await preferences.read(code)).card_config || '';
-            card.decode(raw);
-        } catch (error) { root.textContent = error.message; return; }
-        if (!root.isConnected) return;
-        root.innerHTML = `<h3>Карточка сделки</h3>
-<div class="layout">
-<form>
-<fieldset class="fields"><legend>Содержимое</legend>
-<label class="form-label">Заголовок блока<input class="form-control" name="title" value="Ракурс — проверка загрузчика" maxlength="60" required></label>
-<label class="form-label">Текст в карточке сделки<textarea class="form-control" name="message" rows="2" maxlength="200" required>Виджет подключён</textarea></label>
-<label><input class="form-check-input" name="account" type="checkbox" checked> Показывать ID аккаунта</label>
-<label><input class="form-check-input" name="deal" type="checkbox"> Показывать ID сделки</label>
-<label><input class="form-check-input" name="version" type="checkbox" checked> Показывать версию модуля</label>
-</fieldset>
-<fieldset class="fields"><legend>Оформление</legend>
-<label class="form-label">Цвет полосы слева<select class="form-select" name="accent"><option value="#448aff">Синий</option><option value="#24956d">Зелёный</option><option value="#ad7228">Янтарный</option><option value="#8270be">Фиолетовый</option></select></label>
-<label><input class="form-check-input" name="compact" type="checkbox"> Компактный вид</label></fieldset>
-<fieldset><legend>При открытии сделки</legend>
-<label><input class="form-check-input" name="collapsed" type="checkbox"> Сворачивать блок до заголовка</label></fieldset>
-<div class="viz-row"><button class="btn btn-primary" type="submit">Сохранить</button><button class="btn btn-secondary" type="button" data-reset>Вернуть стандартные</button></div>
-<small role="status" aria-live="polite"></small>
-</form>
-<section><span class="meta">Предпросмотр в сделке</span><hr>
-<div data-preview></div></section></div>`;
-        const form = root.querySelector('form');
-        const fields = form.elements;
-        const preview = root.querySelector('[data-preview]');
-        const save = form.querySelector('[type=submit]');
-        const reset = form.querySelector('[data-reset]');
-        const status = form.querySelector('[role=status]');
-        let busy = false;
+
+    return function edit(root, code, initial, ids, signal) {
+        if (signal.aborted) return;
+        root.innerHTML = `
+        <header class="rkse-header">
+            <div><h2>Карточка сделки</h2><p>Настройте содержимое и внешний вид блока Ракурса в сделке.</p></div>
+            <span class="rkse-state" data-state role="status"></span>
+        </header>
+        <div class="rkse-layout">
+            <form class="rkse-sheet">
+                <fieldset class="rkse-group"><legend>Содержимое</legend>
+                    <label class="rkse-field">Заголовок блока<input name="title" maxlength="60" required></label>
+                    <label class="rkse-field">Текст в карточке сделки<textarea name="message" rows="2" maxlength="200" required></textarea></label>
+                    <fieldset class="rkse-toggles"><legend>Данные в карточке</legend>
+                        <label><input type="checkbox" name="account"> ID аккаунта</label>
+                        <label><input type="checkbox" name="deal"> ID сделки</label>
+                        <label><input type="checkbox" name="version"> Версия модуля</label>
+                    </fieldset>
+                </fieldset>
+                <fieldset class="rkse-group"><legend>Оформление</legend>
+                    <fieldset class="rkse-colors"><legend>Цвет полосы слева</legend>
+                        <label><input type="radio" name="accent" value="#448aff"><span style="--swatch:#448aff">Синий</span></label>
+                        <label><input type="radio" name="accent" value="#24956d"><span style="--swatch:#24956d">Зелёный</span></label>
+                        <label><input type="radio" name="accent" value="#ad7228"><span style="--swatch:#ad7228">Янтарный</span></label>
+                        <label><input type="radio" name="accent" value="#8270be"><span style="--swatch:#8270be">Фиолетовый</span></label>
+                    </fieldset>
+                    <label class="rkse-switch"><span>Компактные отступы</span><input type="checkbox" name="compact"></label>
+                    <label class="rkse-switch"><span>Сворачивать блок при открытии сделки</span><input type="checkbox" name="collapsed"></label>
+                </fieldset>
+                <footer class="rkse-actions">
+                    <button type="submit" class="rkse-primary">Сохранить</button>
+                    <button type="button" data-reset>Вернуть стандартные</button>
+                </footer>
+            </form>
+            <aside class="rkse-aside">
+                <section class="rkse-preview"><h3>Предпросмотр в сделке</h3>
+                    <div class="rkse-stage"><div class="rkse-sample" data-preview></div></div>
+                </section>
+                <section class="rkse-service"><h3>Тестовый бэкенд</h3>
+                    <p>Обмен имитируется в этом браузере. Копия настроек привязана к аккаунту и виджету.</p>
+                    <div class="rkse-request" data-request role="status"></div>
+                    <button type="button" data-read>Загрузить повторно</button>
+                    <label class="rkse-fault"><input type="checkbox" data-fail> Ошибка следующего запроса</label>
+                </section>
+            </aside>
+        </div>`;
+        const get = selector => root.querySelector(selector);
+        const form = get('form'), fields = form.elements;
+        const preview = get('[data-preview]'), state = get('[data-state]');
+        const log = get('[data-request]'), readButton = get('[data-read]');
+        const fail = get('[data-fail]'), saveButton = get('[type=submit]'), reset = get('[data-reset]');
+        let record, busy = false, conflict = false, failed = false;
+
+        function values() {
+            return Object.fromEntries(Object.keys(card.defaults).map(key => {
+                const field = fields.namedItem(key);
+                return [key, typeof card.defaults[key] === 'boolean' ? field.checked : field.value.trim()];
+            }));
+        }
         function fill(config) {
             for (const [key, value] of Object.entries(config)) {
-                if (typeof value === 'boolean') fields[key].checked = value;
-                else fields[key].value = value;
+                const field = fields.namedItem(key);
+                if (typeof value === 'boolean') field.checked = value;
+                else field.value = value;
             }
         }
-        function values() {
-            return Object.fromEntries(Object.keys(card.defaults).map(key => [key,
-                fields[key].type === 'checkbox' ? fields[key].checked : fields[key].value.trim()]));
-        }
-        function update(resetOpen) {
+        function dirty() { return record && JSON.stringify(values()) !== JSON.stringify(record.config); }
+        function update(resetOpen = false) {
             const config = values();
-            const open = resetOpen ? !config.collapsed : preview.querySelector('details')?.open;
-            card.draw(preview, config, ids, open);
-            const json = JSON.stringify(config);
-            save.disabled = busy || !config.title || !config.message || json === JSON.stringify(card.decode(raw));
-            reset.disabled = busy || json === JSON.stringify(card.defaults);
+            if (record) {
+                const open = resetOpen ? !config.collapsed : preview.querySelector('details')?.open;
+                card.draw(preview, config, ids, open);
+            } else {
+                preview.textContent = busy ? 'Загружаем карточку…' : 'Ожидаем настройки';
+            }
+            for (const group of form.querySelectorAll('.rkse-group')) group.disabled = busy || !record;
+            form.setAttribute('aria-busy', String(busy));
+            saveButton.disabled = busy || conflict || !dirty() || !config.title || !config.message;
+            reset.disabled = busy || !record || JSON.stringify(config) === JSON.stringify(card.defaults);
+            readButton.disabled = busy || (dirty() && !conflict);
+            readButton.textContent = conflict ? 'Загрузить сохранённое и сбросить правки' : 'Загрузить повторно';
+            fail.disabled = busy;
+            const mode = busy ? 'busy' : failed ? 'error' : dirty() ? 'dirty' : 'ready';
+            state.dataset.mode = mode;
+            state.textContent = busy ? 'Идёт обмен' : failed ? 'Ошибка запроса' : dirty() ? 'Есть изменения' : record?.revision ? 'Сохранено' : 'Исходные настройки';
         }
-        fill(card.decode(raw));
-        update(true);
-        form.oninput = e => { status.textContent = ''; update(e.target === fields.collapsed); };
-        reset.onclick = () => { fill(card.defaults); update(true); status.textContent = 'Для применения нажмите «Сохранить».'; };
-        form.onsubmit = async e => {
-            e.preventDefault();
-            if (save.disabled || busy) return;
+        async function request(method) {
+            if (busy || signal.aborted) return;
+            const saving = method === 'PUT';
+            const next = values(), injectError = fail.checked;
+            fail.checked = false;
             busy = true;
-            const next = values();
-            update(false);
-            status.textContent = 'Сохранение…';
+            failed = false;
+            log.dataset.result = 'busy';
+            log.textContent = method + ' · ' + (saving ? 'Сохраняем настройки…' : 'Загружаем настройки…');
+            update();
             try {
-                raw = await preferences.save(code, raw, next);
-                saved(raw);
-                status.textContent = 'Настройки сохранены';
-            } catch (error) { status.textContent = error.message; }
-            finally { busy = false; update(false); }
+                record = saving
+                    ? await preferences.save(ids.account, code, record.revision, next, signal, injectError)
+                    : await preferences.read(ids.account, code, initial, signal, injectError);
+                if (signal.aborted) return;
+                conflict = false;
+                fill(record.config);
+                log.dataset.result = 'ok';
+                log.textContent = method + ' · 200 OK · ' + (saving ? 'Настройки сохранены' : 'Настройки получены');
+            } catch (error) {
+                if (signal.aborted) return;
+                failed = true;
+                conflict = error.code === 'conflict' || conflict;
+                log.dataset.result = 'error';
+                log.textContent = method + ' · ' + error.message;
+            } finally {
+                if (!signal.aborted) { busy = false; update(true); }
+            }
+        }
+        form.oninput = event => update(event.target === fields.collapsed);
+        reset.onclick = () => { fill(card.defaults); update(true); };
+        form.onsubmit = event => {
+            event.preventDefault();
+            if (!saveButton.disabled) request('PUT');
         };
+        readButton.onclick = () => request('GET');
+        fill(card.defaults);
+        request('GET');
     };
 });

@@ -1,12 +1,12 @@
-define(['module', './lib/installation-activation.js', './editor.js', './card.js'],
-function (module, activation, edit, card) {
+define(['module', './lib/installation-activation.js', './editor.js', './card.js', './preferences.js'],
+function (module, activation, edit, card, preferences) {
     'use strict';
     const stylesheet = new URL('style.css', module.uri).href;
     const editorStyles = new URL('editor.css', module.uri).href;
     const release = new URL(module.uri).pathname.split('/').at(-2);
     return function createApp(widget) {
         let form, slot, editor, styles;
-        let saved;
+        let pageRequest, cardRequest;
         function loadStyles(target) {
             if (styles) styles.remove();
             styles = document.createElement('link');
@@ -27,16 +27,18 @@ function (module, activation, edit, card) {
                 form = activation.mount(widget, target, stylesheet);
             },
             advancedSettings(target) {
+                pageRequest?.abort();
+                pageRequest = new AbortController();
                 if (editor) editor.remove();
                 editor = document.createElement('section');
                 editor.className = 'rkrs-loader-editor';
                 target.append(editor);
                 loadStyles(target);
                 const page = editor;
-                activation.showWhenActivated(widget, page, () => edit(page, widget.get_settings().widget_code, { ...ids(), deal: '12345 (пример)' }, raw => {
-                    saved = raw;
-                    widget.set_settings?.({ ...widget.get_settings(), card_config: raw });
-                }));
+                const settings = widget.get_settings();
+                const signal = pageRequest.signal;
+                activation.showWhenActivated(widget, page, () =>
+                    edit(page, settings.widget_code, settings.card_config, { ...ids(), deal: '12345 (пример)' }, signal));
             },
             render() {
                 if (widget.system().area !== 'lcard') return;
@@ -50,11 +52,25 @@ function (module, activation, edit, card) {
                 slot = document.getElementById(id);
                 if (!slot) return;
                 const settings = widget.get_settings();
-                const target = slot;
-                activation.showWhenActivated(widget, target, () => card.draw(target, card.decode(saved ?? settings.card_config), ids()));
+                cardRequest?.abort();
+                cardRequest = new AbortController();
+                const signal = cardRequest.signal;
+                const target = slot, current = ids();
+                activation.showWhenActivated(widget, target, async () => {
+                    if (signal.aborted) return;
+                    target.textContent = 'Загружаем настройки…';
+                    try {
+                        const record = await preferences.read(current.account, settings.widget_code, settings.card_config, signal);
+                        if (!signal.aborted && target.isConnected) card.draw(target, record.config, current);
+                    } catch (error) {
+                        if (!signal.aborted && target.isConnected) target.textContent = error.message;
+                    }
+                });
             },
             onSave() { return !form || form.allowSave(); },
             destroy() {
+                pageRequest?.abort();
+                cardRequest?.abort();
                 if (form) form.destroy();
                 if (slot) slot.remove();
                 if (editor) editor.remove();
