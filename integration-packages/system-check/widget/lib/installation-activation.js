@@ -79,8 +79,6 @@ define(['./phone.js'], function (phones) {
                     <span class="rkrs-system-af__phone"><span class="rkrs-system-af__cc"><span data-code>+7</span><select aria-label="Страна"></select></span>
                     <input type="tel" required autocomplete="tel" aria-label="Телефон" placeholder="(000) 000-00-00"></span>
                 </label>
-                <button class="rkrs-system-af__link" type="button">У меня есть промокод</button>
-                <label class="rkrs-system-af__field" hidden><span>Промокод</span><input data-promo class="rkrs-system-af__input" maxlength="64"></label>
                 <button class="rkrs-system-af__btn" type="button" disabled>Активировать доступ</button>
                 <p class="rkrs-system-af__foot">Нажимая кнопку, вы разрешаете связаться с вами по указанному номеру по вопросам работы виджета.</p>
                 <p role="status" aria-live="polite"></p>
@@ -88,7 +86,7 @@ define(['./phone.js'], function (phones) {
         target.append(root);
         const get = selector => root.querySelector(selector);
         const phone = get('[type=tel]'), select = get('select');
-        const promo = get('[data-promo]'), submit = get('.rkrs-system-af__btn'), status = get('[role=status]');
+        const submit = get('.rkrs-system-af__btn'), status = get('[role=status]');
         const ctx = context(widget);
         let saving = false;
         for (const country of phones.countries) select.add(new Option(country.name + ' +' + country.code));
@@ -112,8 +110,6 @@ define(['./phone.js'], function (phones) {
             }
         };
         phone.oninput = () => format(phones.parse(phone.value, country));
-        const toggle = get('.rkrs-system-af__link');
-        toggle.onclick = () => { promo.parentElement.hidden = false; toggle.hidden = true; promo.focus(); };
         submit.onclick = () => {
             if (saving || !valid()) return;
             const save = scope.querySelector('.js-widget-save');
@@ -122,7 +118,7 @@ define(['./phone.js'], function (phones) {
                 status.textContent = 'Форма сохранения amoCRM недоступна. Откройте настройки виджета заново.';
                 return;
             }
-            const value = JSON.stringify({ phone: '+' + country.code + digits(), promo: promo.value.trim() });
+            const value = JSON.stringify({ phone: '+' + country.code + digits() });
             field.value = value;
             for (const type of ['input','change']) field.dispatchEvent(new Event(type, { bubbles: true }));
             if (save.disabled) { status.textContent = 'Сохранение ещё недоступно в amoCRM.'; return; }
@@ -158,8 +154,6 @@ define(['./phone.js'], function (phones) {
             try {
                 const saved = JSON.parse(ctx.settings.system_contact);
                 phone.value = saved.phone || '';
-                promo.value = saved.promo || '';
-                if (promo.value) { promo.parentElement.hidden = false; toggle.hidden = true; }
             } catch (_) { /* Settings from an earlier package can be empty. */ }
         }
         format(phones.parse(phone.value, country));
@@ -169,5 +163,26 @@ define(['./phone.js'], function (phones) {
             destroy() { clearTimeout(timer); styles.remove(); root.remove(); scope.classList.remove('rkrs-system-dialog'); }
         };
     }
-    return { mount, sync };
+    const checks = new WeakMap();
+    function activated(widget) {
+        if (!checks.has(widget)) {
+            const check = sync(widget).then(done => done || request(widget, 'GET').then(result => result.activated === true));
+            checks.set(widget, check.finally(() => checks.delete(widget)));
+        }
+        return checks.get(widget);
+    }
+
+    async function showWhenActivated(widget, target, show) {
+        target.textContent = 'Проверяем активацию…';
+        try {
+            const allowed = await activated(widget);
+            if (!target.isConnected) return;
+            if (allowed) show();
+            else target.textContent = 'Для работы откройте настройки установки и подтвердите телефон.';
+        } catch (_) {
+            if (target.isConnected) target.textContent = 'Не удалось проверить активацию. Откройте раздел повторно.';
+        }
+    }
+
+    return { mount, sync, showWhenActivated };
 });
