@@ -9,6 +9,7 @@
 | `rkrs_activity_panel/frontend/` | [Прототип аналитики дня, недели и месяца](rkrs_activity_panel/frontend/README.md) | `npm ci`, `npm run dev`, `npm test`, `npm run build` |
 | `rkrs_activity_panel/widget-app/` | [MVP виджета сотрудников amoCRM и симулятор](rkrs_activity_panel/widget-app/README.md) | `npm ci`, `npm run dev`, `npm test`, `npm run build:preview` |
 | `rkrs_lead_distribution/widget-app/` | [Рабочий виджет распределения](rkrs_lead_distribution/widget-app/README.md) | `npm ci`, `npm run dev`, `npm test`, `npm run build:preview` |
+| `rkrs_advanced_fields/` | [Динамические поля для карточек amoCRM](rkrs_advanced_fields/README.md) | `python3 pack.py` |
 | `rkrs_lead_notasks/` | [Контроль карточек без задач](rkrs_lead_notasks/README.md) | `npm test`, `npm run check`; [сборка и подключение](rkrs_lead_notasks/MVP-SETUP.md) |
 | `integration-packages/amocrm-pro-service/` | [Полный интеграционный пакет](integration-packages/amocrm-pro-service/README.md) | `node --test verify.test.cjs`, `python3 pack.py` |
 
