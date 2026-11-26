@@ -26,6 +26,7 @@ function setup(options = {}) {
     settings: [],
     unmount: [],
     errors: [],
+    license: [],
   };
   const body = {
     children: [],
@@ -56,9 +57,12 @@ function setup(options = {}) {
       assert.deepEqual(Array.from(deps), [
         "./lib/company-entry.js", "./lib/company-entry-deployment.js",
         "./lib/installation-activation.js", "./lib/installation-activation-deployment.js",
+        "./lib/account-license.js",
       ]);
       const moduleStub = { mount() { return { destroy() {} }; } };
-      Widget = factory(moduleStub, {}, options.activation ?? moduleStub, { coreOrigin: "https://core.example.invalid" });
+      Widget = factory(moduleStub, {}, options.activation ?? moduleStub, { coreOrigin: "https://core.example.invalid" }, {
+        sync: (...args) => calls.license.push(args),
+      });
     },
     require: requireModule,
     fetch(url, config) {
@@ -104,6 +108,19 @@ test("one release and bundle request shared across renders and instances; callba
   assert.equal(calls.mount[0].subdomain, "demo");
   assert.equal(calls.mount[0].area, "dashboard");
   assert.equal(calls.mount[0].mode, "live");
+});
+
+test("installation and init report the license without opening activation settings", async () => {
+  const { Widget, calls } = setup({ activation: { mount() { assert.fail("activation opened"); } } });
+  const widget = new Widget();
+  assert.equal(widget.callbacks.onInstall(), true);
+  assert.equal(widget.callbacks.init(), true);
+  await tick();
+  assert.deepEqual(calls.license, [
+    [widget, "https://core.example.invalid", true],
+    [widget, "https://core.example.invalid"],
+  ]);
+  assert.equal(calls.mount.length, 1);
 });
 
 test("only an explicit preview instance enables demo context", async () => {

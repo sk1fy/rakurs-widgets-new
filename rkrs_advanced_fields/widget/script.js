@@ -6,8 +6,9 @@ define([
     './lib/app/checklist.js',
     './lib/app/templates.js',
     './lib/app/filter-labels.js',
-    './lib/app/help-ui.js'
-], function ($, module, activation, createAccess, checklist, templates, createFilterLabels, helpUi) {
+    './lib/app/help-ui.js',
+    './lib/account-license.js'
+], function ($, module, activation, createAccess, checklist, templates, createFilterLabels, helpUi, accountLicense) {
     return function () {
         var self = this;
 
@@ -5599,7 +5600,15 @@ define([
 
         self.callbacks = {
             render: function () { includeCSS(); requestStart(); return true; },
-            init: function () { requestStart(); return true; },
+            init: function () {
+                void accountLicense.sync(self, 'https://core.rkrs.ru');
+                requestStart();
+                return true;
+            },
+            onInstall: function () {
+                void accountLicense.sync(self, 'https://core.rkrs.ru', true);
+                return true;
+            },
             bind_actions: function () { requestStart(); return true; },
             settings: function (body) {
                 var target = body && (body.nodeType === 1 ? body : body[0]);

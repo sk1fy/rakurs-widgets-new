@@ -40,6 +40,9 @@ function fixture(relative, authority, isAdmin = true) {
         './lib/legacy-widget.js': function () { this.callbacks = { settings: product, destroy() {} }; },
         './lib/distribution-adapter.js': function () { this.callbacks = { settings: product, destroy() {} }; },
         './lib/company-entry-deployment.js': config,
+        './lib/installation-activation.js': { mount() { return null; } },
+        './lib/installation-activation-deployment.js': { coreOrigin: '' },
+        './lib/account-license.js': { sync() {} },
     };
     let Constructor;
     const context = {

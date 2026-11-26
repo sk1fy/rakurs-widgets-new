@@ -42,6 +42,7 @@ test('amoCRM entrypoint starts and stops guards only with rules received from Te
         ['./lib/teamos_controller.js', () => TeamController],
         ['./lib/deployment.js', {}],
         ['./lib/company-entry-deployment.js', {}],
+        ['./lib/account-license.js', { sync() {} }],
     ]);
     const Constructor = registration.factory(...registration.dependencies.map(dependency => {
         const name = dependency.split('?')[0];

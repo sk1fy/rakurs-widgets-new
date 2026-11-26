@@ -46,6 +46,7 @@ const configured = source.replace(/(["'])__RKRS_ACTIVITY_ASSETS_URL__\1/, () =>
 if (configured === source) throw new Error("Missing loader URL placeholder.");
 writeFileSync(path.join(staging, "script.js"), configured);
 execFileSync(process.execPath, [path.join(root, "../../shared/company-entry/sync.mjs"), "--target", staging], { env: process.env });
+cpSync(path.join(root, "../../shared/account-license.js"), path.join(staging, "lib/account-license.js"));
 const activationOrigin = process.env.RKRS_ACTIVATION_CORE_ORIGIN ?? "";
 if (activationOrigin) {
   const core = new URL(activationOrigin);

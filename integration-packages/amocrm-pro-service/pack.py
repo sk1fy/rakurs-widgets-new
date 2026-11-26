@@ -23,6 +23,7 @@ with tempfile.TemporaryDirectory(prefix='company-entry-package-') as directory:
     staging = Path(directory)
     shutil.copytree(widget, staging, dirs_exist_ok=True)
     subprocess.run(['node', str(root / '../../shared/company-entry/sync.mjs'), '--target', str(staging)], check=True)
+    shutil.copyfile(root / '../../shared/account-license.js', staging / 'lib/account-license.js')
     archive = root / f"amocrm-pro-service-{manifest['widget']['version']}.zip"
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as bundle:
         for source in sorted(staging.rglob('*')):

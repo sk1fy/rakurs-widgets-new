@@ -105,6 +105,7 @@ test("manifest satisfies the amoCRM contract: non-empty custom settings field an
   );
   for (const required of [
     "manifest.json",
+    "lib/account-license.js",
     "i18n/ru.json",
     "images/logo.png",
     "images/logo_main.png",
