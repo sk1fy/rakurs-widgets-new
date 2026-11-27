@@ -71,6 +71,7 @@ console.log(
 );
 
 mkdirSync(path.join(root, "public/widget-assets/lib"), { recursive: true });
-for (const name of ["company-entry.js", "company-entry-deployment.js"]) {
+for (const name of ["company-entry.js", "company-entry-deployment.js", "installation-activation.js", "installation-activation-deployment.js"]) {
   copyFileSync(path.join(root, "../widget/lib", name), path.join(root, "public/widget-assets/lib", name));
 }
+copyFileSync(path.join(root, "../../shared/account-license.js"), path.join(root, "public/widget-assets/lib/account-license.js"));

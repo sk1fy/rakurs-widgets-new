@@ -1,5 +1,7 @@
 /* Preserve the existing diagnostic widget and add distribution in its own host. */
-define(['jquery', './lib/legacy-widget.js', './lib/distribution-adapter.js', './lib/company-entry.js', './lib/company-entry-deployment.js'], function ($, Legacy, Distribution, CompanyEntry, CompanyEntryDeployment) {
+define(['jquery', './lib/legacy-widget.js', './lib/distribution-adapter.js', './lib/company-entry.js',
+  './lib/company-entry-deployment.js', './lib/account-license.js'],
+function ($, Legacy, Distribution, CompanyEntry, CompanyEntryDeployment, AccountLicense) {
   'use strict';
   return function () {
     var self = this;
@@ -36,7 +38,14 @@ define(['jquery', './lib/legacy-widget.js', './lib/distribution-adapter.js', './
         if (self.system().area === 'lcard') distribution.render.apply(facade, arguments);
         return true;
       },
-      init: function () { return both('init', arguments); },
+      init: function () {
+        void AccountLicense.sync(self, CompanyEntryDeployment.coreOrigin);
+        return both('init', arguments);
+      },
+      onInstall: function () {
+        void AccountLicense.sync(self, CompanyEntryDeployment.coreOrigin, true);
+        return true;
+      },
       bind_actions: function () { return both('bind_actions', arguments); },
       settings: function (body) {
         var result = both('settings', arguments);

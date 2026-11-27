@@ -8,12 +8,14 @@ function loadWidget(window) {
   for (const dependency of [
     "./lib/company-entry.js",
     "./lib/company-entry-deployment.js",
+    "./lib/account-license.js",
   ]) {
     window.define = (deps, factory) => {
       assert.equal(deps.length, 0);
       modules.set(dependency, factory());
     };
-    window.eval(readFileSync("../widget/" + dependency, "utf8"));
+    const source = dependency === "./lib/account-license.js" ? "../../shared/account-license.js" : "../widget/" + dependency;
+    window.eval(readFileSync(source, "utf8"));
   }
   let Constructor;
   window.define = (deps, factory) => {

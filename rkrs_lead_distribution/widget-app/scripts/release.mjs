@@ -42,3 +42,4 @@ mkdirSync("public/widget-assets/lib", { recursive: true });
 for (const name of ["company-entry.js", "company-entry-deployment.js"]) {
   copyFileSync(`../widget/lib/${name}`, `public/widget-assets/lib/${name}`);
 }
+copyFileSync("../../shared/account-license.js", "public/widget-assets/lib/account-license.js");

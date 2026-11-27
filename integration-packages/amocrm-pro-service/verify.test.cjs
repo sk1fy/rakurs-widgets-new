@@ -36,6 +36,7 @@ function fixture(ajax) {
   }
   modules['./lib/company-entry.js'] = load('lib/company-entry.js');
   modules['./lib/company-entry-deployment.js'] = load('lib/company-entry-deployment.js');
+  modules['./lib/account-license.js'] = load('../../../shared/account-license.js');
   modules['./lib/legacy-widget.js'] = load('lib/legacy-widget.js');
   modules['./lib/distribution-adapter.js'] = load('lib/distribution-adapter.js');
   const Widget = load('script.js');

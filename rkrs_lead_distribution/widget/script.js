@@ -1,5 +1,6 @@
 /** amoCRM AMD adapter. Authentication is provided by the documented SDK. */
-define(['./lib/company-entry.js', './lib/company-entry-deployment.js'], function (CompanyEntry, CompanyEntryDeployment) {
+define(['./lib/company-entry.js', './lib/company-entry-deployment.js', './lib/account-license.js'],
+function (CompanyEntry, CompanyEntryDeployment, AccountLicense) {
   var ASSETS = "__RKRS_DISTRIBUTION_ASSETS_URL__";
   var API = "__RKRS_DISTRIBUTION_API_URL__";
   var BUNDLE = "__RKRS_DISTRIBUTION_BUNDLE__";
@@ -241,6 +242,11 @@ define(['./lib/company-entry.js', './lib/company-entry-deployment.js'], function
         return true;
       },
       init: function () {
+        void AccountLicense.sync(self, CompanyEntryDeployment.coreOrigin);
+        return true;
+      },
+      onInstall: function () {
+        void AccountLicense.sync(self, CompanyEntryDeployment.coreOrigin, true);
         return true;
       },
       bind_actions: function () {

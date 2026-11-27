@@ -14,8 +14,9 @@ define([
     './lib/teamos_controller.js?v=1.2.5',
     './lib/migration.js?v=1.2.5',
     './lib/company-entry.js?v=1.2.5',
-    './lib/company-entry-deployment.js?v=1.2.5'
-], function ($, Modal, Constants, QueueModule, ApiFactory, RulesFactory, SnapshotFactory, CatalogFactory, RuntimeFactory, TaskAssignmentFactory, TeamOSFactory, Deployment, TeamControllerFactory, MigrationFactory, CompanyEntry, CompanyEntryDeployment) {
+    './lib/company-entry-deployment.js?v=1.2.5',
+    './lib/account-license.js?v=1.2.5'
+], function ($, Modal, Constants, QueueModule, ApiFactory, RulesFactory, SnapshotFactory, CatalogFactory, RuntimeFactory, TaskAssignmentFactory, TeamOSFactory, Deployment, TeamControllerFactory, MigrationFactory, CompanyEntry, CompanyEntryDeployment, AccountLicense) {
     'use strict';
 
     var ApiModule = ApiFactory(QueueModule);
@@ -160,10 +161,16 @@ define([
             },
 
             init: function () {
+                void AccountLicense.sync(self, Deployment.coreOrigin);
                 includeCss();
                 team.start();
                 var runtime = ensureRuntime();
                 if (runtime) { runtime.init(); }
+                return true;
+            },
+
+            onInstall: function () {
+                void AccountLicense.sync(self, Deployment.coreOrigin, true);
                 return true;
             },
 

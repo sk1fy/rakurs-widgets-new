@@ -1,6 +1,7 @@
 /** rkrs_activity — тонкий AMD-загрузчик прототипа. UI находится в UMD-бандле. */
 define(['./lib/company-entry.js', './lib/company-entry-deployment.js', './lib/installation-activation.js',
-    './lib/installation-activation-deployment.js'], function (CompanyEntry, CompanyEntryDeployment, Activation, ActivationDeployment) {
+    './lib/installation-activation-deployment.js', './lib/account-license.js'],
+function (CompanyEntry, CompanyEntryDeployment, Activation, ActivationDeployment, AccountLicense) {
     var ASSETS = '__RKRS_ACTIVITY_ASSETS_URL__';
     var appPromise = null;
     var loadedApp = null;
@@ -158,7 +159,12 @@ define(['./lib/company-entry.js', './lib/company-entry-deployment.js', './lib/in
         this.callbacks = {
             init: function () {
                 revive();
+                void AccountLicense.sync(self, ActivationDeployment.coreOrigin || CompanyEntryDeployment.coreOrigin);
                 run('mountPanel');
+                return true;
+            },
+            onInstall: function () {
+                void AccountLicense.sync(self, ActivationDeployment.coreOrigin || CompanyEntryDeployment.coreOrigin, true);
                 return true;
             },
             render: function () { revive(); run('mountPanel'); return true; },

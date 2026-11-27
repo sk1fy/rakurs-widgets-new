@@ -18,5 +18,6 @@ with ZipFile(dist / "widget.zip", "w", ZIP_DEFLATED) as archive:
     for p in sorted(widget.rglob("*")):
         if p.is_file() and not p.name.startswith("."):
             archive.write(p, p.relative_to(widget))
+    archive.write(root.parent / "shared/account-license.js", "lib/account-license.js")
     archive.writestr("lib/deployment.js", "define([], function () { return " + json.dumps({"origin": origin}) + "; });\n")
 print(dist / "widget.zip")
