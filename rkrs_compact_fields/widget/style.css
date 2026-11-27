@@ -1,0 +1,140 @@
+/* Удобные поля от Ракурс.
+ * 1) Карточки: классы rkrs_compact_fields_* ставит script.js на блоки полей карточки (как в 6.0.39 — правила ниже
+ *    перенесены без изменений): колонка названия — половина ширины, длинное название переносится по словам целиком.
+ * 2) Окно виджета в amoМаркете — префикс .rkrs-cmf- (.rkrs-cf- занят «Динамическими полями»). */
+
+.rkrs_compact_fields_card-holder__fields .linked-form__field__label {
+  width: calc(50% - 10px);
+  margin-right: 10px;
+}
+
+.rkrs_compact_fields_card-holder__fields .linked-form__field__value,
+.rkrs_compact_fields_card-cf-table .card-cf-table__td-left,
+.rkrs_compact_fields_card-cf-table .card-cf-table__td-right {
+  width: 50%;
+}
+
+/*
+ * amoCRM на label/span ставит overflow-wrap: anywhere — из-за этого
+ * длинные названия (особенно с _) рвутся посередине слова и
+ * появляется вертикальный скролл у лейбла.
+ */
+.rkrs_compact_fields_linked-form__field .linked-form__field__label,
+.rkrs_compact_fields_linked-form__field .linked-form__field__label span,
+.rkrs_compact_fields_card-cf-table label.card-cf-name-label__label,
+.rkrs_compact_fields_card-cf-table label.card-cf-name-label__label span {
+  white-space: normal !important;
+  overflow-wrap: break-word !important;
+  word-break: normal !important;
+  word-wrap: break-word !important;
+  hyphens: auto;
+  line-height: 14px;
+  font-size: 14px;
+  padding: 3px 0;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+  max-width: 95%;
+}
+
+.rkrs_compact_fields_card-holder__fields .linked-form__field__label:not(.linked-form__field__label-multiple) {
+  padding-top: 3px;
+}
+
+.rkrs_compact_fields_card-holder__fields .linked-form__field-add-multiple {
+  left: 50%;
+}
+
+.rkrs_compact_fields_card-holder__fields .linked-form__field__label.linked-form__field__label-multiple {
+  width: calc(50% - 20px);
+  margin-right: 20px;
+}
+
+/* ---------- окно виджета в amoМаркете после активации: «Меню amo», как у «Счётчика недозвонов» ----------
+   Тёмная тема amoCRM — .dark-theme (окна Маркета) и html[data-color-scheme="dark"]. */
+.rkrs-cmf-settings { margin: 10px 0 20px; }
+.rkrs-cmf-sum {
+    --sum-text: #363b44; --sum-text-2: #6b6d72; --sum-text-3: #92989b;
+    --sum-bg: #fff; --sum-bg-2: #f5f5f5; --sum-line: #e3e3e3;
+    --sum-blue: #4c8bf7; --sum-link: #0057a9;
+    display: flex; flex-direction: column;
+    border: 1px solid var(--sum-line); border-radius: 6px; overflow: hidden;
+    background: var(--sum-bg); color: var(--sum-text);
+    font: 14px/1.5 "PT Sans", "Helvetica Neue", Arial, sans-serif;
+}
+.dark-theme .rkrs-cmf-sum, html[data-color-scheme="dark"] .rkrs-cmf-sum {
+    --sum-text: #e5eaf3; --sum-text-2: #aab3bd; --sum-text-3: #7f8992;
+    --sum-bg: #1b2229; --sum-bg-2: #222b33; --sum-line: #2f3a44; --sum-link: #7fb0ff;
+}
+.rkrs-cmf-sum *, .rkrs-cmf-sum *::before { box-sizing: border-box; }
+.rkrs-cmf-sum h2 { margin: 0; font-size: 18px; font-weight: 700; color: var(--sum-text); }
+.rkrs-cmf-sum h3 { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--sum-text-3); }
+.rkrs-cmf-sum p { margin: 0; }
+.rkrs-cmf-sum a { color: var(--sum-link); text-decoration: none; }
+.rkrs-cmf-sum a:hover { text-decoration: underline; }
+.rkrs-cmf-sum a:focus-visible { outline: 2px solid var(--sum-blue); outline-offset: 2px; }
+.rkrs-cmf-block { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; border-bottom: 1px solid var(--sum-line); }
+.rkrs-cmf-sub { color: var(--sum-text-2); }
+.rkrs-cmf-msgs { display: flex; flex-wrap: wrap; gap: 8px; }
+.rkrs-cmf-sum a.rkrs-cmf-msg {
+    display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px;
+    border: 1px solid var(--sum-line); border-radius: 4px; color: var(--sum-text); font-weight: 700; font-size: 13.5px;
+}
+.rkrs-cmf-sum a.rkrs-cmf-msg:hover { border-color: var(--sum-blue); text-decoration: none; }
+.rkrs-cmf-msg::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--sum-blue); }
+.rkrs-cmf-msg-tg::before { background: #2aabee; }
+.rkrs-cmf-msg-wa::before { background: #25d366; }
+.rkrs-cmf-msg-max::before { background: #7b4dff; }
+.rkrs-cmf-msg-vk::before { background: #0077ff; }
+.rkrs-cmf-contacts { font-size: 13.5px; }
+.rkrs-cmf-legal { display: flex; flex-direction: column; gap: 2px; padding: 12px 20px; background: var(--sum-bg-2); font-size: 12px; color: var(--sum-text-3); }
+.rkrs-cmf-sum .rkrs-cmf-legal a { color: var(--sum-text-3); text-decoration: underline; }
+/* Требуется переустановка: красный блок в окне виджета (как у «Счётчика») */
+.rkrs-cmf-sum { --sum-bad: #e5484d; --sum-bad-bg: #fdecec; --sum-bad-line: #f5c2c4; }
+.dark-theme .rkrs-cmf-sum, html[data-color-scheme="dark"] .rkrs-cmf-sum { --sum-bad-bg: #3a1f23; --sum-bad-line: #5a2a30; }
+.rkrs-cmf-bad { background: var(--sum-bad-bg); border-bottom-color: var(--sum-bad-line); }
+.rkrs-cmf-bad h2 { color: var(--sum-bad); }
+.rkrs-cmf-sum a.rkrs-cmf-restore { display: inline-block; padding: 9px 16px; border: 1px solid var(--sum-blue); border-radius: 3px; color: var(--sum-blue); font-weight: 700; text-decoration: none; }
+.rkrs-cmf-sum a.rkrs-cmf-restore:hover { background: rgba(76, 139, 247, .08); }
+
+/* Памятка «без виджета / с виджетом» в окне виджета (27.11.2026): слева обрезка, как в amoCRM (38 %, одна строка),
+   справа — как с виджетом (половина ширины, перенос по словам). */
+.rkrs-cmf-ba { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 4px; }
+.rkrs-cmf-ba-col { margin: 0; min-width: 0; }
+.rkrs-cmf-ba-col figcaption { display: inline-block; margin-bottom: 6px; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; background: var(--sum-bg-2); color: var(--sum-text-3); }
+.rkrs-cmf-ba-after figcaption { background: #17505b; color: #fff; }
+.rkrs-cmf-ba-card { padding: 2px 12px; border: 1px solid var(--sum-line); border-radius: 4px; background: var(--sum-bg); }
+.rkrs-cmf-ba-after .rkrs-cmf-ba-card { border-color: #5cc4bf; box-shadow: 0 0 0 2px rgba(92, 196, 191, .18); }
+.rkrs-cmf-ba-row { display: flex; align-items: center; min-height: 34px; padding: 3px 0; border-bottom: 1px solid var(--sum-line); font-size: 13.5px; }
+.rkrs-cmf-ba-row:last-child { border-bottom: 0; }
+.rkrs-cmf-ba-label { flex: none; box-sizing: border-box; color: var(--sum-text-3); }
+.rkrs-cmf-ba-value { flex: 1; min-width: 0; color: var(--sum-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rkrs-cmf-ba-before .rkrs-cmf-ba-label { width: calc(38.37% - 10px); margin-right: 10px; white-space: nowrap; overflow: hidden; }
+.rkrs-cmf-ba-after .rkrs-cmf-ba-label { width: calc(50% - 10px); margin-right: 10px; font-size: 12.5px; line-height: 1.2; }
+/* «Ищите другие виджеты Ракурса» — как плашка в описании окна установки */
+.rkrs-cmf-sum .rkrs-cmf-more { padding-block: 12px; background: var(--sum-more-bg); }
+.rkrs-cmf-more p { color: var(--sum-more-ink); }
+.rkrs-cmf-sum { --sum-more-bg: #eff9f5; --sum-more-ink: #17505b; }
+.dark-theme .rkrs-cmf-sum, html[data-color-scheme="dark"] .rkrs-cmf-sum { --sum-more-bg: #173133; --sum-more-ink: #9fe0d8; }
+
+@media (max-width: 560px) {
+    .rkrs-cmf-block, .rkrs-cmf-legal { padding-inline: 14px; }
+    .rkrs-cmf-ba { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------- 6.2.0: полоса «нужна переавторизация» над полями карточки (только администраторам, без крестика) ----------
+   Цвета предупреждений amoCRM; тёмная тема amoCRM — html[data-color-scheme="dark"]. */
+.rkrs-cmf-reauth {
+    --rw-bg: #fff6e8; --rw-line: #f5d9a8; --rw-text: #363b44; --rw-text-2: #6b6d72; --rw-link: #0057a9;
+    display: flex; flex-direction: column; gap: 4px;
+    margin: 10px 0; padding: 10px 12px;
+    background: var(--rw-bg); border: 1px solid var(--rw-line); border-radius: 4px;
+    font: 13px/1.4 "PT Sans", "Helvetica Neue", Arial, sans-serif; color: var(--rw-text-2);
+}
+html[data-color-scheme="dark"] .rkrs-cmf-reauth {
+    --rw-bg: #3a3122; --rw-line: #5c4a2a; --rw-text: #e5eaf3; --rw-text-2: #aab3bd; --rw-link: #7fb0ff;
+}
+.rkrs-cmf-reauth b { font-size: 14px; font-weight: 700; color: var(--rw-text); }
+.rkrs-cmf-reauth a { color: var(--rw-link); font-weight: 700; text-decoration: none; }
+.rkrs-cmf-reauth a:hover { text-decoration: underline; }
+.rkrs-cmf-reauth a:focus-visible { outline: 2px solid #4c8bf7; outline-offset: 2px; }
