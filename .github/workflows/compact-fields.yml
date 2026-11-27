@@ -1,0 +1,35 @@
+name: Compact fields
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/compact-fields.yml'
+      - 'rkrs_compact_fields/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/compact-fields.yml'
+      - 'rkrs_compact_fields/**'
+
+permissions:
+  contents: read
+
+jobs:
+  widget:
+    name: Test and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: rkrs_compact_fields
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test tests/access.test.cjs
+      - run: find widget -name '*.js' -exec node --check {} \;
+      - run: python3 pack.py
+      - run: unzip -tq dist/widget.zip

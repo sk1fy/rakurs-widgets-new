@@ -1,0 +1,53 @@
+{
+    "widget": {
+        "name": "widget.name",
+        "description": "widget.description",
+        "short_description": "widget.short_description",
+        "version": "6.2.0",
+        "interface_version": 2,
+        "init_once": false,
+        "locale": [
+            "ru"
+        ],
+        "installation": true,
+        "support": {
+            "link": "https://web.whatsapp.com/send?phone=79214377886",
+            "email": "amo@rkrs.ru"
+        }
+    },
+    "locations": [
+        "lcard-0",
+        "ccard-0",
+        "comcard-0",
+        "cucard-0",
+        "settings"
+    ],
+    "tour": {
+        "is_tour": true,
+        "tour_images": {
+            "ru": [
+                "/images/tour_01.png",
+                "/images/tour_02.png",
+                "/images/tour_03.png"
+            ]
+        },
+        "tour_description": "widget.tour_description"
+    },
+    "settings": {
+        "phone": {
+            "name": "settings.phone",
+            "type": "text",
+            "required": true
+        },
+        "name": {
+            "name": "settings.name",
+            "type": "text",
+            "required": true
+        },
+        "countryName": {
+            "name": "settings.countryName",
+            "type": "text",
+            "required": true
+        }
+    }
+}
